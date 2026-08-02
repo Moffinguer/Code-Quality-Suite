@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# =============================================================================
+# svc — CLI para los servicios de apoyo (gateway + conversion de documentos).
+#   ./svc up               arranca todo (build incluido)
+#   ./svc down             para todo
+#   ./svc convert <f>      convierte un documento a Markdown (stdout)
+#   ./svc ask <modelo> <p> pregunta a un modelo via el gateway
+#   ./svc logs [servicio]  logs
+# =============================================================================
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"; cd "$DIR"
+[ -f .env ] && set -a && . ./.env && set +a
+
+# Detecta el interprete de Python disponible (Windows suele traer 'python', no 'python3')
+PYTHON=""
+for c in python3 python py; do
+  if command -v "$c" >/dev/null 2>&1; then PYTHON="$c"; break; fi
+done
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  up)      docker compose up -d --build ;;
+  down)    docker compose down ;;
+  logs)    docker compose logs -f "${1:-}" ;;
+  chat)    exec "${PYTHON:?falta Python}" "$DIR/chat.py" "$@" ;;
+  convert)
+    f="${1:?uso: svc convert <fichero>}"
+    curl -sS -F "file=@${f}" http://localhost:8080/convert ;;
+  ask)
+    model="${1:?uso: svc ask <modelo> <prompt>}"; shift
+    payload="$($PYTHON -c 'import json,sys; print(json.dumps({"model":sys.argv[1],"messages":[{"role":"user","content":sys.argv[2]}]}))' "$model" "$*")"
+    curl -sS http://localhost:4000/v1/chat/completions \
+      -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-local-master}" \
+      -H "Content-Type: application/json" -d "$payload" ;;
+  *) echo "uso: svc {up|down|logs|chat [modelo]|convert <f>|ask <modelo> <prompt>}" ;;
+esac

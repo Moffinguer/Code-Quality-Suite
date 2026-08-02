@@ -1,0 +1,3 @@
+# Copia a bootstrap.config y ajusta. Ruta base por defecto donde clonar
+# los proyectos cuando pasas una URL sin destino explicito.
+CQS_WORKSPACE="$HOME/proyectos"

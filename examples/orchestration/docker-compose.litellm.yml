@@ -1,0 +1,14 @@
+# Levanta el gateway:  docker compose -f docker-compose.litellm.yml up -d
+# Endpoint resultante:  http://localhost:4000/v1   (formato OpenAI)
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    ports: ["4000:4000"]
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:?define ANTHROPIC_API_KEY}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY:-}
+      - LITELLM_MASTER_KEY=${LITELLM_MASTER_KEY:-sk-local-master}
+    command: ["--config", "/app/config.yaml", "--port", "4000"]

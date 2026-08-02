@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# =============================================================================
+# prepare-commit-msg — precarga una plantilla Conventional Commits con el
+# manifiesto de ficheros del commit (A/M/D...) descomentado y editable.
+# =============================================================================
+set -euo pipefail
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+
+MSG_FILE="$1"
+SOURCE="${2:-}"
+
+# Solo en commits por editor. No en -m, merge, squash, commit -c...
+case "$SOURCE" in
+  ""|template) : ;;
+  *) exit 0 ;;
+esac
+
+TYPES="${COMMIT_TYPES_HUMAN:-feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert}"
+manifest="$(git diff --cached --name-status --diff-filter=ACMRD 2>/dev/null | awk '{print substr($1,1,1), $NF}')"
+
+tmp="$(mktemp)"
+{
+  echo "<tipo>(ámbito): descripción breve (≤50 chars)"
+  echo ""
+  echo "# Ficheros del commit (forman parte del cuerpo; edita o borra):"
+  [ -n "$manifest" ] && printf '%s\n' "$manifest"
+  echo ""
+  cat <<TPL
+# ── Conventional Commits ─────────────────────────────────────
+# Subject (1ª línea):  <tipo>[(ámbito)][!]: <descripción>
+#   imperativo, ≤50 caracteres, sin punto final.
+# Tipos: ${TYPES}
+#
+# Cuerpo (opcional, tras línea en blanco): el qué y el porqué (≤72/línea).
+# Footer (opcional): "Refs: #123", "Reviewed-by: ...".
+# Breaking change: "feat!: ..."  o footer  "BREAKING CHANGE: ...".
+#
+# Ejemplo:
+#   feat(parser): admite arrays vacíos
+#
+#   Antes lanzaba NPE al recibir []. Ahora devuelve lista vacía.
+#
+#   BREAKING CHANGE: parse() ya no acepta null.
+# ─────────────────────────────────────────────────────────────
+TPL
+  cat "$MSG_FILE"
+} > "$tmp"
+mv "$tmp" "$MSG_FILE"
+exit 0

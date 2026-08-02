@@ -1,0 +1,10 @@
+# Config de hadolint para el lint de Dockerfiles del proyecto.
+# failure-threshold: nivel minimo que hace fallar (error|warning|info|style).
+failure-threshold: warning
+ignored:
+  # Descomenta reglas que no apliquen a tu caso, p.ej.:
+  # - DL3008   # no exigir version fija en paquetes apt
+  # - DL3059   # multiples RUN consecutivos
+trustedRegistries:
+  - docker.io
+  - ghcr.io

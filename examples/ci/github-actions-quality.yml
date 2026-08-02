@@ -1,0 +1,39 @@
+# Copia a: .github/workflows/quality.yml del repo objetivo.
+# Asume que la suite vive en ./code-quality-suite dentro del repo (o ajusta rutas).
+name: quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 3 * * 1"      # escaneo completo semanal (lunes 03:00 UTC)
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                 # necesario para el diff con la base
+      - name: Build quality image
+        run: docker build -t code-quality-suite:ci ./code-quality-suite
+      - name: Check
+        env:
+          QUALITY_SUITE_IMAGE: code-quality-suite:ci
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            ALL=1 ./code-quality-suite/scripts/ci-check.sh
+          else
+            BASE="origin/${{ github.base_ref || 'main' }}"
+            git fetch --no-tags origin "${{ github.base_ref || 'main' }}" || true
+            ./code-quality-suite/scripts/ci-check.sh "$BASE"
+          fi
+
+  # Etapa pesada opcional (build real: SpotBugs, cobertura...). Descomenta y ajusta.
+  # heavy:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-java@v4
+  #       with: { distribution: temurin, java-version: "21" }
+  #     - run: mvn -B verify

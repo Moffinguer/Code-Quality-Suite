@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<ruleset name="Quality Suite - Java"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+
+  <description>
+    Reglas base de PMD para el pre-commit. Combina las categorias de mayor
+    senal (errorprone, bestpractices) con design y performance, excluyendo
+    las reglas notoriamente ruidosas. Ajustable por proyecto.
+  </description>
+
+  <!-- Patrones propensos a bugs: la categoria de mas valor. -->
+  <rule ref="category/java/errorprone.xml"/>
+
+  <!-- Buenas practicas generales. -->
+  <rule ref="category/java/bestpractices.xml"/>
+
+  <!-- Diseno: util, pero con dos reglas muy ruidosas fuera. -->
+  <rule ref="category/java/design.xml">
+    <exclude name="LawOfDemeter"/>
+    <exclude name="LoosePackageCoupling"/>
+  </rule>
+
+  <!-- Rendimiento. -->
+  <rule ref="category/java/performance.xml"/>
+
+</ruleset>

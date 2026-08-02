@@ -1,0 +1,9 @@
+hooks/
+scripts/
+examples/
+install.sh
+SETUP-GUIDE.md
+README.md
+*.md
+.git/
+**/node_modules

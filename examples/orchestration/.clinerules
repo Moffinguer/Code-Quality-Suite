@@ -1,0 +1,8 @@
+# .clinerules — reglas para Cline (complementa a AGENTS.md).
+# Colocar en la raiz del repo. Cline tambien lee AGENTS.md automaticamente.
+
+- Antes de escribir codigo, lee AGENTS.md y docs/spec/.
+- Trabaja en bloques pequenos; tras cada bloque ejecuta la suite de calidad.
+- No modifiques ficheros de configuracion de la suite sin pedirlo.
+- Prefiere el modelo 'cheap' para refactors mecanicos y 'strong' para diseno.
+- Si una comprobacion falla, arregla la causa; no desactives la regla.

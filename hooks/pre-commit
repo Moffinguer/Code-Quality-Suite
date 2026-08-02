@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# =============================================================================
+# pre-commit — formatea y analiza lo que esta en staging; bloquea si falla.
+# =============================================================================
+set -euo pipefail
+
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+
+IMAGE="${QUALITY_SUITE_IMAGE:-code-quality-suite:latest}"
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Construye la imagen la primera vez si esa version no existe localmente.
+ensure_image() {
+  if docker image inspect "$IMAGE" >/dev/null 2>&1; then return 0; fi
+  if [ -z "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "${QUALITY_SUITE_DIR}/Dockerfile" ]; then
+    echo "[quality-suite] ERROR: imagen '$IMAGE' ausente y sin fuente para construirla (QUALITY_SUITE_DIR)." >&2
+    exit 1
+  fi
+  echo "[quality-suite] Imagen '$IMAGE' no encontrada; construyendo por primera vez..."
+  docker build -t "$IMAGE" "${QUALITY_SUITE_DIR}" \
+    || { echo "[quality-suite] ERROR al construir la imagen." >&2; exit 1; }
+}
+ensure_image
+
+# Ficheros en staging (portable: sin 'mapfile', compatible con bash 3.2 de macOS).
+STAGED=()
+while IFS= read -r line; do
+  [ -n "$line" ] && STAGED+=("$line")
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+[ "${#STAGED[@]}" -eq 0 ] && exit 0
+echo "[quality-suite] Analizando ${#STAGED[@]} fichero(s) en staging..."
+
+DOCKER_OPTS=(
+  --rm --network none --read-only --tmpfs /tmp
+  --cap-drop ALL --security-opt no-new-privileges
+  -e HOME=/tmp
+  -e QUALITY_MODE=fix
+  -e PMD_JAVA_VERSION="${PMD_JAVA_VERSION:-21}"
+)
+case "$(uname -s)" in
+  Linux)               DOCKER_OPTS+=( --user "$(id -u):$(id -g)" ) ;;
+  MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1 ;;
+esac
+
+if docker run "${DOCKER_OPTS[@]}" -v "${REPO_ROOT}:/workspace" -w /workspace \
+     "${IMAGE}" "${STAGED[@]}"; then
+  container_rc=0
+else
+  container_rc=$?
+fi
+
+# Re-anade lo que el formateador haya reescrito (ver limitacion de staging parcial en README).
+for f in "${STAGED[@]}"; do
+  [ -f "${REPO_ROOT}/${f}" ] && git add -- "${f}"
+done
+
+if [ "${container_rc}" -ne 0 ]; then
+  echo "[quality-suite] El analisis encontro problemas. Commit abortado."
+  exit "${container_rc}"
+fi
+echo "[quality-suite] OK"
+exit 0

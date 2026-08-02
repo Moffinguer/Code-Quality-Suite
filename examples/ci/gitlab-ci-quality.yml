@@ -1,0 +1,15 @@
+# Incluye o copia en tu .gitlab-ci.yml. Requiere Docker-in-Docker.
+stages: [quality]
+
+quality:
+  stage: quality
+  image: docker:27
+  services: [docker:27-dind]
+  variables:
+    QUALITY_SUITE_IMAGE: code-quality-suite:ci
+    GIT_DEPTH: "0"
+  before_script:
+    - apk add --no-cache git bash
+  script:
+    - docker build -t "$QUALITY_SUITE_IMAGE" ./code-quality-suite
+    - ./code-quality-suite/scripts/ci-check.sh "origin/$CI_DEFAULT_BRANCH"

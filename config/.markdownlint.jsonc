@@ -1,0 +1,8 @@
+{
+  // Reglas de markdownlint. 'default: true' activa el conjunto estandar;
+  // debajo se relajan las mas ruidosas para documentacion tecnica.
+  "default": true,
+  "MD013": false,  // longitud de linea: la prosa se envuelve libremente
+  "MD033": false,  // permite HTML inline (comun en docs)
+  "MD041": false   // no exige que la primera linea sea H1
+}
