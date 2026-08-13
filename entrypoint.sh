@@ -3,7 +3,8 @@
 # entrypoint.sh — despachador agnostico al lenguaje.
 #
 # Recibe rutas de fichero (relativas a /workspace) y las agrupa por tipo
-# segun la extension o el nombre, delegando en el handler correspondiente.
+# segun la extension, el nombre o el contenido (shebang para scripts sin extension),
+# delegando en el handler correspondiente.
 # =============================================================================
 set -euo pipefail
 
@@ -31,24 +32,67 @@ declare -a unhandled_files=()
 for f in "$@"; do
   [[ -f "$f" ]] || continue          # ignora borrados
   base="$(basename "$f")"
+
+  # Deteccion de shebang para archivos sin extension clara o scripts ejecutables
+  shebang=""
+  if [[ -f "$f" && -r "$f" && -s "$f" ]]; then
+    # Leemos la primera linea de forma segura sin cargar todo el archivo en memoria
+    read -r first_line < "$f" 2>/dev/null || first_line=""
+    if [[ "$first_line" =~ ^#! ]]; then
+      shebang="$first_line"
+    fi
+  fi
+
   case "$f" in
-    *.java)                                                java_files+=("$f") ;;
-    *.md|*.markdown)                                       md_files+=("$f") ;;
-    *.xml)                                                 xml_files+=("$f") ;;
-    *.html|*.htm|*.xhtml|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.css|*.scss) web_files+=("$f") ;;
-    *.jsp)                                                 jsp_files+=("$f") ;;
-    *.pl|*.pm|*.t)                                         perl_files+=("$f") ;;
-    *.sql)                                                 sql_files+=("$f") ;;
-    *.py)                                                  python_files+=("$f") ;;
-    *.c|*.cpp|*.cc|*.cxx|*.h|*.hpp|*.hh)                   c_cpp_files+=("$f") ;;
-    *.sh|*.bash)                                           shell_files+=("$f") ;;
+    *.java)
+      java_files+=("$f")
+      ;;
+    *.md|*.markdown)
+      md_files+=("$f")
+      ;;
+    *.xml)
+      xml_files+=("$f")
+      ;;
+    *.html|*.htm|*.xhtml|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.css|*.scss)
+      web_files+=("$f")
+      ;;
+    *.jsp)
+      jsp_files+=("$f")
+      ;;
+    *.pl|*.pm|*.t)
+      perl_files+=("$f")
+      ;;
+    *.sql)
+      sql_files+=("$f")
+      ;;
+    *.py)
+      python_files+=("$f")
+      ;;
+    *.c|*.cpp|*.cc|*.cxx|*.h|*.hpp|*.hh)
+      c_cpp_files+=("$f")
+      ;;
+    *.sh|*.bash)
+      shell_files+=("$f")
+      ;;
     *)
-      # Dockerfiles no siempre tienen extension: se detectan por nombre.
-      case "$base" in
-        Dockerfile|Dockerfile.*|*.Dockerfile|Containerfile|Containerfile.*)
-                     docker_files+=("$f") ;;
-        *)           unhandled_files+=("$f") ;;
-      esac
+      # Si no tiene una extension conocida, intentamos clasificar por shebang (tipo de archivo)
+      if [[ "$shebang" =~ perl ]]; then
+        perl_files+=("$f")
+      elif [[ "$shebang" =~ python ]]; then
+        python_files+=("$f")
+      elif [[ "$shebang" =~ (bash|sh|zsh|ksh) ]]; then
+        shell_files+=("$f")
+      else
+        # Dockerfiles no siempre tienen extension: se detectan por nombre.
+        case "$base" in
+          Dockerfile|Dockerfile.*|*.Dockerfile|Containerfile|Containerfile.*)
+            docker_files+=("$f")
+            ;;
+          *)
+            unhandled_files+=("$f")
+            ;;
+        esac
+      fi
       ;;
   esac
 done
