@@ -1,0 +1,22 @@
+severity = 3
+
+[InputOutput::ProhibitBacktickOperators]
+only_in_void_context = 1
+
+# Temporal measure
+[-Subroutines::ProhibitExcessComplexity]
+[-Modules::ProhibitExcessMainComplexity]
+
+# This is a way to write code, it is not confusing
+[-Variables::ProhibitConditionalDeclarations]
+
+# Why should it be prohibited, if a function requires more options add them
+[-Subroutines::ProhibitManyArgs]
+
+[RegularExpressions::ProhibitComplexRegexes]
+max_characters = 620
+
+[-InputOutput::RequireBriefOpen]
+
+[Modules::RequireExplicitPackage]
+exempt_scripts = 0

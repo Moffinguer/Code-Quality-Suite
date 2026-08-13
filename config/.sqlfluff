@@ -1,0 +1,17 @@
+[sqlfluff]
+dialect = oracle
+templater = raw
+rules = ST01, ST02, ST03, ST04, ST05, ST06, ST07, AM01, AM02, AM03, CP01, CP02, CP03, CP04, CP05
+
+[sqlfluff:indentation]
+tab_space_size = 4
+indent_unit = space
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = upper
+
+[sqlfluff:rules:capitalisation.identifiers]
+capitalisation_policy = lower
+
+[sqlfluff:rules:capitalisation.functions]
+capitalisation_policy = upper

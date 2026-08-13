@@ -4,12 +4,6 @@
 #
 # Recibe rutas de fichero (relativas a /workspace) y las agrupa por tipo
 # segun la extension o el nombre, delegando en el handler correspondiente.
-#
-# Anadir un tipo nuevo:
-#   1) crea handlers/<tipo>.sh (contrato: autoarregla in-place + analiza,
-#      exit 0 si limpio, exit !=0 si hay violaciones)
-#   2) instala su herramienta en el Dockerfile
-#   3) anade su rama en el bucle de clasificacion de abajo
 # =============================================================================
 set -euo pipefail
 
@@ -27,17 +21,27 @@ declare -a xml_files=()
 declare -a web_files=()
 declare -a jsp_files=()
 declare -a docker_files=()
+declare -a perl_files=()
+declare -a sql_files=()
+declare -a python_files=()
+declare -a c_cpp_files=()
+declare -a shell_files=()
 declare -a unhandled_files=()
 
 for f in "$@"; do
   [[ -f "$f" ]] || continue          # ignora borrados
   base="$(basename "$f")"
   case "$f" in
-    *.java)          java_files+=("$f") ;;
-    *.md|*.markdown) md_files+=("$f") ;;
-    *.xml)           xml_files+=("$f") ;;
+    *.java)                                                java_files+=("$f") ;;
+    *.md|*.markdown)                                       md_files+=("$f") ;;
+    *.xml)                                                 xml_files+=("$f") ;;
     *.html|*.htm|*.xhtml|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.css|*.scss) web_files+=("$f") ;;
-    *.jsp)           jsp_files+=("$f") ;;
+    *.jsp)                                                 jsp_files+=("$f") ;;
+    *.pl|*.pm|*.t)                                         perl_files+=("$f") ;;
+    *.sql)                                                 sql_files+=("$f") ;;
+    *.py)                                                  python_files+=("$f") ;;
+    *.c|*.cpp|*.cc|*.cxx|*.h|*.hpp|*.hh)                   c_cpp_files+=("$f") ;;
+    *.sh|*.bash)                                           shell_files+=("$f") ;;
     *)
       # Dockerfiles no siempre tienen extension: se detectan por nombre.
       case "$base" in
@@ -62,6 +66,11 @@ run_handler() {  # <nombre> <handler> <ficheros...>
 [[ "${#web_files[@]}"    -gt 0 ]] && run_handler "Web"        "${HANDLERS_DIR}/web.sh"        "${web_files[@]}"
 [[ "${#jsp_files[@]}"    -gt 0 ]] && run_handler "JSP"        "${HANDLERS_DIR}/jsp.sh"        "${jsp_files[@]}"
 [[ "${#docker_files[@]}" -gt 0 ]] && run_handler "Dockerfile" "${HANDLERS_DIR}/dockerfile.sh" "${docker_files[@]}"
+[[ "${#perl_files[@]}"   -gt 0 ]] && run_handler "Perl"       "${HANDLERS_DIR}/perl.sh"       "${perl_files[@]}"
+[[ "${#sql_files[@]}"    -gt 0 ]] && run_handler "SQL Oracle" "${HANDLERS_DIR}/sql.sh"        "${sql_files[@]}"
+[[ "${#python_files[@]}" -gt 0 ]] && run_handler "Python"     "${HANDLERS_DIR}/python.sh"     "${python_files[@]}"
+[[ "${#c_cpp_files[@]}"  -gt 0 ]] && run_handler "C/C++"      "${HANDLERS_DIR}/c_cpp.sh"      "${c_cpp_files[@]}"
+[[ "${#shell_files[@]}"  -gt 0 ]] && run_handler "Shell"      "${HANDLERS_DIR}/shell.sh"      "${shell_files[@]}"
 
 if [[ "${#unhandled_files[@]}" -gt 0 ]]; then
   echo "[quality-suite] Sin handler todavia (ignorados): ${unhandled_files[*]}"
