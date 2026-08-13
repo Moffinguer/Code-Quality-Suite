@@ -10,14 +10,23 @@ $ErrorActionPreference = 'Stop'
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Find-Bash {
-  $c = Get-Command bash -ErrorAction SilentlyContinue
-  if ($c) { return $c.Source }
+  # 1) Rutas conocidas de Git Bash (prioridad: es el bash real)
   foreach ($p in @(
       "$env:ProgramFiles\Git\bin\bash.exe",
       "${env:ProgramFiles(x86)}\Git\bin\bash.exe",
       "$env:LOCALAPPDATA\Programs\Git\bin\bash.exe")) {
     if (Test-Path $p) { return $p }
   }
+  # 2) Derivar de git.exe
+  $git = Get-Command git -ErrorAction SilentlyContinue
+  if ($git) {
+    $root = Split-Path (Split-Path $git.Source -Parent) -Parent
+    $cand = Join-Path $root "bin\bash.exe"
+    if (Test-Path $cand) { return $cand }
+  }
+  # 3) 'bash' en PATH, excluyendo el stub de WSL en System32
+  $c = Get-Command bash -ErrorAction SilentlyContinue
+  if ($c -and ($c.Source -notmatch 'System32')) { return $c.Source }
   return $null
 }
 

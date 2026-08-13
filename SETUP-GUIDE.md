@@ -147,6 +147,20 @@ en local** (gratis, sin límites, ~16 GB RAM) o un proveedor **de pago barato**
    diffs sobre los ficheros y te pide confirmación; al commitear, **el gate valida
    su código igual que el tuyo**.
 
+### 3c-bis. Aider (orquestador por CLI, alternativa a Cline)
+
+Aider edita y commitea desde el terminal, con menos llamadas que Cline. Mapea sus
+tres papeles (architect/editor/weak) a los alias de rol de la BD:
+
+```bash
+pip install aider-chat
+./svc aider /ruta/a/tu/repo
+```
+
+Ver `workspace-services/aider/README.md`. Nota: Aider hace pair-programming de un
+cambio, no la descomposición jerárquica completa por dominios (eso es una capa
+extra sobre los roles de la BD).
+
 ### 3d. Routing y orquestación avanzada (opcional)
 
 - **Por dificultad**: RouteLLM (o los *tags*/presupuesto de LiteLLM) delante del

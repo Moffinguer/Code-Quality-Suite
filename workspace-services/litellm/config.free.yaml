@@ -1,0 +1,62 @@
+# Variante GRATIS del gateway. Uso:
+#   cp litellm/config.free.yaml litellm/config.yaml
+# y pon en .env solo las keys que vayas a usar. Verifica los IDs/slugs en cada
+# proveedor: los catálogos gratis CAMBIAN a menudo (modelos que desaparecen).
+model_list:
+  # GPT-OSS (modelo abierto de OpenAI) en Groq: rápido y gratis
+  - model_name: gpt
+    litellm_params:
+      model: groq/openai/gpt-oss-120b
+      api_key: os.environ/GROQ_API_KEY
+
+  # DeepSeek gratis vía OpenRouter (verifica el slug en openrouter.ai/models)
+  - model_name: deepseek
+    litellm_params:
+      model: openrouter/deepseek/deepseek-chat-v3:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Qwen3 Coder: el coding gratis más potente (OpenRouter)
+  - model_name: strong
+    litellm_params:
+      model: openrouter/qwen/qwen3-coder:free
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # Llama 3.3 70B en Groq: rápido
+  - model_name: cheap
+    litellm_params:
+      model: groq/llama-3.3-70b-versatile
+      api_key: os.environ/GROQ_API_KEY
+
+  # Gemini 2.5 Flash: 1M de contexto (Google AI Studio)
+  - model_name: gemini
+    litellm_params:
+      model: gemini/gemini-2.5-flash
+      api_key: os.environ/GEMINI_API_KEY
+
+  # Ollama LOCAL: privado, sin límites (para código sensible)
+  - model_name: local
+    litellm_params:
+      model: ollama/qwen2.5-coder:14b
+      api_base: http://host.docker.internal:11434
+
+  # --- GPT-4o-mini real vía GitHub Models (necesita GITHUB_API_KEY = PAT) ------
+  # Descomenta y verifica el id exacto en la doc de LiteLLM (proveedor github):
+  # - model_name: gpt4omini
+  #   litellm_params:
+  #     model: github/gpt-4o-mini
+  #     api_key: os.environ/GITHUB_API_KEY
+
+router_settings:
+  routing_strategy: simple-shuffle
+  fallbacks:
+    - strong:   [deepseek, gpt, cheap, gemini, local]
+    - deepseek: [gpt, cheap, gemini, local]
+    - gpt:      [cheap, gemini, local]
+    - cheap:    [gemini, local]
+
+litellm_settings:
+  drop_params: true
+  num_retries: 2
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

@@ -23,6 +23,24 @@ case "$cmd" in
   down)    docker compose down ;;
   logs)    docker compose logs -f "${1:-}" ;;
   chat)    exec "${PYTHON:?falta Python}" "$DIR/chat.py" "$@" ;;
+  db-init) docker compose exec -T postgres psql -U agent -d agentdb -v ON_ERROR_STOP=1 < db/schema.sql \
+           && docker compose exec -T postgres psql -U agent -d agentdb < db/seed.sql \
+           && echo "BD inicializada (schema + seed)" ;;
+  aider)
+    repo="${1:?uso: svc aider <ruta-repo> [args aider...]}"; shift || true
+    meta="$DIR/aider/aider.model.metadata.json"
+    export OPENAI_API_BASE="http://localhost:4000/v1"
+    export OPENAI_API_KEY="${LITELLM_MASTER_KEY:-sk-local-master}"
+    cd "$repo" || { echo "repo no existe: $repo" >&2; exit 1; }
+    reads=(); [ -f AGENTS.md ] && reads=(--read AGENTS.md)
+    exec aider --architect --auto-accept-architect \
+      --model openai/architect --editor-model openai/backend --weak-model openai/boilerplate \
+      --no-show-model-warnings --model-metadata-file "$meta" --cache-prompts \
+      "${reads[@]}" "$@" ;;
+  db-load) "${PYTHON:-python3}" db/generate_config.py litellm \
+           && cp litellm/config.generated.yaml litellm/config.yaml \
+           && docker compose restart litellm \
+           && echo "config regenerada desde la BD y gateway reiniciado" ;;
   convert)
     f="${1:?uso: svc convert <fichero>}"
     curl -sS -F "file=@${f}" http://localhost:8080/convert ;;
@@ -32,5 +50,5 @@ case "$cmd" in
     curl -sS http://localhost:4000/v1/chat/completions \
       -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-local-master}" \
       -H "Content-Type: application/json" -d "$payload" ;;
-  *) echo "uso: svc {up|down|logs|chat [modelo]|convert <f>|ask <modelo> <prompt>}" ;;
+  *) echo "uso: svc {up|down|logs|chat|convert|ask|db-init|db-load|aider <repo>}" ;;
 esac

@@ -1,0 +1,8 @@
+{
+  "openai/auto":        { "max_input_tokens": 128000, "max_output_tokens": 8192 },
+  "openai/orchestrator":{ "max_input_tokens": 128000, "max_output_tokens": 8192 },
+  "openai/architect":   { "max_input_tokens": 128000, "max_output_tokens": 8192 },
+  "openai/backend":     { "max_input_tokens": 128000, "max_output_tokens": 8192 },
+  "openai/frontend":    { "max_input_tokens": 128000, "max_output_tokens": 8192 },
+  "openai/boilerplate": { "max_input_tokens": 128000, "max_output_tokens": 8192 }
+}
