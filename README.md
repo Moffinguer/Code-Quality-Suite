@@ -147,3 +147,14 @@ jobs:
           docker build -t code-quality-suite:latest .
           ./scripts/ci-check.sh origin/main
 ```
+
+
+## Imagen modular (instalación perezosa)
+
+La imagen **solo instala las herramientas de los lenguajes que el proyecto usa**.
+Un proyecto vacío produce una imagen base mínima. Cuando en un commit aparece un
+lenguaje nuevo, los hooks reconstruyen la imagen añadiendo solo ese grupo
+(`scripts/ensure-langs.sh`), y la **versión de Java se pregunta la primera vez que
+se detecta un `.java`**, no antes. Detección en `scripts/detect-languages.sh`;
+construcción selectiva por `--build-arg ENABLE_<LANG>=1` en `scripts/build-image.sh`.
+Ver también `docs/TROUBLESHOOTING.md`.

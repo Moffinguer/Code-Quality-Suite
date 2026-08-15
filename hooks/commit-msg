@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# =============================================================================
-# commit-msg — valida que el subject siga Conventional Commits.
-#   <tipo>[(ámbito)][!]: <descripción>   (<= COMMIT_SUBJECT_MAX chars)
-# Config (en quality-suite.env): COMMIT_TYPES, COMMIT_SUBJECT_MAX.
-# =============================================================================
+# commit-msg - validate the subject against Conventional Commits.
+#   <type>[(scope)][!]: <description>   (<= COMMIT_SUBJECT_MAX chars)
+# Config in quality-suite.env: COMMIT_TYPES, COMMIT_SUBJECT_MAX.
 set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
@@ -12,33 +10,32 @@ MSG_FILE="$1"
 TYPES="${COMMIT_TYPES:-feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert}"
 MAX="${COMMIT_SUBJECT_MAX:-50}"
 
-# Primera linea util (ignora comentarios y blancos).
 subject="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
 
-# Exenciones: merges, fixup/squash, reverts automaticos.
+# Exempt merges, fixup/squash, and automatic reverts.
 case "$subject" in
   "Merge "*|"fixup! "*|"squash! "*|"Revert "*) exit 0 ;;
 esac
 
 if [ -z "$subject" ]; then
-  echo "commit-msg: el mensaje esta vacio." >&2; exit 1
+  echo "commit-msg: empty message." >&2; exit 1
 fi
 
 if ! printf '%s' "$subject" | grep -qE "^(${TYPES})(\([^)]+\))?!?: .+"; then
   {
-    echo "❌ El mensaje no sigue Conventional Commits."
-    echo "   Formato:  <tipo>[(ámbito)][!]: <descripción>"
-    echo "   Tipos:    ${TYPES//|/, }"
-    echo "   Ejemplo:  feat(parser): admite arrays vacíos"
-    echo "   Tuyo:     ${subject}"
+    echo "Message does not follow Conventional Commits."
+    echo "  Format:  <type>[(scope)][!]: <description>"
+    echo "  Types:   ${TYPES//|/, }"
+    echo "  Example: feat(parser): support empty arrays"
+    echo "  Yours:   ${subject}"
   } >&2
   exit 1
 fi
 
 len=${#subject}
 if [ "$len" -gt "$MAX" ]; then
-  echo "❌ El subject tiene ${len} caracteres (máximo ${MAX}):" >&2
-  echo "   ${subject}" >&2
+  echo "Subject is ${len} characters (max ${MAX}):" >&2
+  echo "  ${subject}" >&2
   exit 1
 fi
 exit 0

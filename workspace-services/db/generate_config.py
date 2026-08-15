@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Cargador: lee la BD y genera la config de LiteLLM + las definiciones de roles.
+"""Loader: read the DB and generate the LiteLLM config plus the role definitions.
 
-Aplica las 3 reglas de seleccion:
-  - modelo con clave presente en el entorno -> se incluye
-  - modelo sin clave                        -> se salta
-  - (modelo inexistente en runtime)         -> lo aparta el cooldown de LiteLLM
+Selection rules:
+  - model with an env key present -> included
+  - model without a key           -> skipped
+  - model dead at runtime          -> parked by LiteLLM cooldown
 
-Escalera por rol (criterio logico): entre los modelos que cumplen la calidad
-minima del rol, ordena GRATIS primero (coste asc) y luego mejor calidad primero,
-asi los buenos modelos gratis se quedan en las capas altas y lo de pago es el
-ultimo recurso.
+Per-role ladder: among the models meeting the role's minimum quality, order FREE
+first (cost asc) then best quality first, so good free models stay in the upper
+layers and paid ones are the last resort.
 
-Uso:  DATABASE_URL=postgresql://... python generate_config.py [salida_dir]
+Usage:  DATABASE_URL=postgresql://... python generate_config.py [out_dir]
 """
 import json
 import os
@@ -61,7 +60,7 @@ def main():
                JOIN task_types  t ON t.id = x.task_type_id"""
         ).fetchall()
 
-    # 1) Solo modelos con clave presente (o locales).
+    # Include only models whose key is present (locals always qualify).
     available = [m for m in models if has_key(m["env_var"], m["category"])]
     skipped = [m["alias"] for m in models if m not in available]
 
@@ -69,14 +68,14 @@ def main():
                   for m in available]
 
     fallbacks = []
-    # 2) 'auto' global: mejor disponible, gratis primero.
+    # Global 'auto': best available, free first.
     glob = ladder(available, 1, True)
     if glob:
         top = glob[0]
         model_list.append({"model_name": "auto", "litellm_params": litellm_params(top)})
         fallbacks.append({"auto": [m["alias"] for m in glob[1:]]})
 
-    # 3) Un alias por rol con su escalera propia.
+    # One alias per role, each with its own ladder.
     roles_out = {}
     tasks_by_role = {}
     for r in rtt:
@@ -93,7 +92,7 @@ def main():
             "level": r["level"],
             "description": r["description"],
             "system_prompt": r["system_prompt"],
-            "model": r["name"],           # apunta al alias de rol (con su escalera)
+            "model": r["name"],
             "ladder": [m["alias"] for m in lad],
             "task_types": tasks_by_role.get(r["name"], []),
         }

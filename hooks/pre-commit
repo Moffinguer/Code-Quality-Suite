@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# =============================================================================
-# pre-commit — formatea y analiza lo que esta en staging; bloquea si falla.
-# =============================================================================
+# pre-commit - format and analyze staged files; block the commit on failure.
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -10,27 +8,32 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 IMAGE="${QUALITY_SUITE_IMAGE:-code-quality-suite:latest}"
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-# Construye la imagen la primera vez si esa version no existe localmente.
 ensure_image() {
   if docker image inspect "$IMAGE" >/dev/null 2>&1; then return 0; fi
   if [ -z "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "${QUALITY_SUITE_DIR}/Dockerfile" ]; then
-    echo "[quality-suite] ERROR: imagen '$IMAGE' ausente y sin fuente para construirla (QUALITY_SUITE_DIR)." >&2
+    echo "[quality-suite] ERROR: image '$IMAGE' missing and no source to build it (QUALITY_SUITE_DIR)." >&2
     exit 1
   fi
-  echo "[quality-suite] Imagen '$IMAGE' no encontrada; construyendo por primera vez..."
-  docker build -t "$IMAGE" "${QUALITY_SUITE_DIR}" \
-    || { echo "[quality-suite] ERROR al construir la imagen." >&2; exit 1; }
+  echo "[quality-suite] Image '$IMAGE' not found; building (languages: ${QUALITY_LANGS:-none})..."
+  "${QUALITY_SUITE_DIR}/scripts/build-image.sh" "${QUALITY_SUITE_DIR}" "$IMAGE" ${QUALITY_LANGS:-} \
+    || { echo "[quality-suite] ERROR building the image." >&2; exit 1; }
 }
 ensure_image
 
-# Ficheros en staging (portable: sin 'mapfile', compatible con bash 3.2 de macOS).
+# why: no mapfile, to stay compatible with macOS bash 3.2.
 STAGED=()
 while IFS= read -r line; do
   [ -n "$line" ] && STAGED+=("$line")
 done < <(git diff --cached --name-only --diff-filter=ACM)
 
 [ "${#STAGED[@]}" -eq 0 ] && exit 0
-echo "[quality-suite] Analizando ${#STAGED[@]} fichero(s) en staging..."
+echo "[quality-suite] Analyzing ${#STAGED[@]} staged file(s)..."
+
+# Lazy install: rebuild the image if these files introduce a new language.
+if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" ]; then
+  "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "${QUALITY_SUITE_DIR}" "${HOOK_DIR}/quality-suite.env" "$IMAGE" -- "${STAGED[@]}"
+  [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+fi
 
 DOCKER_OPTS=(
   --rm --network none --read-only --tmpfs /tmp
@@ -51,13 +54,13 @@ else
   container_rc=$?
 fi
 
-# Re-anade lo que el formateador haya reescrito (ver limitacion de staging parcial en README).
+# why: re-stage what the formatter rewrote (partial-staging note in README).
 for f in "${STAGED[@]}"; do
   [ -f "${REPO_ROOT}/${f}" ] && git add -- "${f}"
 done
 
 if [ "${container_rc}" -ne 0 ]; then
-  echo "[quality-suite] El analisis encontro problemas. Commit abortado."
+  echo "[quality-suite] Analysis found problems. Commit aborted."
   exit "${container_rc}"
 fi
 echo "[quality-suite] OK"

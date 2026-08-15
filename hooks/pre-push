@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# =============================================================================
-# pre-push — verifica (NO modifica) todo lo que se va a empujar, en modo check,
-# y opcionalmente lanza una etapa pesada (build del proyecto: SpotBugs, cobertura).
-# git pasa por stdin lineas: <local_ref> <local_sha> <remote_ref> <remote_sha>
-# =============================================================================
+# pre-push - verify (never modify) everything being pushed, in check mode, then
+# optionally run a heavy stage (project build: SpotBugs, coverage...).
+# git feeds lines on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
 set -euo pipefail
 
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -16,18 +14,17 @@ Z40="0000000000000000000000000000000000000000"
 ensure_image() {
   if docker image inspect "$IMAGE" >/dev/null 2>&1; then return 0; fi
   if [ -z "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "${QUALITY_SUITE_DIR}/Dockerfile" ]; then
-    echo "[quality-suite] ERROR: imagen '$IMAGE' ausente y sin fuente para construirla." >&2; exit 1
+    echo "[quality-suite] ERROR: image '$IMAGE' missing and no source to build it." >&2; exit 1
   fi
-  echo "[quality-suite] Construyendo '$IMAGE' por primera vez..."
-  docker build -t "$IMAGE" "${QUALITY_SUITE_DIR}" || { echo "[quality-suite] ERROR al construir." >&2; exit 1; }
+  echo "[quality-suite] Building '$IMAGE' (languages: ${QUALITY_LANGS:-none})..."
+  "${QUALITY_SUITE_DIR}/scripts/build-image.sh" "${QUALITY_SUITE_DIR}" "$IMAGE" ${QUALITY_LANGS:-} || { echo "[quality-suite] ERROR building the image." >&2; exit 1; }
 }
 ensure_image
 
-# Recopila los ficheros del rango que se empuja.
 tmpf="$(mktemp)"; : > "$tmpf"
 while read -r local_ref local_sha remote_ref remote_sha; do
-  [ "$local_sha" = "$Z40" ] && continue          # rama borrada
-  if [ "$remote_sha" = "$Z40" ]; then            # rama nueva
+  [ "$local_sha" = "$Z40" ] && continue           # deleted branch
+  if [ "$remote_sha" = "$Z40" ]; then             # new branch
     oldest="$(git rev-list "$local_sha" --not --remotes | tail -n 1)"
     if [ -n "$oldest" ]; then base="${oldest}^"; else base="$local_sha"; fi
     range="${base}..${local_sha}"
@@ -46,7 +43,12 @@ done < <(sort -u "$tmpf")
 rm -f "$tmpf"
 
 if [ "${#FILES[@]}" -gt 0 ]; then
-  echo "[quality-suite] pre-push: verificando ${#FILES[@]} fichero(s) (modo check)..."
+  echo "[quality-suite] pre-push: verifying ${#FILES[@]} file(s) (check mode)..."
+  # Lazy install: rebuild the image if these files introduce a new language.
+  if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" ]; then
+    "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "${QUALITY_SUITE_DIR}" "${HOOK_DIR}/quality-suite.env" "$IMAGE" -- "${FILES[@]}"
+    [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+  fi
   DOCKER_OPTS=(
     --rm --network none --read-only --tmpfs /tmp
     --cap-drop ALL --security-opt no-new-privileges
@@ -57,21 +59,20 @@ if [ "${#FILES[@]}" -gt 0 ]; then
     Linux)               DOCKER_OPTS+=( --user "$(id -u):$(id -g)" ) ;;
     MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1 ;;
   esac
-  # Montaje de solo lectura: en check no se debe reescribir nada.
+  # why: read-only mount; check mode must not rewrite anything.
   docker run "${DOCKER_OPTS[@]}" -v "${REPO_ROOT}:/workspace:ro" -w /workspace \
     "${IMAGE}" "${FILES[@]}" \
-    || { echo "[quality-suite] pre-push: verificacion fallida. Push abortado."; exit 1; }
+    || { echo "[quality-suite] pre-push: verification failed. Push aborted."; exit 1; }
 else
-  echo "[quality-suite] pre-push: nada nuevo que verificar."
+  echo "[quality-suite] pre-push: nothing new to verify."
 fi
 
-# --- Etapa pesada opcional (build real del proyecto: SpotBugs, cobertura...) ---
-# Necesita el toolchain del proyecto (JDK/Maven), por eso corre en el host.
-# Se activa poniendo QUALITY_HEAVY_CMD en quality-suite.env, p.ej. "mvn -B verify".
+# Optional heavy stage (real project build). Runs on the host (needs its toolchain).
+# Enable it by setting QUALITY_HEAVY_CMD in quality-suite.env, e.g. "mvn -B verify".
 if [ -n "${QUALITY_HEAVY_CMD:-}" ]; then
-  echo "[quality-suite] pre-push: etapa pesada -> ${QUALITY_HEAVY_CMD}"
+  echo "[quality-suite] pre-push: heavy stage -> ${QUALITY_HEAVY_CMD}"
   ( cd "${REPO_ROOT}" && eval "${QUALITY_HEAVY_CMD}" ) \
-    || { echo "[quality-suite] pre-push: etapa pesada fallida. Push abortado."; exit 1; }
+    || { echo "[quality-suite] pre-push: heavy stage failed. Push aborted."; exit 1; }
 fi
 
 echo "[quality-suite] pre-push OK"

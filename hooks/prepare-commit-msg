@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# =============================================================================
-# prepare-commit-msg — precarga una plantilla Conventional Commits con el
-# manifiesto de ficheros del commit (A/M/D...) descomentado y editable.
-# =============================================================================
+# prepare-commit-msg - preload a Conventional Commits template with the commit
+# file manifest (A/M/D...), uncommented and editable.
 set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
@@ -10,7 +8,7 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 MSG_FILE="$1"
 SOURCE="${2:-}"
 
-# Solo en commits por editor. No en -m, merge, squash, commit -c...
+# Editor commits only (skip -m, merge, squash, commit -c...).
 case "$SOURCE" in
   ""|template) : ;;
   *) exit 0 ;;
@@ -21,28 +19,28 @@ manifest="$(git diff --cached --name-status --diff-filter=ACMRD 2>/dev/null | aw
 
 tmp="$(mktemp)"
 {
-  echo "<tipo>(ámbito): descripción breve (≤50 chars)"
+  echo "<type>(scope): short description (<=50 chars)"
   echo ""
-  echo "# Ficheros del commit (forman parte del cuerpo; edita o borra):"
+  echo "# Commit files (become part of the body; edit or delete):"
   [ -n "$manifest" ] && printf '%s\n' "$manifest"
   echo ""
   cat <<TPL
-# ── Conventional Commits ─────────────────────────────────────
-# Subject (1ª línea):  <tipo>[(ámbito)][!]: <descripción>
-#   imperativo, ≤50 caracteres, sin punto final.
-# Tipos: ${TYPES}
+# -- Conventional Commits -------------------------------------
+# Subject (1st line):  <type>[(scope)][!]: <description>
+#   imperative, <=50 chars, no trailing period.
+# Types: ${TYPES}
 #
-# Cuerpo (opcional, tras línea en blanco): el qué y el porqué (≤72/línea).
-# Footer (opcional): "Refs: #123", "Reviewed-by: ...".
-# Breaking change: "feat!: ..."  o footer  "BREAKING CHANGE: ...".
+# Body (optional, after a blank line): the what and the why (<=72/line).
+# Footer (optional): "Refs: #123", "Reviewed-by: ...".
+# Breaking change: "feat!: ..."  or footer  "BREAKING CHANGE: ...".
 #
-# Ejemplo:
-#   feat(parser): admite arrays vacíos
+# Example:
+#   feat(parser): support empty arrays
 #
-#   Antes lanzaba NPE al recibir []. Ahora devuelve lista vacía.
+#   It used to throw NPE on []. Now it returns an empty list.
 #
-#   BREAKING CHANGE: parse() ya no acepta null.
-# ─────────────────────────────────────────────────────────────
+#   BREAKING CHANGE: parse() no longer accepts null.
+# -------------------------------------------------------------
 TPL
   cat "$MSG_FILE"
 } > "$tmp"

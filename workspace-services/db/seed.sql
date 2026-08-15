@@ -1,9 +1,7 @@
--- =============================================================================
--- Datos iniciales. Ajusta a tus proveedores/claves reales.
--- quality_tier: 5=frontier, 4=muy bueno, 3=bueno, 2=medio, 1=ligero.
--- =============================================================================
+-- Seed data. Adjust to your real providers/keys.
+-- quality_tier: 5=frontier, 4=very good, 3=good, 2=medium, 1=light.
 
--- ---- Proveedores ----
+-- Providers
 INSERT INTO providers (name, litellm_prefix, category, base_url, requires_key, notes) VALUES
  ('gemini',    'gemini/',    'free',  NULL, TRUE,  'Cuota por proyecto, no por key. Contexto grande.'),
  ('groq',      'groq/',      'free',  NULL, TRUE,  'Muy rapido. TPM bajo (12k) en free.'),
@@ -17,7 +15,7 @@ INSERT INTO providers (name, litellm_prefix, category, base_url, requires_key, n
  ('ollama',    'ollama/',    'local', 'http://host.docker.internal:11434', FALSE, 'Local, ilimitado.')
 ON CONFLICT (name) DO NOTHING;
 
--- ---- Claves (referencia a variable de entorno) ----
+-- Keys (environment-variable reference)
 INSERT INTO api_keys (provider_id, env_var, label) VALUES
  ((SELECT id FROM providers WHERE name='gemini'),    'GEMINI_API_KEY',    'personal'),
  ((SELECT id FROM providers WHERE name='groq'),      'GROQ_API_KEY',      'personal'),
@@ -30,7 +28,7 @@ INSERT INTO api_keys (provider_id, env_var, label) VALUES
  ((SELECT id FROM providers WHERE name='anthropic'), 'ANTHROPIC_API_KEY', 'personal')
 ON CONFLICT DO NOTHING;
 
--- ---- Modelos (slug = lo que va tras el prefijo LiteLLM) ----
+-- Models (slug = what follows the LiteLLM prefix)
 INSERT INTO models (provider_id, slug, alias, quality_tier, context_window, cost_in_mtok, cost_out_mtok, supports_tools, priority) VALUES
  ((SELECT id FROM providers WHERE name='gemini'),   'gemini-3.5-flash',          'gemini-35',  5, 1000000, 0, 0, TRUE, 10),
  ((SELECT id FROM providers WHERE name='gemini'),   'gemini-2.5-flash',          'gemini-25',  4, 1000000, 0, 0, TRUE, 20),
@@ -47,7 +45,7 @@ INSERT INTO models (provider_id, slug, alias, quality_tier, context_window, cost
  ((SELECT id FROM providers WHERE name='ollama'),   'qwen2.5-coder:14b',         'local-qwen', 2, 32000,   0, 0, TRUE, 300)
 ON CONFLICT (provider_id, slug) DO NOTHING;
 
--- ---- Roles de agente (jerarquia) ----
+-- Agent roles (hierarchy)
 INSERT INTO agent_roles (name, level, min_quality_tier, prefer_free, description, system_prompt) VALUES
  ('orchestrator', 0, 4, TRUE,  'Planifica, divide en tareas, asigna y revisa. No escribe codigo masivo.',
    'Eres el orquestador. Entiende el producto, divide en subtareas con dependencias, asigna cada una al rol adecuado y valida resultados. No escribas codigo extenso: delega.'),
@@ -61,7 +59,7 @@ INSERT INTO agent_roles (name, level, min_quality_tier, prefer_free, description
    'Generas codigo repetitivo y mecanico (DTOs, tests, docs, migraciones). Rapido y literal. No tomes decisiones de diseno.')
 ON CONFLICT (name) DO NOTHING;
 
--- ---- Tipos de responsabilidad ----
+-- Responsibility types
 INSERT INTO task_types (name, required_quality_tier, complexity, max_tokens, description) VALUES
  ('architecture',   4, 'critical', 50000,  'Decidir estructura del sistema'),
  ('implement-api',  3, 'high',     80000,  'Implementar endpoints/servicios'),
@@ -72,7 +70,7 @@ INSERT INTO task_types (name, required_quality_tier, complexity, max_tokens, des
  ('refactor',       2, 'medium',   60000,  'Refactor mecanico')
 ON CONFLICT (name) DO NOTHING;
 
--- ---- Que rol atiende que responsabilidad ----
+-- Which role handles which responsibility
 INSERT INTO role_task_types (role_id, task_type_id)
 SELECT r.id, t.id FROM agent_roles r, task_types t WHERE
    (r.name='orchestrator' AND t.name='architecture')

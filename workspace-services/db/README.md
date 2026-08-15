@@ -1,65 +1,43 @@
-# Base de datos de configuración (jerarquía de agentes y modelos)
+# Configuration database (agent and model hierarchy)
 
-Separa el **catálogo de modelos, las claves y la jerarquía de agentes/responsabilidades**
-del código. Un cargador (`generate_config.py`) la lee y genera la config de LiteLLM
-+ las definiciones de roles para el orquestador.
+Keeps the model catalog, keys, and agent/responsibility hierarchy out of the code.
+A loader (`generate_config.py`) reads it and generates the LiteLLM config plus the
+role definitions for the orchestrator.
 
-## Modelo de datos
+## Data model
 
-- `providers` — proveedores (free/trial/paid/local) y su prefijo LiteLLM.
-- `api_keys` — **referencia a variable de entorno** (no se guarda el secreto).
-- `models` — modelos con `quality_tier` (1-5), coste, cuotas, `supports_tools`, prioridad.
-- `agent_roles` — jerarquía nivel 0 (orquestador) → 3 (worker barato); cada rol con
-  su `system_prompt` (su "AGENTS.md" / skill) y `min_quality_tier`.
-- `task_types` — tipos de responsabilidad, con calidad requerida y presupuesto.
-- `role_task_types` — qué rol atiende qué responsabilidad.
+- `providers` - providers (free/trial/paid/local) and their LiteLLM prefix.
+- `api_keys` - environment-variable reference (the secret is never stored).
+- `models` - models with `quality_tier` (1-5), cost, quotas, `supports_tools`, priority.
+- `agent_roles` - hierarchy level 0 (orchestrator) to 3 (cheap worker); each role
+  carries its `system_prompt` (its AGENTS.md / skill) and `min_quality_tier`.
+- `task_types` - responsibility types, with required quality and budget.
+- `role_task_types` - which role handles which responsibility.
 
-## Criterio de selección (lo que hace el cargador)
+## Selection rules (what the loader does)
 
-1. **Modelo con clave presente en el entorno** → se incluye.
-2. **Modelo sin clave** → se salta.
-3. **Modelo caído en runtime** → lo aparta el `cooldown` de LiteLLM.
+1. Model with a key present in the environment -> included.
+2. Model without a key -> skipped.
+3. Model dead at runtime -> parked by LiteLLM cooldown.
 
-La **escalera por rol**: entre los modelos que cumplen la calidad mínima del rol,
-ordena **gratis primero** (coste asc) y luego mejor calidad primero. Así los buenos
-modelos gratis se quedan en las capas altas y el de pago es el último recurso.
+Per-role ladder: among the models meeting the role's minimum quality, order free
+first (cost asc) then best quality first, so good free models stay in the upper
+layers and paid ones are the last resort.
 
-## Uso
+## Usage
 
 ```bash
-# 1) Levanta los servicios (incluye Postgres):
-./svc up
-
-# 2) Inicializa la BD (esquema + datos de ejemplo):
-./svc db-init
-
-# 3) Edita tu catálogo/claves/roles con psql o tu cliente favorito.
-#    Rellena en .env solo las claves que tengas (GEMINI_API_KEY, GROQ_API_KEY...).
-
-# 4) Genera la config de LiteLLM desde la BD y reinicia el gateway:
-./svc db-load
+./svc up          # brings up the services (Postgres included)
+./svc db-init     # load schema + sample data
+./svc db-load     # generate config.yaml from the DB and restart the gateway
 ```
 
-`db-load` escribe `litellm/config.generated.yaml`, lo copia a `config.yaml` y
-reinicia LiteLLM. En Cline pon el Model ID en `auto`, o en un rol concreto
-(`orchestrator`, `architect`, `backend`, `boilerplate`) para usar su escalera.
+Fill only the keys you have in `.env`. Adding a model/provider/role is an `INSERT`
+plus `./svc db-load` - no code changes.
 
-Requisitos del cargador (host): `pip install "psycopg[binary]" pyyaml`.
+Loader host requirement: `pip install "psycopg[binary]" pyyaml`.
 
-## Añadir modelos/proveedores/roles
+## Security
 
-Es solo `INSERT` en la tabla correspondiente y `./svc db-load`. No se toca código.
-Ejemplo — añadir un proveedor y un modelo:
-
-```sql
-INSERT INTO providers (name, litellm_prefix, category) VALUES ('nueva','nueva/','free');
-INSERT INTO api_keys (provider_id, env_var) VALUES
-  ((SELECT id FROM providers WHERE name='nueva'), 'NUEVA_API_KEY');
-INSERT INTO models (provider_id, slug, alias, quality_tier)
-  VALUES ((SELECT id FROM providers WHERE name='nueva'), 'modelo-x', 'nueva-x', 3);
-```
-
-## Seguridad
-
-Las claves **no** se guardan en la BD, solo el nombre de su variable de entorno;
-el secreto vive en `.env`. Así un volcado de la BD no expone credenciales.
+Keys are not stored in the DB, only the name of their environment variable; the
+secret lives in `.env`. A DB dump never exposes credentials.

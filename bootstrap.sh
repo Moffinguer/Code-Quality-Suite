@@ -1,31 +1,23 @@
 #!/usr/bin/env bash
-# =============================================================================
-# bootstrap.sh — instalación completa a partir de un repo (o clonándolo):
-#   1) clona el repo si le pasas una URL
-#   2) crea/actualiza .gitattributes (bloque gestionado)
-#   3) detecta parámetros del proyecto (p.ej. versión de Java para PMD); si no
-#      puede, los pregunta la primera vez y los PERSISTE en quality-suite.env
-#   4) construye la imagen e instala los hooks
-# Idempotente: re-ejecutarlo respeta lo ya definido.
-#
-#   Uso:  ./bootstrap.sh <git-url | ruta-repo> [dir-destino]
-#   Destino por defecto al clonar: $QUALITY_WORKSPACE/<nombre> si esta definido.
-# =============================================================================
+# bootstrap.sh - one-shot install from a repo (or by cloning it): clone on URL,
+# manage the .gitattributes block, detect project parameters (asked once and
+# persisted), build the image and install the hooks. Idempotent.
+#   Usage: ./bootstrap.sh <git-url | repo-path> [dest-dir]
+#   Default clone dest: $QUALITY_WORKSPACE/<name> when set.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-SRC="${1:?uso: ./bootstrap.sh <git-url|ruta-repo> [dir-destino]}"
+SRC="${1:?usage: ./bootstrap.sh <git-url|repo-path> [dest-dir]}"
 DEST="${2:-}"
 
-# --- 1) Resolver / clonar repo ------------------------------------------------
 case "$SRC" in
   http://*|https://*|git@*|ssh://*)
     base="$(basename "${SRC%.git}")"
     if [ -n "$DEST" ]; then target="$DEST"
     elif [ -n "${QUALITY_WORKSPACE:-}" ]; then target="${QUALITY_WORKSPACE%/}/$base"
     else target="$base"; fi
-    if [ -d "$target/.git" ]; then echo "[bootstrap] '$target' ya existe; lo reutilizo.";
-    else echo "[bootstrap] Clonando $SRC -> $target ..."; git clone "$SRC" "$target"; fi
+    if [ -d "$target/.git" ]; then echo "[bootstrap] '$target' already exists; reusing it.";
+    else echo "[bootstrap] Cloning $SRC -> $target ..."; git clone "$SRC" "$target"; fi
     REPO="$(cd "$target" && pwd)" ;;
   *) REPO="$(cd "$SRC" && pwd)" ;;
 esac
@@ -36,17 +28,17 @@ mkdir -p "$HOOK_DIR"
 ENV_FILE="${HOOK_DIR}/quality-suite.env"
 
 env_get() { [ -f "$ENV_FILE" ] && sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$ENV_FILE" | head -n1 || true; }
-env_set() { # KEY VALUE
+env_set() {
   local k="$1" v="$2"
   if [ -f "$ENV_FILE" ] && grep -q "^$k=" "$ENV_FILE"; then
     sed -i.bak "s|^$k=.*|$k=\"$v\"|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"
   else printf '%s="%s"\n' "$k" "$v" >> "$ENV_FILE"; fi
 }
 
-# --- 2) .gitattributes (bloque gestionado: crea o reemplaza) ------------------
+# Managed block in .gitattributes (create or replace).
 ensure_gitattributes() {
   local ga="$REPO/.gitattributes"
-  local begin="# >>> code-quality-suite (gestionado) >>>"
+  local begin="# >>> code-quality-suite (managed) >>>"
   local end="# <<< code-quality-suite <<<"
   local block
   block="$begin
@@ -57,18 +49,16 @@ $end"
   if [ -f "$ga" ] && grep -qF "$begin" "$ga"; then
     awk -v b="$begin" -v e="$end" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$ga" > "$ga.tmp"
     printf '%s\n' "$block" >> "$ga.tmp"; mv "$ga.tmp" "$ga"
-    echo "[bootstrap] .gitattributes: bloque actualizado"
+    echo "[bootstrap] .gitattributes: block updated"
   else
     [ -f "$ga" ] && printf '\n' >> "$ga"
     printf '%s\n' "$block" >> "$ga"
-    echo "[bootstrap] .gitattributes: bloque añadido"
+    echo "[bootstrap] .gitattributes: block added"
   fi
 }
 ensure_gitattributes
 
-# --- 3) Parámetros del proyecto ----------------------------------------------
-# Detección extensible por tecnología. Hoy: Java desde pom.xml (para PMD).
-# Para otras tecnologías, añade aquí su fichero/campo (build.gradle, package.json...).
+# why: the Java version drives PMD's language level; read it from pom.xml if present.
 detect_java_version() {
   local pom="$REPO/pom.xml" v=""
   if [ -f "$pom" ]; then
@@ -79,24 +69,27 @@ detect_java_version() {
   printf '%s' "$v"
 }
 
-JV="$(env_get PMD_JAVA_VERSION)"
-if [ -n "$JV" ]; then
-  echo "[bootstrap] PMD_JAVA_VERSION ya definido ($JV); lo respeto."
+LANGS="$("$SCRIPT_DIR/scripts/detect-languages.sh" "$REPO")"
+if [ -z "$LANGS" ]; then
+  echo "[bootstrap] Empty project or no known languages: minimal base image (no tools)."
 else
+  echo "[bootstrap] Detected languages: $LANGS"
+fi
+
+# why: ask the Java version only when the project already has Java and it is unset.
+if echo " $LANGS " | grep -q " java " && [ -z "$(env_get PMD_JAVA_VERSION)" ]; then
   JV="$(detect_java_version)"
   if [ -n "$JV" ]; then
-    echo "[bootstrap] Java detectado en pom.xml: $JV"
+    echo "[bootstrap] Java detected in pom.xml: $JV"
   else
-    printf "[bootstrap] No pude detectar la versión de Java. Introdúcela (ej. 17, 21): "
+    printf "[bootstrap] Java project. Java version (e.g. 17, 21): "
     read -r JV < /dev/tty 2>/dev/null || JV=""
     [ -z "$JV" ] && JV="21"
   fi
+  env_set PMD_JAVA_VERSION "$JV"
 fi
 
-# --- 4) Imagen + hooks (install.sh preserva parámetros de usuario existentes) --
+export QUALITY_LANGS="$LANGS"
 "$SCRIPT_DIR/install.sh" "$REPO"
 
-# --- 5) Persistir el parámetro detectado/preguntado --------------------------
-env_set PMD_JAVA_VERSION "$JV"
-echo "[bootstrap] PMD_JAVA_VERSION=$JV guardado en $ENV_FILE"
-echo "[bootstrap] Listo. Prueba:  cd \"$REPO\" && git commit"
+echo "[bootstrap] Done. Try:  cd \"$REPO\" && git commit"

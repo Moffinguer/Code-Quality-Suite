@@ -1,7 +1,5 @@
--- =============================================================================
--- Esquema: catalogo de modelos + claves + jerarquia de agentes/responsabilidades.
--- El cargador (generate_config.py) lo lee y genera la config del orquestador.
--- =============================================================================
+-- Schema: model catalog + keys + agent/responsibility hierarchy.
+-- The loader (generate_config.py) reads it and generates the orchestrator config.
 
 CREATE TABLE IF NOT EXISTS providers (
   id             SERIAL PRIMARY KEY,
@@ -13,7 +11,7 @@ CREATE TABLE IF NOT EXISTS providers (
   notes          TEXT
 );
 
--- Claves por referencia a variable de entorno (NO se guarda el secreto en claro).
+-- Keys by environment-variable reference (the secret is never stored in clear).
 CREATE TABLE IF NOT EXISTS api_keys (
   id          SERIAL PRIMARY KEY,
   provider_id INT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
@@ -28,48 +26,48 @@ CREATE TABLE IF NOT EXISTS models (
   provider_id    INT NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
   slug           TEXT NOT NULL,                        -- tras el prefijo: 'llama-3.3-70b-versatile'
   alias          TEXT UNIQUE NOT NULL,                 -- nombre en LiteLLM: 'groq-llama70'
-  quality_tier   INT NOT NULL CHECK (quality_tier BETWEEN 1 AND 5),  -- 5 = mejor
+  quality_tier   INT NOT NULL CHECK (quality_tier BETWEEN 1 AND 5),  -- 5 = best
   context_window INT,
-  rpm INT, rpd INT, tpm INT, tpd INT,                  -- cuotas conocidas (informativo)
-  cost_in_mtok   NUMERIC NOT NULL DEFAULT 0,           -- coste €/M tokens entrada (0 = gratis)
+  rpm INT, rpd INT, tpm INT, tpd INT,                  -- known quotas (informational)
+  cost_in_mtok   NUMERIC NOT NULL DEFAULT 0,           -- input cost per Mtok (0 = free)
   cost_out_mtok  NUMERIC NOT NULL DEFAULT 0,
-  supports_tools BOOLEAN NOT NULL DEFAULT TRUE,        -- necesario para agentes que editan
-  priority       INT NOT NULL DEFAULT 100,             -- desempate en la escalera (menor = antes)
+  supports_tools BOOLEAN NOT NULL DEFAULT TRUE,        -- required for editing agents
+  priority       INT NOT NULL DEFAULT 100,             -- ladder tie-break (lower = earlier)
   enabled        BOOLEAN NOT NULL DEFAULT TRUE,
   UNIQUE (provider_id, slug)
 );
 
--- Jerarquia de agentes: nivel 0 orquestador ... 3 worker barato/local.
+-- Agent hierarchy: level 0 orchestrator ... 3 cheap/local worker.
 CREATE TABLE IF NOT EXISTS agent_roles (
   id               SERIAL PRIMARY KEY,
   name             TEXT UNIQUE NOT NULL,               -- 'orchestrator','architect','java-worker'
   level            INT NOT NULL CHECK (level BETWEEN 0 AND 3),
   description      TEXT,
-  system_prompt    TEXT,                               -- el "AGENTS.md especifico" / skill del rol
-  min_quality_tier INT NOT NULL DEFAULT 1,             -- calidad minima de modelo que puede usar
-  prefer_free      BOOLEAN NOT NULL DEFAULT TRUE,      -- gratis primero aunque sea capa alta
+  system_prompt    TEXT,                               -- the role's specific AGENTS.md / skill
+  min_quality_tier INT NOT NULL DEFAULT 1,             -- minimum model quality it may use
+  prefer_free      BOOLEAN NOT NULL DEFAULT TRUE,      -- free first even in upper layers
   enabled          BOOLEAN NOT NULL DEFAULT TRUE
 );
 
--- Tipos de responsabilidad / tarea.
+-- Responsibility / task types.
 CREATE TABLE IF NOT EXISTS task_types (
   id                    SERIAL PRIMARY KEY,
   name                  TEXT UNIQUE NOT NULL,          -- 'architecture','generate-dto','write-tests'
   required_quality_tier INT NOT NULL DEFAULT 1,
   complexity            TEXT NOT NULL CHECK (complexity IN ('low','medium','high','critical')),
-  max_tokens            INT,                           -- presupuesto por tarea
+  max_tokens            INT,                           -- per-task budget
   description           TEXT
 );
 
--- Que roles atienden que responsabilidades (N:M).
+-- Which roles handle which responsibilities (N:M).
 CREATE TABLE IF NOT EXISTS role_task_types (
   role_id      INT NOT NULL REFERENCES agent_roles(id) ON DELETE CASCADE,
   task_type_id INT NOT NULL REFERENCES task_types(id) ON DELETE CASCADE,
   PRIMARY KEY (role_id, task_type_id)
 );
 
--- Vista: modelos disponibles = habilitados y con clave (o locales).
--- La comprobacion de "clave presente en el entorno" la hace el cargador.
+-- View: available models = enabled and keyed (or local).
+-- The 'key present in the environment' check is done by the loader.
 CREATE OR REPLACE VIEW v_models AS
 SELECT m.*, p.name AS provider, p.litellm_prefix, p.base_url, p.category,
        p.requires_key,
