@@ -1,18 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
 REM ============================================================================
-REM bootstrap.bat - lanzador Windows (cmd). Prioriza Git Bash; ignora el stub
-REM de WSL (System32\bash.exe). Si no hay bash real, delega en PowerShell.
+REM bootstrap.bat - Windows launcher (cmd). Runs bootstrap.sh with Git Bash and
+REM ignores the WSL stub (System32\bash.exe). Git for Windows is required.
 REM ============================================================================
 set "HERE=%~dp0"
 set "BASH="
 
-REM 1) Rutas conocidas de Git para Windows
+REM 1) usual Git for Windows locations
 for %%B in ("%ProgramFiles%\Git\bin\bash.exe" "%ProgramFiles(x86)%\Git\bin\bash.exe" "%LocalAppData%\Programs\Git\bin\bash.exe") do (
   if not defined BASH if exist "%%~B" set "BASH=%%~B"
 )
 
-REM 2) Derivar de la ubicacion de git.exe (root\cmd\git.exe -> root\bin\bash.exe)
+REM 2) next to git.exe (root\cmd\git.exe -> root\bin\bash.exe)
 if not defined BASH (
   for /f "delims=" %%G in ('where git 2^>nul') do (
     if not defined BASH (
@@ -22,7 +22,7 @@ if not defined BASH (
   )
 )
 
-REM 3) where bash, excluyendo el stub de WSL en System32
+REM 3) bash on PATH, except the WSL stub in System32
 if not defined BASH (
   for /f "delims=" %%B in ('where bash 2^>nul') do (
     if not defined BASH (
@@ -36,11 +36,5 @@ if defined BASH (
   exit /b !ERRORLEVEL!
 )
 
-REM 4) Sin bash real: PowerShell nativo
-where powershell >nul 2>&1
-if !ERRORLEVEL! EQU 0 (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%HERE%bootstrap.ps1" %*
-  exit /b !ERRORLEVEL!
-)
-echo [bootstrap] No se encontro Git Bash ni PowerShell. Instala Git para Windows.
+echo [bootstrap] Git Bash not found. Install Git for Windows (https://git-scm.com/download/win) and retry.
 exit /b 1

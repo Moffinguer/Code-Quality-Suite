@@ -14,21 +14,40 @@ classify(){
     *.md|*.markdown) add markdown;;
     *.xml) add xml;;
     *.html|*.htm|*.xhtml|*.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.css|*.scss) add web;;
+    *.jsp) : ;;
     *.pl|*.pm|*.t) add perl;;
     *.sql) add sql;;
     *.py) add python;;
     *.c|*.cpp|*.cc|*.cxx|*.h|*.hpp|*.hh) add cpp;;
     *.sh|*.bash) add shell;;
-    *.jsp) : ;;  # no installable tool
+    *.toml) add toml;;
+    *.yaml|*.yml) add yaml;;
+    *.rst) add rst;;
+    *.lua) add lua;;
+    *.zig|*.zon) add zig;;
+    *.clj|*.cljs|*.cljc|*.edn) add clojure;;
+    *.vim) add vim;;
+    *.properties) add properties;;
+    *.go) add go;;
+    *.rs) add rust;;
+    *.php|*.phtml) add php;;
+    *.tex|*.latex|*.sty|*.cls) add tex;;
+    *.hs|*.lhs) add haskell;;
+    *.erl|*.hrl) add erlang;;
+    *.env|*.env.*) add env;;
     *)
       case "$base" in
         Dockerfile|Dockerfile.*|*.Dockerfile|Containerfile|Containerfile.*) add docker;;
+        .env|.env.*) add env;;
+        .vimrc|vimrc|.gvimrc) add vim;;
       esac
       if [ -f "$f" ]; then
         local sb; sb="$(head -n1 "$f" 2>/dev/null || true)"
         case "$sb" in
           *perl*) add perl;;
           *python*) add python;;
+          *lua*) add lua;;
+          *php*) add php;;
           *bash|*/sh|*" sh"|*"env sh") add shell;;
         esac
       fi

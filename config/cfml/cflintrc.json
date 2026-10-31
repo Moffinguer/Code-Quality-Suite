@@ -1,0 +1,4 @@
+{"rule": [], "excludes": [
+  {"code": "VAR_TOO_SHORT"}, {"code": "METHOD_TOO_SHORT"}, {"code": "COMPONENT_TOO_SHORT"},
+  {"code": "COMPONENT_HINT_MISSING"}, {"code": "FUNCTION_HINT_MISSING"}, {"code": "ARG_HINT_MISSING"}],
+ "includes": [], "inheritParent": false}

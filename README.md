@@ -1,160 +1,125 @@
 # Code Quality Suite
 
-Gate de calidad determinista para tus repositorios: en cada **commit** y **push**
-formatea y analiza el código, y **bloquea** la operación si no cumple con los estándares.
-Da igual quién escriba el código —tú, tu equipo o un agente de IA—, no entra al repositorio si no pasa las validaciones.
-Empaquetado en un contenedor Docker, portable a Linux, Windows (WSL2) y macOS.
+<!-- qs:version -->[![version 2.6.0](https://img.shields.io/badge/version-2.6.0-blue)](CHANGELOG.md)<!-- /qs:version -->
 
----
+Deterministic quality gate for your repositories: on every **commit** and **push** it checks
+the encoding, formats and analyses the code, and **blocks** the operation when it does not meet
+the rules. It does not matter who writes the code (you, your team or an AI agent): it does not
+enter the repository unless it passes. Everything runs in Docker, offline, on Linux, Windows
+(Git Bash + Docker Desktop) and macOS. On top of the gate: a branch model with versioned
+releases (git aliases), the standard repository files, and an AI-agent layer.
 
-## Qué comprueba y con qué herramientas
+## Requirements
 
-| Tipo de fichero | Formatea | Analiza |
-|-----------------|----------|---------|
-| **Java** | google-java-format | Checkstyle + PMD |
-| **Markdown** | markdownlint-cli2 `--fix` | markdownlint-cli2 |
-| **XML** | xmllint `--format` | xmllint (buena formación + XSD opcional) |
-| **Dockerfile** | — | hadolint (+ ShellCheck en bloques `RUN`) |
-| **HTML / XHTML** | Prettier | html-validate + ESLint/Stylelint (embebidos) |
-| **JS / JSX / TS / TSX** | Prettier | ESLint (+ typescript-eslint) |
-| **CSS / SCSS** | Prettier | Stylelint |
-| **JSP** | — | comprobación básica de delimitadores |
-| **Perl** | perltidy + perlimports | perl -cw + Perl::Critic |
-| **SQL (Oracle)** | sqlfluff format | sqlfluff lint (dialecto Oracle) |
-| **Python** | black + autopep8 + isort | pylint + mypy |
-| **C / C++** | clang-format | cppcheck + clang-tidy |
-| **Shell** | shfmt | shellcheck |
+- **Git** 2.38 or newer (Git Bash on Windows) and **Docker** running.
+- Nothing else in the target repository: every formatter and linter lives in the image.
+- Network only the first time a language is installed (image build).
 
----
-
-## Dos modos de ejecución
-
-La suite opera bajo dos filosofías distintas según el momento del ciclo de vida del desarrollo:
-
-1. **Modo `fix` (pre-commit)**:
-   - **Objetivo**: Ayudar al desarrollador aplicando correcciones automáticas.
-   - **Comportamiento**: Formatea los archivos modificados *in-place* (reescribiendo el archivo en tu espacio de trabajo) y luego ejecuta los analizadores estáticos. Corrige automáticamente todo lo que sea corregible (estilo, imports, espaciado).
-   - **Uso**: Se ejecuta automáticamente al hacer `git commit`.
-
-2. **Modo `check` (pre-push, CI/CD)**:
-   - **Objetivo**: Garantizar la inmutabilidad y verificar el cumplimiento estricto.
-   - **Comportamiento**: Realiza un montaje de solo lectura (`ro`) del repositorio. Verifica que todo el código esté perfectamente formateado y libre de violaciones sin modificar un solo byte. Si detecta código mal formateado o con advertencias, la ejecución falla y bloquea el push o la compilación.
-   - **Uso**: Se ejecuta automáticamente al hacer `git push` o en pipelines de CI/CD.
-
----
-
-## Requisitos
-
-- **Docker** instalado y en ejecución.
-- **Git** configurado en la máquina local (Linux, Windows con WSL2/Docker Desktop, o macOS).
-- El repositorio objetivo **no** necesita tener instalados los entornos de ejecución, compiladores o linters locales: todas las herramientas y runtimes viven de forma aislada dentro de la imagen Docker.
-
----
-
-## Estructura del Proyecto
-
-```
-code-quality-suite/
-├── VERSION                                  # Versión actual de la suite
-├── Dockerfile                               # Definición de la imagen base con todas las herramientas
-├── .dockerignore                            # Exclusiones para optimizar el build de Docker
-├── .gitattributes                           # Normalización de saltos de línea (LF) para scripts
-├── bootstrap.sh / .bat / .ps1 / .command    # Scripts de instalación multiplataforma
-├── bootstrap.config.example                 # Configuración de ejemplo para el bootstrap
-├── install.sh                               # Script de instalación de hooks en repositorios locales
-├── entrypoint.sh                            # Despachador agnóstico que agrupa archivos por tipo/shebang
-│
-├── handlers/                                # Scripts específicos de análisis por lenguaje
-│   ├── java.sh
-│   ├── markdown.sh
-│   ├── xml.sh
-│   ├── dockerfile.sh
-│   ├── web.sh
-│   ├── jsp.sh
-│   ├── perl.sh                              # Formateo con perltidy/perlimports y análisis con perlcritic
-│   ├── sql.sh                               # Formateo y análisis de SQL Oracle con sqlfluff
-│   ├── python.sh                            # Formateo con black/isort y análisis con pylint/mypy
-│   ├── c_cpp.sh                             # Formateo con clang-format y análisis con cppcheck/clang-tidy
-│   └── shell.sh                             # Formateo con shfmt y análisis con shellcheck
-│
-├── config/                                  # Archivos de configuración de las herramientas de análisis
-│   ├── checkstyle.xml
-│   ├── pmd-ruleset.xml
-│   ├── .markdownlint.jsonc
-│   ├── .hadolint.yaml
-│   ├── .perlcriticrc                        # Reglas de Perl::Critic
-│   ├── .perltidyrc                          # Reglas de formateo de Perl::Tidy
-│   ├── perlimports.toml                     # Configuración de ordenación de imports de Perl
-│   ├── .sqlfluff                            # Configuración de SQLFluff (dialecto Oracle)
-│   ├── .pylintrc                            # Reglas de Pylint para Python
-│   ├── .clang-format                        # Estilo de formateo C/C++
-│   └── .clang-tidy                          # Reglas de análisis estático C/C++
-│
-├── webtools/                                # Entorno Node.js aislado para herramientas web
-│   ├── package.json
-│   ├── .prettierrc.json
-│   ├── eslint.config.mjs
-│   ├── .stylelintrc.json
-│   └── .htmlvalidate.json
-│
-├── hooks/                                   # Hooks de Git listos para ser instalados
-│   ├── pre-commit                           # Formatea y analiza archivos en staging
-│   ├── pre-push                             # Verifica cambios antes de subirlos al remoto
-│   ├── commit-msg                           # Valida mensajes bajo Conventional Commits
-│   └── prepare-commit-msg                   # Genera plantilla de mensaje con manifiesto de cambios
-│
-└── scripts/                                 # Utilidades de mantenimiento y CI/CD
-    ├── ci-check.sh                          # Script optimizado para ejecutar en pipelines de CI
-    └── update-checksums.sh                  # Utilidad para actualizar y fijar hashes de herramientas
-```
-
----
-
-## Instalación y Uso Rápido
-
-Para instalar la suite de calidad en cualquier repositorio local, ejecuta el script de bootstrap proporcionando la ruta de tu repositorio:
+## Quick start
 
 ```bash
-./bootstrap.sh /ruta/a/tu/repositorio
+# once per machine (the only script you run by hand): unzip the suite somewhere stable, then
+bash /c/dev/code-quality-suite/git-integration/setup-global.sh     # git aliases + QS_SUITE
+
+# then everything is git
+git iniciar                                  # a new project in this folder (develop, hooks, files, AI files)
+git clonar https://git.example/team/app.git  # or: clone a project and set it up
+git instalar                                 # or: set up a clone you already have
+git add -A && git commit -m "chore: initial project skeleton"   # installs the tools (minutes, once)
+git ayuda                                    # the manual of every git command
 ```
 
-Esto realizará las siguientes acciones de forma automática:
-1. Construirá la imagen Docker localmente si no existe.
-2. Copiará los hooks de Git (`pre-commit`, `pre-push`, `commit-msg`, `prepare-commit-msg`) a la carpeta `.git/hooks/` de tu repositorio.
-3. Creará un archivo de configuración local `quality-suite.env` dentro de la carpeta de hooks para personalizar variables de entorno.
-4. Configurará `.gitattributes` para asegurar que los scripts mantengan saltos de línea LF.
+Step by step, updates and removal: [INSTALL.md](INSTALL.md). Every command:
+[docs/GIT-COMMANDS.md](docs/GIT-COMMANDS.md).
 
----
+## What happens
 
-## Integración Continua (CI/CD)
-
-El script `scripts/ci-check.sh` está diseñado para integrarse fácilmente en cualquier pipeline de CI/CD (como GitHub Actions o GitLab CI). Ejecuta la suite en modo `check` únicamente sobre los archivos modificados en el Pull Request o commit actual, optimizando los tiempos de ejecución.
-
-### Ejemplo para GitHub Actions:
-
-```yaml
-name: Quality Gate
-on: [pull_request]
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Run Quality Suite
-        run: |
-          docker build -t code-quality-suite:latest .
-          ./scripts/ci-check.sh origin/main
+```text
+git commit
+  └─ pre-commit hook
+       ├─ encoding of every staged file: UTF-8, no mojibake  ── stops here on a problem
+       ├─ detect languages of the staged files (engine, offline)
+       ├─ missing tools? → add an image layer (network, once per language)
+       └─ docker run --network none --read-only … engine run <files>
+            ├─ rules: .quality-rules.json (+ native configs generated from it)
+            ├─ per language, in parallel: syntax → mark → format → lint → deep
+            ├─ repository checks: secrets, conflict markers, VERSION / CHANGELOG / README badge
+            └─ formatted files are re-staged into the same commit; log: .git/quality-suite/
 ```
 
+`git push` runs the same pipeline in **check** mode on the pushed commits, then the project
+tests and an optional heavy command (`QUALITY_HEAVY_CMD="mvn -B verify"`). CI runs
+`scripts/ci-check.sh`.
 
-## Imagen modular (instalación perezosa)
+## Day to day
 
-La imagen **solo instala las herramientas de los lenguajes que el proyecto usa**.
-Un proyecto vacío produce una imagen base mínima. Cuando en un commit aparece un
-lenguaje nuevo, los hooks reconstruyen la imagen añadiendo solo ese grupo
-(`scripts/ensure-langs.sh`), y la **versión de Java se pregunta la primera vez que
-se detecta un `.java`**, no antes. Detección en `scripts/detect-languages.sh`;
-construcción selectiva por `--build-arg ENABLE_<LANG>=1` en `scripts/build-image.sh`.
-Ver también `docs/TROUBLESHOOTING.md`.
+| Command | Does |
+| --- | --- |
+| `git ayuda [command]` | the manual of every git command (also given to the AI agents as a skill) |
+| `git commit` / `git push` | the gate (above); bypass once with `--no-verify`, CI still checks |
+| `git encoding [--fix]` | encoding of the changed files; `--fix` repairs a wrong-encoding save |
+| `git np patch` | next version tree from develop (`6.22.7/ORIGINAL`, VERSION and pom.xml written) |
+| `git np <ot>` / `git nr <name>` | a parent / final branch under the current ORIGINAL |
+| `git subir` / `git integra` | bring the parent in / integrate into the parent |
+| `git arbol` / `git es` | show the branch tree / create one from stdin |
+| `git changelog` → `git release` → `git publicar` | preview, prepare `<version>/RELEASE` (CHANGELOG.md, badge), merge into develop |
+| `git nv <version> --from <branch>` / `git combinar` | a version tree from any branch / join several RELEASE |
+| `git repo-files` | create the missing standard repository files |
+| `git ia [--actualizar]` | AI agent files (AGENTS.md, skills, subagents), kept out of the repository |
+| `git actualizar-suite` | update the suite on this machine |
+
+Branch model and release: [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md). Rules file:
+[docs/QUALITY-RULES.md](docs/QUALITY-RULES.md).
+
+## Main languages (excerpt of 184)
+
+| Language | Syntax | Format | Lint (standard) | Deep (strict) |
+| --- | --- | --- | --- | --- |
+| Java | tree-sitter | google-java-format | Checkstyle, PMD (`--use-version`) | — |
+| JSP | built-in `<% %>` | built-in safe | PMD (JSP rules) | — |
+| PL/SQL | ZPA | built-in safe | ZPA | — |
+| Python | `ast` (target version) | Ruff format (+imports) | Ruff | mypy |
+| JS / TS | TypeScript parser | Prettier | ESLint | `tsc --noEmit` |
+| HTML / CSS / SCSS | — | Prettier | html-validate, Stylelint | — |
+| SQL (dialect knob) | built-in | SQLFluff | SQLFluff | — |
+| XML / JRXML | xmllint | xmllint `--format` | XSD (opt-in) | — |
+| Shell | `bash -n` and friends | shfmt | ShellCheck | — |
+| YAML | parse | yamlfmt | yamllint + subtype tools | — |
+| Markdown | — | markdownlint `--fix` | markdownlint | — |
+
+Full matrix and opt-in tools: [docs/LANGUAGES.md](docs/LANGUAGES.md). Pinned versions:
+[docs/VERSIONS.md](docs/VERSIONS.md).
+
+## Documentation
+
+| Read | For |
+| --- | --- |
+| [INSTALL.md](INSTALL.md) | install, update, remove; what lives where |
+| [docs/GIT-COMMANDS.md](docs/GIT-COMMANDS.md) | the manual of every git command: syntax, when, who (`git ayuda`) |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | working on the suite itself: tests, catalog, image |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | components, flows and decisions |
+| [API.md](API.md) | engine commands, hook variables, rules schema, gateway roles |
+| [FAQ.md](FAQ.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | questions and fixes |
+| [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) | branch model, versions, releases |
+| [docs/QUALITY-RULES.md](docs/QUALITY-RULES.md) | `.quality-rules.json`, encoding, commit messages |
+| [docs/REPO-FILES.md](docs/REPO-FILES.md) | standard repository files and their checks |
+| [docs/AI-SETUP.md](docs/AI-SETUP.md) · [docs/AI-DEMO.md](docs/AI-DEMO.md) | AI agents on top of the gate; free demo |
+| [docs/SKILLS.md](docs/SKILLS.md) · [docs/KNOWLEDGE-FLYWHEEL.md](docs/KNOWLEDGE-FLYWHEEL.md) | skills and norms map; design of the agent layer |
+| [docs/LOGGING.md](docs/LOGGING.md) · [docs/TESTING.md](docs/TESTING.md) · [docs/CODE_STYLE.md](docs/CODE_STYLE.md) | logs, project tests, code style |
+| [docs/GATEWAY-TOOLS.md](docs/GATEWAY-TOOLS.md) · [docs/PROVIDERS.md](docs/PROVIDERS.md) · [docs/MODELS.md](docs/MODELS.md) | related tools, model providers |
+| [CHANGELOG.md](CHANGELOG.md) · [ROADMAP.md](ROADMAP.md) | what changed, what comes next |
+| [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) · [SUPPORT.md](SUPPORT.md) | contributing, security, support |
+
+## Limitations
+
+- JSP gets PMD's JSP rules and PL/SQL gets ZPA, but no formatter exists for either (the built-in
+  safe formatter only fixes whitespace). 17 niche languages keep only the built-in checks.
+- Whole-project analysers (Clippy, golangci-lint, tsc, PHPStan, clang-tidy) need the project's
+  dependencies inside the container; offline they skip with a warning instead of failing.
+- Partial staging works: unstaged edits are set aside during the check and restored; if the
+  formatter touches lines right next to them, the commit stops and nothing changes.
+- Tool downloads are pinned by version; checksums can be pinned in `registry/src` (`sha256=`).
+
+## License
+
+<!-- qs:fill: the license of the suite (see LICENSE) --> See [LICENSE](LICENSE).

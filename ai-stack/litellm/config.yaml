@@ -1,0 +1,48 @@
+# LiteLLM roles for real work (the default; LITELLM_CONFIG=demo.yaml in .env for the free demo).
+# Agents ask for ROLES (role-*), never for a model: change the model behind a role here (or in the
+# UI, http://localhost:4000/ui) and no agent changes. The providers are in providers.yaml.
+#
+# Data classes (AGENTS.md) and the roles that may receive them:
+#   regulated -> role-local only (Ollama: never leaves this machine)
+#   internal  -> role-lead, role-dev, role-review (Anthropic API, commercial terms: no training)
+#   public    -> role-intern, role-long (free tiers and DeepSeek: may log or train on prompts)
+# A fallback never moves a prompt to a lower data class (no free model behind a paid role).
+include:
+  - providers.yaml
+
+model_list:
+  - model_name: role-lead                 # plans, decomposes, integrates
+    litellm_params: {model: anthropic/claude-opus-5-5, api_key: os.environ/ANTHROPIC_API_KEY}
+  - model_name: role-dev                  # writes code
+    litellm_params: {model: anthropic/claude-sonnet-5-5, api_key: os.environ/ANTHROPIC_API_KEY}
+  - model_name: role-review               # reviews diffs against norms
+    litellm_params: {model: anthropic/claude-opus-5-5, api_key: os.environ/ANTHROPIC_API_KEY}
+  - model_name: role-intern               # cheap work on public data: drafts, summaries, test data
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY}
+  - model_name: role-long                 # very long public inputs (whole logs, long documents)
+    litellm_params: {model: gemini/gemini-3.8-flash, api_key: os.environ/GEMINI_API_KEY}
+  - model_name: role-local                # regulated code
+    litellm_params: {model: ollama_chat/qwen2.5-coder:7b, api_base: http://ollama:11434}
+
+router_settings:
+  # the order of each list is the order of the fallbacks (also editable in the UI)
+  fallbacks:
+    - role-lead: [claude-sonnet]
+    - role-dev: [claude-haiku]
+    - role-review: [claude-sonnet]
+    - role-intern: [cerebras-gpt-oss, nvidia-gpt-oss, gemini-flash, sambanova-gpt-oss, openrouter-free,
+                    mistral-small, github-gpt, cohere-command, free-pool, deepseek-flash, claude-haiku]
+    - role-long: [gemini-flash-lite, deepseek-flash]
+  num_retries: 1
+  timeout: 300
+  # why: a free tier that answers 429 is benched for a minute instead of being retried at once
+  allowed_fails: 1
+  cooldown_time: 60
+
+litellm_settings:
+  drop_params: true          # why: providers reject parameters they do not know
+  turn_off_message_logging: true   # never store prompt or response bodies in the database
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true

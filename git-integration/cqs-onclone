@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# code-quality-suite hook (template)
+# cqs-onclone - template post-checkout hook (setup-global.sh --on-clone). Git runs a
+# template post-checkout right after `git clone` (old ref = null). It offers to bootstrap
+# the suite in the new clone; on later checkouts it does nothing. The suite path is baked
+# in by setup-global.sh. Non-interactive clones (IDEs, CI) are skipped unless
+# CQS_AUTO_BOOTSTRAP=1.
+set -uo pipefail
+SUITE_DIR="__CQS_SUITE_DIR__"
+[ "${1:-}" = "0000000000000000000000000000000000000000" ] || exit 0
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+[ -f "${HOOK_DIR}/quality-suite.env" ] && exit 0
+[ -x "${SUITE_DIR}/bootstrap.sh" ] || exit 0
+repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+answer="n"
+if [ "${CQS_AUTO_BOOTSTRAP:-0}" = "1" ]; then
+  answer="y"
+elif { exec 3</dev/tty; } 2>/dev/null; then
+  printf '[cqs] Install the code-quality-suite in %s? [Y/n] ' "$repo" >&2
+  read -r answer <&3 || answer="n"
+  exec 3<&-
+  answer="${answer:-y}"
+fi
+case "$answer" in
+  y|Y|s|S|yes|si|sí) bash "${SUITE_DIR}/bootstrap.sh" "$repo" >&2 || echo "[cqs] bootstrap failed; run it later: ${SUITE_DIR}/bootstrap.sh $repo" >&2 ;;
+  *) echo "[cqs] Skipped. Later: git clonar, or ${SUITE_DIR}/bootstrap.sh $repo" >&2 ;;
+esac
+exit 0

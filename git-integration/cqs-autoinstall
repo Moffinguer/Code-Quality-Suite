@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# code-quality-suite hook (template)
+# cqs-autoinstall - template hook copied into every repo by init.templateDir.
+# On the first commit/push it installs the suite for this repo, then runs the
+# real hook. The suite path is baked in by setup-global.sh.
+# why: git never runs code on clone; this only fires on YOUR first commit/push.
+set -euo pipefail
+HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOOK_NAME="$(basename "$0")"
+SUITE_DIR="__CQS_SUITE_DIR__"
+
+if [ ! -f "${HOOK_DIR}/quality-suite.env" ] && [ -x "${SUITE_DIR}/install.sh" ]; then
+  repo="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+  echo "[cqs] First run: installing the quality suite for this repo..." >&2
+  "${SUITE_DIR}/install.sh" "$repo" >&2 || true
+fi
+
+# install.sh overwrote this file with the real hook; run it if the install worked.
+if [ -f "${HOOK_DIR}/quality-suite.env" ] && [ -f "${HOOK_DIR}/${HOOK_NAME}" ]; then
+  exec "${HOOK_DIR}/${HOOK_NAME}" "$@"
+fi
+exit 0

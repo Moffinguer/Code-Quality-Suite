@@ -1,0 +1,14 @@
+{
+  "printWidth": 100,
+  "tabWidth": 2,
+  "semi": true,
+  "singleQuote": false,
+  "plugins": [
+    "prettier-plugin-svelte",
+    "prettier-plugin-astro",
+    "@prettier/plugin-pug",
+    "prettier-plugin-solidity",
+    "@shopify/prettier-plugin-liquid"
+  ],
+  "overrides": [{ "files": "*.xhtml", "options": { "parser": "html" } }]
+}

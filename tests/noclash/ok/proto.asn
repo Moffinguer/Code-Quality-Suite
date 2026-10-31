@@ -1,0 +1,5 @@
+Demo DEFINITIONS ::= BEGIN
+  Person ::= SEQUENCE {
+    age INTEGER
+  }
+END

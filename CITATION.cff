@@ -1,0 +1,16 @@
+# Convention: Citation File Format 1.2.0 (https://citation-file-format.github.io/).
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "code-quality-suite"
+type: software
+authors:
+  - name: "Fermatgom"
+    alias: "moffinguer"
+abstract: "Deterministic quality gate for git repositories: encoding, formatting and analysis of 184 languages in Docker on every commit and push, a versioned branch workflow, standard repository files and an AI-agent layer."
+keywords:
+  - quality gate
+  - git hooks
+  - linting
+  - docker
+version: "2.6.0"
+date-released: '2026-10-27'

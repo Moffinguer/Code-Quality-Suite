@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""fake-docker - just enough of the docker CLI to test the hooks without Docker.
+Images are JSON files in $FAKE_DOCKER_DIR; `run` executes the engine on the host with the
+container paths (/workspace, /qs-state) mapped back to the bind-mounted host paths."""
+import json
+import os
+import re
+import subprocess
+import sys
+
+D = os.environ["FAKE_DOCKER_DIR"]
+SUITE = os.environ["QS_SUITE_HOST"]
+os.makedirs(D, exist_ok=True)
+
+
+def img_path(tag):
+    return os.path.join(D, tag.replace("/", "_").replace(":", "@") + ".json")
+
+
+def load(tag):
+    try:
+        return json.load(open(img_path(tag)))
+    except OSError:
+        return None
+
+
+def save(tag, data):
+    json.dump(data, open(img_path(tag), "w"))
+
+
+def log(*a):
+    with open(os.path.join(D, "calls.log"), "a") as fh:
+        fh.write(" ".join(a) + "\n")
+
+
+args = sys.argv[1:]
+log(*args)
+cmd = args[0]
+if cmd == "info":
+    print("[name=seccomp]")
+    sys.exit(0)
+TITLE = "org.opencontainers.image.title=code-quality-suite"
+
+
+def all_tags():
+    return sorted(f[:-5].replace("@", ":").replace("_", "/") for f in os.listdir(D) if f.endswith(".json"))
+
+
+if cmd == "image" and args[1] == "inspect":
+    fmt = None
+    rest = args[2:]
+    if rest[0] == "-f":
+        fmt, rest = rest[1], rest[2:]
+    img = load(rest[0])
+    if img is None:
+        sys.exit(1)
+    if fmt:
+        m = re.search(r'index \.Config\.Labels "([^"]+)"', fmt)
+        if m:
+            print(img["labels"].get(m.group(1), ""))
+        elif "Id" in fmt:
+            import hashlib
+            print("sha256:" + hashlib.sha256(json.dumps(img, sort_keys=True).encode()).hexdigest())
+        else:
+            print("0" if "Size" in fmt else "")
+    sys.exit(0)
+if cmd == "image" and args[1] == "rm":
+    for t in args[2:]:
+        if not t.startswith("-") and os.path.exists(img_path(t)):
+            os.remove(img_path(t))
+    sys.exit(0)
+if cmd == "image" and args[1] == "ls":  # image ids are the tags here
+    label = next((a.split("=", 1)[1] for a in args if a.startswith("label=")), None)
+    repo = next((a for a in args[2:] if not a.startswith("-") and "=" not in a and "{{" not in a
+                 and args[args.index(a) - 1] not in ("--filter", "--format")), None)
+    for t in all_tags():
+        labels = (load(t) or {}).get("labels", {})
+        if label and labels.get(label.split("=", 1)[0]) != label.split("=", 1)[1]:
+            continue
+        if repo and t.split(":")[0] != repo:
+            continue
+        print(t)
+    sys.exit(0)
+if cmd == "image" and args[1] == "prune":
+    sys.exit(0)
+if cmd == "ps":
+    sys.exit(0)  # no leftover containers: every run is --rm
+if cmd == "tag":
+    save(args[2], load(args[1]))
+    sys.exit(0)
+if cmd == "build":
+    labels, tag, stdin_df = {}, None, args[-1] == "-"
+    i = 1
+    while i < len(args):
+        if args[i] == "-t":
+            tag = args[i + 1]; i += 2; continue
+        if args[i] == "--label":
+            k, _, v = args[i + 1].partition("="); labels[k] = v; i += 2; continue
+        i += 1
+    if stdin_df and os.environ.get("FAKE_DOCKER_FAIL_BUILD") == "1":
+        sys.stdin.read()
+        print("#5 1.0 [qs-install] ERROR installer crashed: simulated")
+        sys.exit(1)
+    if stdin_df:
+        df = sys.stdin.read()
+        base = load(re.search(r"^FROM (\S+)", df, re.M).group(1)) or {"labels": {}}
+        run = re.search(r"^RUN qs-install (.*)$", df, re.M).group(1)
+        log("LAYER", re.search(r"^FROM (\S+)", df, re.M).group(1), "->", tag, ":", run)
+        env = dict(os.environ, QS_REGISTRY=os.path.join(SUITE, "registry", "registry.json"))
+        subprocess.run([sys.executable, os.path.join(SUITE, "install", "qs-install"), "--dry-run", *run.split()],
+                       env=env, stdout=subprocess.DEVNULL)
+        new = {"labels": dict(base["labels"], **labels)}
+    else:
+        new = {"labels": {"qs.langs": "", "qs.layers": "0", "org.opencontainers.image.title": "code-quality-suite"}}
+    save(tag, new)
+    sys.exit(0)
+if cmd == "run":
+    mounts, env, workdir, i, entry = {}, {}, "/", 1, None
+    while i < len(args):
+        a = args[i]
+        if a == "-v":
+            host, cont = args[i + 1].split(":")[:2]; mounts[cont] = host; i += 2
+        elif a == "-w":
+            workdir = args[i + 1]; i += 2
+        elif a == "-e":
+            k, eq, v = args[i + 1].partition("=")
+            env[k] = v if eq else os.environ.get(k, ""); i += 2
+        elif a == "--env-file":
+            for line in open(args[i + 1]):
+                k, _, v = line.rstrip("\n").partition("=")
+                if k:
+                    env[k] = v
+            i += 2
+        elif a in ("--network", "--tmpfs", "--cap-drop", "--security-opt", "--user"):
+            i += 2
+        elif a == "--entrypoint":
+            entry = args[i + 1]; i += 2
+        elif a.startswith("-"):
+            i += 1
+        else:
+            break
+    image, rest = args[i], args[i + 1:]
+    if load(image) is None:
+        print(f"fake-docker: no image {image}", file=sys.stderr); sys.exit(125)
+    if entry:
+        sys.exit(0)  # e.g. listing installer failures: none in the fake image
+
+    def host(p):
+        for c, h in sorted(mounts.items(), key=lambda kv: -len(kv[0])):
+            if p == c or p.startswith(c + "/"):
+                return h + p[len(c):]
+        return p
+    full = dict(os.environ)
+    full.update({k: host(v) if v.startswith("/") else v for k, v in env.items()})
+    full["QS_SUITE"] = SUITE
+    full.pop("QS_ROOT", None)
+    p = subprocess.run([sys.executable, os.path.join(SUITE, "engine", "qs.py"), *rest], cwd=host(workdir), env=full)
+    sys.exit(p.returncode)
+print("fake-docker: unsupported " + " ".join(args), file=sys.stderr)
+sys.exit(2)

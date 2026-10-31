@@ -1,12 +1,15 @@
-# Copia a: .github/workflows/quality.yml del repo objetivo.
-# Asume que la suite vive en ./code-quality-suite dentro del repo (o ajusta rutas).
+# Copy to .github/workflows/quality.yml of the target repository.
+# Assumes the suite lives in ./code-quality-suite (submodule or vendored copy).
+# ci-check.sh builds the base image and installs only the languages it finds.
 name: quality
 on:
   pull_request:
   push:
     branches: [main]
   schedule:
-    - cron: "0 3 * * 1"      # escaneo completo semanal (lunes 03:00 UTC)
+    - cron: "0 3 * * 1"      # weekly full scan (Monday 03:00 UTC)
+
+permissions: {}
 
 jobs:
   quality:
@@ -14,22 +17,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0                 # necesario para el diff con la base
-      - name: Build quality image
-        run: docker build -t code-quality-suite:ci ./code-quality-suite
+          fetch-depth: 0                 # needed for the diff against the base
+          persist-credentials: false
       - name: Check
         env:
+          QUALITY_SUITE_DIR: ${{ github.workspace }}/code-quality-suite
           QUALITY_SUITE_IMAGE: code-quality-suite:ci
+          QS_RULES_FILE: .quality-rules.json   # commit it so CI applies the same rules
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
             ALL=1 ./code-quality-suite/scripts/ci-check.sh
           else
-            BASE="origin/${{ github.base_ref || 'main' }}"
             git fetch --no-tags origin "${{ github.base_ref || 'main' }}" || true
-            ./code-quality-suite/scripts/ci-check.sh "$BASE"
+            ./code-quality-suite/scripts/ci-check.sh "origin/${{ github.base_ref || 'main' }}"
           fi
 
-  # Etapa pesada opcional (build real: SpotBugs, cobertura...). Descomenta y ajusta.
+  # Optional heavy stage (real build: tests, coverage, SpotBugs...). Uncomment and adjust.
   # heavy:
   #   runs-on: ubuntu-latest
   #   steps:

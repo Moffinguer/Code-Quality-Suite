@@ -1,0 +1,50 @@
+# Copy to azure-pipelines.yml (or a template) of the target repository.
+# Assumes the suite lives in ./code-quality-suite (submodule or vendored copy) and the
+# rules file is committed (QS_RULES_FILE) so the server applies the same policies.
+# Branch policy: add this pipeline as a build validation on develop and on '*/ORIGINAL'.
+trigger:
+  branches:
+    include: [develop, main]
+pr:
+  branches:
+    include: ['*']
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  QUALITY_SUITE_DIR: $(Build.SourcesDirectory)/code-quality-suite
+  QUALITY_SUITE_IMAGE: code-quality-suite:ci
+  QS_RULES_FILE: .quality-rules.json
+
+steps:
+  - checkout: self
+    fetchDepth: 0
+    submodules: true
+    persistCredentials: false
+
+  - bash: |
+      set -euo pipefail
+      . "$QUALITY_SUITE_DIR/scripts/git-flow-lib.sh"
+      QS_POLICY_NO_DOCKER=1 qs_policy_load      # defaults; the rules file below overrides them
+      if [ -f "$QS_RULES_FILE" ]; then
+        eval "$(python3 "$QUALITY_SUITE_DIR/engine/qs.py" policy 2>/dev/null || true)"
+      fi
+      src="${SYSTEM_PULLREQUEST_SOURCEBRANCH#refs/heads/}"; dst="${SYSTEM_PULLREQUEST_TARGETBRANCH#refs/heads/}"
+      if [ -n "$src" ]; then
+        why="$(valid_branch_name "$src")" || { echo "##vso[task.logissue type=error]'$src': $why"; exit 1; }
+        want="$(parent_branch "$src")"
+        [ "$want" = "$dst" ] || { echo "##vso[task.logissue type=error]'$src' merges into '$want', not '$dst'"; exit 1; }
+      fi
+    displayName: Branch model
+
+  - bash: |
+      set -euo pipefail
+      if [ -n "${SYSTEM_PULLREQUEST_TARGETBRANCH:-}" ]; then
+        base="${SYSTEM_PULLREQUEST_TARGETBRANCH#refs/heads/}"
+        git fetch --no-tags origin "$base"
+        ./code-quality-suite/scripts/ci-check.sh "origin/$base"
+      else
+        ALL=1 ./code-quality-suite/scripts/ci-check.sh
+      fi
+    displayName: Quality gate (check mode)

@@ -5,24 +5,17 @@
          xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
 
   <description>
-    Reglas base de PMD para el pre-commit. Combina las categorias de mayor
-    senal (errorprone, bestpractices) con design y performance, excluyendo
-    las reglas notoriamente ruidosas. Ajustable por proyecto.
+    PMD base rules for the pre-commit: the highest-signal categories (errorprone, bestpractices)
+    plus design and performance, without the notoriously noisy rules.
   </description>
 
-  <!-- Patrones propensos a bugs: la categoria de mas valor. -->
   <rule ref="category/java/errorprone.xml"/>
-
-  <!-- Buenas practicas generales. -->
   <rule ref="category/java/bestpractices.xml"/>
-
-  <!-- Diseno: util, pero con dos reglas muy ruidosas fuera. -->
+  <!-- why: LawOfDemeter and LoosePackageCoupling are mostly noise in practice -->
   <rule ref="category/java/design.xml">
     <exclude name="LawOfDemeter"/>
     <exclude name="LoosePackageCoupling"/>
   </rule>
-
-  <!-- Rendimiento. -->
   <rule ref="category/java/performance.xml"/>
 
 </ruleset>

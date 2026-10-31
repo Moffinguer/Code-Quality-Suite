@@ -12,8 +12,8 @@ Minimal comments, English only, easy to retrieve with `grep`.
 ## Greppable anchors
 
 | Anchor | Meaning | Find with |
-|--------|---------|-----------|
-| First comment line of a file | one-line purpose of the file | `grep -rn '^# [a-z-]*\.' ` |
+| -------- | --------- | ----------- |
+| First comment line of a file | one-line purpose of the file | `grep -rn '^# [a-z-]*\.'` |
 | `why:` | rationale for a non-obvious decision | `grep -rn 'why:'` |
 | Python docstrings | module/function contract | `grep -rn 'def \|"""'` |
 
@@ -23,5 +23,5 @@ Minimal comments, English only, easy to retrieve with `grep`.
   line above it ONLY if its name is not enough. Non-obvious choices: `# why: ...`.
 - **Python**: module docstring + docstrings on non-trivial functions. No inline
   narration.
-- **SQL**: a one-line `-- ` above a table only if its purpose is not obvious.
+- **SQL**: a one-line `--` comment above a table only if its purpose is not obvious.
 - **Dockerfile/YAML**: one-line section headers; `# why:` for non-obvious steps.

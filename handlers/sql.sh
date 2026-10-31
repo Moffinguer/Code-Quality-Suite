@@ -1,32 +1,18 @@
 #!/usr/bin/env bash
-# =============================================================================
-# handlers/sql.sh — Handler para archivos SQL (Oracle)
-# =============================================================================
+# sql.sh - sqlfluff: format on fix, then lint. Dialect from SQL_DIALECT (default oracle).
 set -euo pipefail
-
-SUITE_DIR="/opt/quality-suite"
-CONFIG_FILE="${SUITE_DIR}/config/.sqlfluff"
+CONFIG_FILE="/opt/quality-suite/config/.sqlfluff"
 MODE="${QUALITY_MODE:-fix}"
-
-if [[ "$#" -eq 0 ]]; then
-  exit 0
-fi
-
+DIALECT="${SQL_DIALECT:-oracle}"
+[ "$#" -eq 0 ] && exit 0
 rc=0
-
 for f in "$@"; do
-  [[ -f "$f" ]] || continue
-
-  if [[ "$MODE" == "fix" ]]; then
-    echo "[quality-suite:sql] Formateando $f con sqlfluff (dialecto Oracle)..."
-    sqlfluff format --config "$CONFIG_FILE" "$f" || true
+  [ -f "$f" ] || continue
+  if [ "$MODE" = "fix" ]; then
+    echo "[quality-suite:sql] Formatting $f (dialect $DIALECT)..."
+    sqlfluff format --config "$CONFIG_FILE" --dialect "$DIALECT" "$f" || true
   fi
-
-  echo "[quality-suite:sql] Analizando $f con sqlfluff..."
-  if ! sqlfluff lint --config "$CONFIG_FILE" "$f"; then
-    echo "[quality-suite:sql] Violaciones de estilo/linting SQL en: $f"
-    rc=1
-  fi
+  echo "[quality-suite:sql] Linting $f (dialect $DIALECT)..."
+  if ! sqlfluff lint --config "$CONFIG_FILE" --dialect "$DIALECT" "$f"; then echo "[quality-suite:sql] SQL lint violations in: $f"; rc=1; fi
 done
-
 exit "$rc"

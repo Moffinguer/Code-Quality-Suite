@@ -1,0 +1,22 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "litellm/role-lead",
+  "provider": {
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "code-quality-suite gateway (LiteLLM, ai-stack)",
+      "options": {
+        "baseURL": "http://localhost:4000/v1",
+        "apiKey": "{env:QS_GATEWAY_KEY}"
+      },
+      "models": {
+        "role-lead": { "name": "role-lead: plans, splits work, integrates" },
+        "role-dev": { "name": "role-dev: writes code" },
+        "role-review": { "name": "role-review: reviews against the norms" },
+        "role-intern": { "name": "role-intern: cheap work, public data" },
+        "role-long": { "name": "role-long: very long public inputs" },
+        "role-local": { "name": "role-local: local model, regulated code" }
+      }
+    }
+  }
+}

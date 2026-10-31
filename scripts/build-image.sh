@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# build-image.sh - build the image with only the given language groups.
-#   build-image.sh <suite_dir> <image_tag> [lang1 lang2 ...]
-# No languages means a minimal base image.
+# build-image.sh - build the base image and, optionally, a layer with the given languages.
+#   build-image.sh <suite_dir> <image> [lang ...]      e.g. java python yaml/github-workflow
+# No languages = base only (tools are then installed on demand by the hooks).
+# QS_REBUILD=1 rebuilds the base from scratch (after editing the Dockerfile or the engine).
+#   build-image.sh --pin <suite_dir>   write base-image.lock with the digest of ubuntu:24.04 now
+# QS_APT_SNAPSHOT=<YYYYMMDDTHHMMSSZ|off> overrides the apt snapshot date of the Dockerfile.
 set -euo pipefail
-SUITE_DIR="$1"; IMAGE="$2"; shift 2
-langs=" $* "
-has(){ case "$langs" in *" $1 "*) return 0;; *) return 1;; esac; }
-
-args=()
-for g in java web markdown xml docker perl sql python cpp shell; do
-  if has "$g"; then
-    G="$(echo "$g" | tr '[:lower:]' '[:upper:]')"
-    args+=(--build-arg "ENABLE_${G}=1")
-  fi
-done
-# why: Node is shared by web and markdown; the Python venv by python and sql.
-if has web || has markdown; then args+=(--build-arg ENABLE_NODE=1); fi
-if has python || has sql;    then args+=(--build-arg ENABLE_PYVENV=1); fi
-
-echo "[build] Image ${IMAGE} with languages: ${*:-(none, minimal base)}"
-docker build "${args[@]}" -t "${IMAGE}" "${SUITE_DIR}"
+if [ "${1:-}" = "--pin" ]; then
+  docker pull -q ubuntu:24.04 >/dev/null
+  docker image inspect --format '{{index .RepoDigests 0}}' ubuntu:24.04 > "${2:-.}/base-image.lock"
+  echo "[build] pinned: $(cat "${2:-.}/base-image.lock") (rebuild with QS_REBUILD=1)"; exit 0
+fi
+QUALITY_SUITE_DIR="$1"; QUALITY_SUITE_IMAGE="$2"; shift 2
+. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+trap qs_lock_release EXIT
+if [ "${QS_REBUILD:-0}" = "1" ]; then
+  docker image rm -f "$QS_BASE_IMAGE" "$QUALITY_SUITE_IMAGE" >/dev/null 2>&1 || true
+fi
+qs_ensure_image
+[ "$#" -gt 0 ] && qs_install_langs _global "$@"
+echo "[build] ${QUALITY_SUITE_IMAGE} ready (tools for: $(qs_label "$QUALITY_SUITE_IMAGE" qs.langs))"

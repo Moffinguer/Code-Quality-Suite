@@ -3,15 +3,19 @@
 # manage the .gitattributes block, detect project parameters (asked once and
 # persisted), build the image and install the hooks. Idempotent.
 #   Usage: ./bootstrap.sh <git-url | repo-path> [dest-dir]
-#   Default clone dest: $QUALITY_WORKSPACE/<name> when set.
+#   Also: git clonar <git-url> [dest-dir]   (global alias, see git-integration/)
+#   Default clone dest: $QUALITY_WORKSPACE (or CQS_WORKSPACE, or bootstrap.config)/<name>.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+[ -f "$SCRIPT_DIR/bootstrap.config" ] && . "$SCRIPT_DIR/bootstrap.config"
+QUALITY_WORKSPACE="${QUALITY_WORKSPACE:-${CQS_WORKSPACE:-}}"
 
 SRC="${1:?usage: ./bootstrap.sh <git-url|repo-path> [dest-dir]}"
 DEST="${2:-}"
 
 case "$SRC" in
-  http://*|https://*|git@*|ssh://*)
+  http://*|https://*|git@*|ssh://*|file://*|git://*)
     base="$(basename "${SRC%.git}")"
     if [ -n "$DEST" ]; then target="$DEST"
     elif [ -n "${QUALITY_WORKSPACE:-}" ]; then target="${QUALITY_WORKSPACE%/}/$base"
@@ -46,50 +50,31 @@ ensure_gitattributes() {
 *.bat text eol=crlf
 *.cmd text eol=crlf
 $end"
-  if [ -f "$ga" ] && grep -qF "$begin" "$ga"; then
-    awk -v b="$begin" -v e="$end" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$ga" > "$ga.tmp"
-    printf '%s\n' "$block" >> "$ga.tmp"; mv "$ga.tmp" "$ga"
-    echo "[bootstrap] .gitattributes: block updated"
-  else
-    [ -f "$ga" ] && printf '\n' >> "$ga"
-    printf '%s\n' "$block" >> "$ga"
-    echo "[bootstrap] .gitattributes: block added"
-  fi
+  # why: later lines win in .gitattributes; the managed defaults go FIRST so the project's
+  # own rules (e.g. *.sln eol=crlf, *.csv -text) keep precedence.
+  local had=0
+  [ -f "$ga" ] && grep -qF "$begin" "$ga" && had=1
+  { printf '%s\n' "$block"
+    if [ -f "$ga" ]; then awk -v b="$begin" -v e="$end" '$0==b{skip=1} !skip{print} $0==e{skip=0}' "$ga"; fi
+  } > "$ga.tmp"
+  mv "$ga.tmp" "$ga"
+  if [ "$had" = 1 ]; then echo "[bootstrap] .gitattributes: block updated"; else echo "[bootstrap] .gitattributes: block added"; fi
 }
 ensure_gitattributes
 
-# why: the Java version drives PMD's language level; read it from pom.xml if present.
-detect_java_version() {
-  local pom="$REPO/pom.xml" v=""
-  if [ -f "$pom" ]; then
-    v="$(sed -n 's:.*<java.version>\([0-9][0-9.]*\)</java.version>.*:\1:p' "$pom" | head -n1)"
-    [ -z "$v" ] && v="$(sed -n 's:.*<maven.compiler.release>\([0-9][0-9.]*\)</maven.compiler.release>.*:\1:p' "$pom" | head -n1)"
-    [ -z "$v" ] && v="$(sed -n 's:.*<maven.compiler.source>\([0-9][0-9.]*\)</maven.compiler.source>.*:\1:p' "$pom" | head -n1)"
-  fi
-  printf '%s' "$v"
-}
-
-LANGS="$("$SCRIPT_DIR/scripts/detect-languages.sh" "$REPO")"
-if [ -z "$LANGS" ]; then
-  echo "[bootstrap] Empty project or no known languages: minimal base image (no tools)."
-else
-  echo "[bootstrap] Detected languages: $LANGS"
-fi
-
-# why: ask the Java version only when the project already has Java and it is unset.
-if echo " $LANGS " | grep -q " java " && [ -z "$(env_get PMD_JAVA_VERSION)" ]; then
-  JV="$(detect_java_version)"
-  if [ -n "$JV" ]; then
-    echo "[bootstrap] Java detected in pom.xml: $JV"
-  else
-    printf "[bootstrap] Java project. Java version (e.g. 17, 21): "
-    read -r JV < /dev/tty 2>/dev/null || JV=""
-    [ -z "$JV" ] && JV="21"
-  fi
-  env_set PMD_JAVA_VERSION "$JV"
-fi
-
-export QUALITY_LANGS="$LANGS"
 "$SCRIPT_DIR/install.sh" "$REPO"
+
+# why: pre-install the tools of the languages already in the repository, so the first commit
+# is fast. Versions not found in the project are asked once (they end up in .quality-rules.json).
+HOOK_ENV="$(git -C "$REPO" rev-parse --absolute-git-dir)/hooks/quality-suite.env"
+IMAGE="${QUALITY_SUITE_IMAGE:-}"   # empty = the image of this suite version (shared by all repositories)
+FILES=()
+while IFS= read -r -d '' f; do if [ -n "$f" ]; then FILES+=("$f"); fi; done < <(git -C "$REPO" ls-files -z)
+if [ "${#FILES[@]}" -gt 0 ]; then
+  echo "[bootstrap] Detecting languages in ${#FILES[@]} tracked file(s)..."
+  ( cd "$REPO" && "$SCRIPT_DIR/scripts/ensure-langs.sh" "$SCRIPT_DIR" "$HOOK_ENV" "$IMAGE" -- "${FILES[@]}" )
+else
+  echo "[bootstrap] Empty repository: tools are installed by the first commit that needs them."
+fi
 
 echo "[bootstrap] Done. Try:  cd \"$REPO\" && git commit"

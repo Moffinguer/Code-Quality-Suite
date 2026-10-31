@@ -1,107 +1,101 @@
-# Inventario de proveedores de modelos
+# Model provider inventory
 
-Referencia para alimentar el router y la BD. **Los límites cambian cada pocas
-semanas**; las cifras son orientativas (verificadas ~ago 2026). Mantén la versión
-viva con los agregadores del final.
+Reference for feeding the router and the DB. **Limits change every few weeks**;
+figures are indicative (verified ~Aug 2026). Keep it current with the aggregators
+at the end.
 
-Cuatro categorías: **permanentes gratis** (el sustrato), **créditos/trial** (una
-vez, para evaluar), **de pago** (archivar para cuando haya ingresos) y **locales**
-(sin límite de API, límite = tu hardware).
+Four categories: **permanently free** (the substrate), **credits/trial** (one-off,
+to evaluate), **paid** (archived for when there is revenue), and **local** (no API
+limit; limit = your hardware).
 
----
+## 1. Permanently free (no expiry; the limit is the quota)
 
-## 1. Permanentes gratis (sin caducidad; el límite son las cuotas)
+| Provider | Best for | Free limits (indicative) | LiteLLM prefix | Card |
+| ---------- | ---------- | -------------------------- | ---------------- | ------ |
+| **Google Gemini** (AI Studio) | Large context, architecture | ~20 RPD/model, 1M context; quota **per project, not per key** | `gemini/` | No |
+| **Groq** | Speed (many short calls) | llama-3.3-70b: 30 RPM, 1,000 RPD, 100K TPD; llama-3.1-8b more generous | `groq/` | No |
+| **Cerebras** | Very fast code generation | ~1M tokens/day (most generous by volume); volatile catalog | `cerebras/` | No |
+| **NVIDIA NIM** (build.nvidia.com) | Huge variety | 40 RPM; ~121 free models; some log prompts | `nvidia_nim/` | Phone verif. |
+| **GitHub Models** | Prototyping, fallback | 2,000 req/day per user; low 15 RPM/150 RPD, high 10 RPM/50 RPD; 8K in/4K out | `github/` | No (PAT) |
+| **Cloudflare Workers AI** | Edge helper tasks | 10,000 "neurons"/day; small context; ~39 models | `cloudflare/` | No |
+| **Mistral** | Coding (Codestral, Devstral) | Experiment tier always-free; **requires training opt-in** | `mistral/` | No |
+| **Scaleway** (EU) | Privacy, EU (devstral, voxtral) | 100 RPM, 200K TPM, ~1M tokens/account | OpenAI-compat (`api_base`) | No |
+| **SambaNova** | Large models (Llama 405B) | Permanent free 20 RPM / 20 RPD / 200K TPD per model (+$5 initial credit) | `sambanova/` | No |
+| **Cohere** | RAG, embeddings | Trial key ~100 req/day (Command R+) | `cohere/` | No |
+| **Z.ai / Zhipu** | Experimentation | GLM-4.5/4.7-Flash genuinely free, no published cap | OpenAI-compat | No |
+| **OVHcloud AI** (EU) | EU alternative | ~12 free models | OpenAI-compat | No |
+| **Hugging Face Inference** | 200+ open models | ~$0.10/month free credit | `huggingface/` | No |
+| **OpenRouter** | ONE key for many models | 20 RPM, **50 req/day** free (1,000 if you buy $10 of credits) | `openrouter/` | No |
+| **Pollinations** | Text+image+audio+video | No signup for basics; per-IP hourly | OpenAI-compat | No |
 
-| Proveedor | Mejor para | Límites free (orientativos) | Prefijo LiteLLM | Tarjeta |
-|-----------|-----------|-----------------------------|-----------------|---------|
-| **Google Gemini** (AI Studio) | Contexto grande, arquitectura | ~20 RPD/modelo, 1M contexto (recortado 50-80% en 2025); cuota **por proyecto, no por key** | `gemini/` | No |
-| **Groq** | Velocidad (muchas llamadas cortas) | llama-3.3-70b: 30 RPM, 1.000 RPD, 100K TPD; llama-3.1-8b más generoso | `groq/` | No |
-| **Cerebras** | Generación de código rapidísima | ~1M tokens/día (el más generoso en volumen); catálogo volátil | `cerebras/` | No |
-| **NVIDIA NIM** (build.nvidia.com) | Variedad enorme | 40 RPM; ~121 modelos free; algunos loguean prompts | `nvidia_nim/` | Verif. tel. |
-| **GitHub Models** | Prototipado, fallback | 2.000 req/día por usuario; low 15 RPM/150 RPD, high 10 RPM/50 RPD; 8K in/4K out | `github/` | No (PAT) |
-| **Cloudflare Workers AI** | Tareas auxiliares en el edge | 10.000 "neurons"/día; contexto pequeño; ~39 modelos | `cloudflare/` | No |
-| **Mistral** | Coding (Codestral, Devstral) | Tier Experiment always-free; **requiere opt-in a training** | `mistral/` | No |
-| **Scaleway** (EU) | Privacidad, EU (devstral, voxtral) | 100 RPM, 200K TPM, ~1M tokens/cuenta | OpenAI-compat (`api_base`) | No |
-| **SambaNova** | Modelos grandes (Llama 405B) | Free permanente 20 RPM / 20 RPD / 200K TPD por modelo (+$5 crédito inicial) | `sambanova/` | No |
-| **Cohere** | RAG, embeddings | Trial key ~100 req/día (Command R+) | `cohere/` | No |
-| **Z.ai / Zhipu** | Experimentación | GLM-4.5/4.7-Flash genuinamente gratis, sin tope publicado | OpenAI-compat | No |
-| **OVHcloud AI** (EU) | Alternativa EU | ~12 modelos free | OpenAI-compat | No |
-| **Hugging Face Inference** | 200+ modelos open | ~$0.10/mes de crédito free | `huggingface/` | No |
-| **OpenRouter** | UNA key para muchos modelos | 20 RPM, **50 req/día** free (1.000 si compras $10 en créditos) | `openrouter/` | No |
-| **Pollinations** | Texto+imagen+audio+vídeo | Sin registro para lo básico; por-IP horario | OpenAI-compat | No |
+> Important Gemini note: quotas are **per Google project, not per API key** -
+> generating several keys in the same project does NOT multiply the quota.
 
-> Nota Gemini importante: las cuotas son **por proyecto Google, no por API key** —
-> generar varias keys en el mismo proyecto NO multiplica la cuota.
+## 2. Credits / trial (one-off; to evaluate paid models)
 
-## 2. Créditos / trial (una vez; para evaluar modelos de pago)
+| Provider | Initial gift | Note |
+| ---------- | -------------- | ------ |
+| **DeepSeek** | ~5M tokens (~2,500 calls) | Then very cheap; ideal as the "first paid step" |
+| **SambaNova** | $5 (30 days) | On top of the permanent free |
+| **AI21** | $10 (3 months) | Jamba family |
+| **Fireworks** | $1 on signup | -- |
+| **NVIDIA NIM** | 1,000 credits | On top of the RPM free tier |
+| **Vercel AI Gateway** | $5/month | Gateway with monthly credit |
+| **Baseten** | $30 on deploy | For deploying models |
+| **Hyperbolic** | credit | Early access (DeepSeek-V3.1, Qwen3-235B) |
 
-| Proveedor | Regalo inicial | Nota |
-|-----------|----------------|------|
-| **DeepSeek** | ~5M tokens (~2.500 llamadas) | Luego baratísimo; ideal como "primer paso de pago" |
-| **SambaNova** | $5 (30 días) | Sobre el free permanente |
-| **AI21** | $10 (3 meses) | Familia Jamba |
-| **Fireworks** | $1 al registrarse | — |
-| **NVIDIA NIM** | 1.000 créditos | Sobre el free por RPM |
-| **Vercel AI Gateway** | $5/mes | Gateway con crédito mensual |
-| **Baseten** | $30 en deploy | Para desplegar modelos |
-| **Hyperbolic** | crédito | Acceso temprano (DeepSeek-V3.1, Qwen3-235B) |
+## 3. Paid - ARCHIVE for when there is revenue
 
-## 3. De pago — ARCHIVAR para cuando haya ingresos
+| Provider | Cost (indicative) | When to use it |
+| ---------- | ------------------- | ---------------- |
+| **DeepSeek** (own API) | Cheapest (cents/MTok) | First paid jump; no free-tier limits |
+| **Anthropic Claude** | Opus ~$5/$25 per MTok | High quality on critical decisions |
+| **OpenAI** | Pay per token | Ecosystem and tooling |
+| **Groq / Cerebras / Together / Fireworks** (paid) | Cheap + fast | Volume when the free tier falls short |
 
-| Proveedor | Coste (orientativo) | Cuándo usarlo |
-|-----------|---------------------|---------------|
-| **DeepSeek** (API propia) | El más barato (céntimos/MTok) | Primer salto de pago; sin límites de free |
-| **Anthropic Claude** | Opus 4.6 ~$5/$25 por MTok | Calidad alta en decisiones críticas |
-| **OpenAI** | Pago por token | Ecosistema y tooling |
-| **Groq / Cerebras / Together / Fireworks** (paid) | Barato + rápido | Volumen cuando el free se queda corto |
+> Together AI **no longer has a free trial**; Groq lowered quotas in 2026.
 
-> Together AI **ya no tiene trial gratis**; Groq bajó cuotas en 2026.
+## 4. LOCAL models (Ollama) - no API limit, limit = hardware
 
-## 4. Modelos LOCALES (Ollama) — sin límite de API, límite = hardware
+| Model | Sizes | Approx. RAM (Q4) | Use |
+| ------- | ------- | ------------------ | ----- |
+| **Qwen2.5-Coder / Qwen3-Coder** | 0.5B-32B | 7B~=6GB, 14B~=10GB, 32B~=20GB | Best open coding; workhorse |
+| **DeepSeek-Coder-V2** | 16B | ~=10GB | Code generation |
+| **Codestral** (Mistral) | 22B | ~=14GB | Coding, autocomplete |
+| **Devstral** (Mistral) | 24B | ~=15GB | **Tuned for agents** (tool use) |
+| **Llama 3.1 / 3.3** | 8B / 70B | 8B~=6GB, 70B~=40GB+ | General purpose |
+| **Gemma 3** | 4B-27B | 4B~=4GB, 27B~=18GB | Light to medium |
+| **StarCoder2** | 3B-15B | by size | Autocomplete, boilerplate |
 
-| Modelo | Tamaños | RAM aprox. (Q4) | Uso |
-|--------|---------|-----------------|-----|
-| **Qwen2.5-Coder / Qwen3-Coder** | 0.5B–32B | 7B≈6GB, 14B≈10GB, 32B≈20GB | El mejor coding open; workhorse |
-| **DeepSeek-Coder-V2** | 16B | ≈10GB | Generación de código |
-| **Codestral** (Mistral) | 22B | ≈14GB | Coding, autocompletado |
-| **Devstral** (Mistral) | 24B | ≈15GB | **Afinado para agentes** (tool use) |
-| **Llama 3.1 / 3.3** | 8B / 70B | 8B≈6GB, 70B≈40GB+ | Propósito general |
-| **Gemma 3** | 4B–27B | 4B≈4GB, 27B≈18GB | Ligero a medio |
-| **StarCoder2** | 3B–15B | según tamaño | Autocompletado, boilerplate |
+Rule of thumb: a local model for the **high-volume work** (boilerplate, tests,
+docs, mechanical refactors) and reserve the good free/paid ones for the
+**decisions** (architecture, hard bugs).
 
-Regla práctica: un modelo local para el **trabajo de mucho volumen** (boilerplate,
-tests, docs, refactors mecánicos) y reservar los buenos gratis/de pago para las
-**decisiones** (arquitectura, bugs difíciles).
+## Legitimate split by task type
 
----
+| Task level | Quality | Suggested providers |
+| ------------ | --------- | --------------------- |
+| Architecture / large context / hard bugs | HIGH | Gemini, (paid: Claude/DeepSeek) |
+| Fast code generation / iteration | MEDIUM | Cerebras, Groq |
+| Boilerplate / tests / docs / mass refactors | LOW/volume | **Local (Ollama)**, Groq 8B |
+| Fallback / alternative reasoning | -- | GitHub Models, NVIDIA NIM, OpenRouter |
+| Helper tasks (embed, classification, summary) | -- | Cloudflare Workers AI, Cohere |
 
-## Estrategia legítima de reparto por tipo de tarea
+## Ethics and legality (important)
 
-| Nivel de tarea | Calidad | Proveedores sugeridos |
-|----------------|---------|-----------------------|
-| Arquitectura / contexto grande / bugs difíciles | ALTA | Gemini, (de pago: Claude/DeepSeek) |
-| Generación rápida de código / iteración | MEDIA | Cerebras, Groq |
-| Boilerplate / tests / docs / refactors masivos | BAJA/volumen | **Local (Ollama)**, Groq 8B |
-| Fallback / razonamiento alternativo | — | GitHub Models, NVIDIA NIM, OpenRouter |
-| Tareas auxiliares (embed, clasificación, resumen) | — | Cloudflare Workers AI, Cohere |
+- Use **only legitimate free tiers**. No account rotation, no multiple keys to
+  bypass quotas, no fake accounts: it is fragile, violates the ToS, and ends in a
+  ban. (It would not work on Gemini anyway: the quota is per project.)
+- Some providers ask for **phone verification** (NVIDIA, Mistral) as a legitimate
+  anti-abuse measure.
+- Community principle: do not scrape, resell, or abuse. These resources exist
+  because they are respected.
+- Realistic path: **$0 on free to prototype and validate -> first revenue -> paid
+  DeepSeek/Claude for quality**. Free has an honest ceiling.
 
----
+## Live sources (to keep this inventory current)
 
-## Ética y legalidad (importante)
-
-- Usa **solo free tiers legítimos**. Nada de rotación de cuentas, keys múltiples
-  para saltar cuotas, ni cuentas falsas: es frágil, va contra los ToS y termina
-  en bloqueo. (Además, en Gemini no funcionaría: la cuota es por proyecto.)
-- Algunos proveedores piden **verificación por teléfono** (NVIDIA, Mistral) como
-  medida anti-abuso legítima.
-- Principio de la comunidad: no scrapear, no revender, no abusar. Estos recursos
-  existen porque se respetan.
-- Modelo de negocio realista: **€0 en free para prototipar y validar → primer
-  ingreso → DeepSeek/Claude de pago para calidad**. El free tiene techo honesto.
-
-## Fuentes vivas (para mantener este inventario al día)
-
-- `freellm.net` — 30+ proveedores, estado online en vivo.
-- `models.dev` — catálogo con API JSON (para el generador automático).
+- `freellm.net` - 30+ providers, live online status.
+- `models.dev` - catalog with a JSON API (for the automatic generator).
 - GitHub: `amardeeplakshkar/awesome-free-llm-apis`, `cheahjs/free-llm-api-resources`,
   `mnfst/awesome-free-llm-apis`, `CYBIRD-D/FREE-LLM-API-Provider`.

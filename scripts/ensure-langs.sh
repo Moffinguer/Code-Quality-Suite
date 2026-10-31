@@ -1,39 +1,62 @@
 #!/usr/bin/env bash
-# ensure-langs.sh - lazy install. If <files> introduce a language not yet in
-# QUALITY_LANGS, rebuild the image adding it. On the first Java file with no
-# PMD_JAVA_VERSION, ask for it (or read it from pom.xml). Idempotent.
+# ensure-langs.sh - on-demand install. Detects the languages of the files with the engine
+# (extension, name, shebang, modeline, content probes, file(1)); if the image lacks their
+# tools, adds an image layer with them. The first time a language with a version knob
+# appears in the repository and the project does not reveal its version, asks once on the
+# terminal and stores the answer (the engine then pins it in .quality-rules.json).
+#   ensure-langs.sh <suite_dir> <env_file> <image> --from <nul-separated-list>
 #   ensure-langs.sh <suite_dir> <env_file> <image> -- <files...>
+# QS_RETRY_FAILED=1 retries tools whose install failed; QS_NO_PROMPT=1 never asks.
 set -euo pipefail
-SUITE_DIR="$1"; ENV_FILE="$2"; IMAGE="$3"; shift 3
-[ "${1:-}" = "--" ] && shift
-[ "$#" -eq 0 ] && exit 0
+QUALITY_SUITE_DIR="$1"; ENV_FILE="$2"; QUALITY_SUITE_IMAGE="$3"; shift 3
+. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+trap qs_lock_release EXIT
+
+STATE="$(qs_state_dir)"; mkdir -p "$STATE"
+LIST="${STATE}/detect.lst"
+if [ "${1:-}" = "--from" ]; then
+  [ "$2" = "$LIST" ] || cp "$2" "$LIST"
+else
+  [ "${1:-}" = "--" ] && shift
+  if [ "$#" -gt 0 ]; then printf '%s\0' "$@" > "$LIST"; else : > "$LIST"; fi
+fi
+[ -s "$LIST" ] || exit 0
 
 env_get(){ [ -f "$ENV_FILE" ] && sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$ENV_FILE" | head -n1 || true; }
 env_set(){ if [ -f "$ENV_FILE" ] && grep -q "^$1=" "$ENV_FILE"; then sed -i.bak "s|^$1=.*|$1=\"$2\"|" "$ENV_FILE" && rm -f "$ENV_FILE.bak"; else printf '%s="%s"\n' "$1" "$2" >> "$ENV_FILE"; fi; }
 
-cur="$(env_get QUALITY_LANGS)"
-new="$("$SUITE_DIR/scripts/detect-languages.sh" --files "$@")"
-
-merged="$cur"; changed=0
-for l in $new; do
-  case " $merged " in *" $l "*) ;; *) merged="$merged $l"; changed=1;; esac
+qs_ensure_image
+detected="$(qs_engine_query langs "$LIST" || true)"
+want="_global $detected"
+have=" $(qs_label "$QUALITY_SUITE_IMAGE" qs.langs) "
+missing=""
+for t in $want; do
+  case "$have" in *" $t "*) ;; *) case " $missing " in *" $t "*) ;; *) missing="$missing $t";; esac ;; esac
 done
-merged="$(echo "$merged" | xargs || true)"
-[ "$changed" = "0" ] && exit 0
+missing="$(echo "$missing" | xargs || true)"
+[ "${QS_RETRY_FAILED:-0}" = "1" ] && missing="$(echo "$have $missing" | xargs || true)"
 
-# why: prompt for the Java version only the first time Java shows up, not before.
-if echo " $new " | grep -q ' java ' && [ -z "$(env_get PMD_JAVA_VERSION)" ]; then
-  root="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
-  jv=""
-  [ -f "$root/pom.xml" ] && jv="$(sed -n 's:.*<java.version>\([0-9][0-9.]*\)</java.version>.*:\1:p' "$root/pom.xml" | head -n1)"
-  if [ -z "$jv" ]; then
-    printf "[quality-suite] First Java file detected. Project Java version (e.g. 17, 21): " >&2
-    read -r jv < /dev/tty 2>/dev/null || jv=""
-    [ -z "$jv" ] && jv="21"
-  fi
-  env_set PMD_JAVA_VERSION "$jv"
+# Languages not yet in the rules file (first appearance in this repository).
+rules="$(qs_repo_root)/.quality-rules.json"
+new_langs=""
+for t in $detected; do
+  case "$t" in tool:*) continue ;; esac
+  l="${t%%/*}"
+  grep -q "\"$l\": {" "$rules" 2>/dev/null || new_langs="$new_langs $l"
+done
+
+# First appearance: ask for versions the project does not reveal (legacy behaviour of v1).
+if [ -n "$new_langs" ] && [ -t 2 ] && [ "${QS_NO_PROMPT:-0}" != "1" ] && { exec 3</dev/tty; } 2>/dev/null; then
+  while IFS=$'\t' read -r lang var def label; do
+    { [ -n "$var" ] && [ "$var" != "-" ]; } || continue
+    [ -n "$(env_get "$var")" ] && continue
+    [ "$def" = "-" ] && def=""
+    printf '[quality-suite] First %s file. %s [%s]: ' "$lang" "$label" "$def" >&2
+    ans=""; read -r ans <&3 || ans=""
+    if [ -n "${ans:-$def}" ]; then env_set "$var" "${ans:-$def}"; fi
+  done < <(qs_engine_query ask "$LIST" || true)
+  exec 3<&-
 fi
 
-env_set QUALITY_LANGS "$merged"
-echo "[quality-suite] New language '$new'. Rebuilding image (languages: $merged)..." >&2
-"$SUITE_DIR/scripts/build-image.sh" "$SUITE_DIR" "$IMAGE" $merged
+if [ -n "$missing" ]; then qs_install_langs $missing; fi
+exit 0

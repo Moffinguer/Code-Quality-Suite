@@ -1,0 +1,5 @@
+service:
+    name: demo
+    ports:
+      - 80
+      - 443

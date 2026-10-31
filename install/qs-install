@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""qs-install - install the tools of the given languages from the registry (image build time).
+
+  qs-install [--strict] [--dry-run] <lang>... [_global] [tool:<id>] [runtime:<id>]
+
+Channels, in order: runtimes, apt, pip (one venv per package), npm (shared /opt/npm),
+GitHub/URL downloads (archives, raw binaries, jars, phars), scripts. A failing tool is
+reported and skipped (the engine then falls back to the built-in checks) unless --strict.
+Network is only used here, never when the analysis runs.
+"""
+import gzip
+import hashlib
+import io
+import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import time
+import urllib.request
+import zipfile
+
+SUITE = os.environ.get("QS_SUITE", "/opt/quality-suite")
+REGISTRY = os.environ.get("QS_REGISTRY", os.path.join(SUITE, "registry", "registry.json"))
+QS = "/opt/qs"
+BIN, PKG, VENV, STATE = f"{QS}/bin", f"{QS}/pkg", f"{QS}/venv", f"{QS}/state"
+NPM = os.environ.get("QS_NPM", "/opt/npm")
+RUNTIME_ENV = f"{QS}/runtime.env"
+DRY = False
+
+
+def log(level, msg):
+    print(f"[qs-install] {level} {msg}", flush=True)
+
+
+def arch():
+    try:
+        return subprocess.run(["dpkg", "--print-architecture"], capture_output=True, text=True).stdout.strip()
+    except OSError:
+        return {"x86_64": "amd64", "aarch64": "arm64"}.get(os.uname().machine, os.uname().machine)
+
+
+def env_with_runtimes(reg):
+    env = dict(os.environ)
+    paths = [BIN]
+    for r in reg["runtimes"].values():
+        paths += r.get("path", [])
+        env.update(r.get("env", {}))
+    env["PATH"] = ":".join(paths + [env.get("PATH", "/usr/local/bin:/usr/bin:/bin")])
+    env["QS_SUITE"] = SUITE
+    env["NPM_CONFIG_UPDATE_NOTIFIER"] = "false"
+    env["NPM_CONFIG_FUND"] = "false"
+    return env
+
+
+def sh(cmd, env, shell=False):
+    if DRY:
+        log("DRY", cmd if isinstance(cmd, str) else " ".join(cmd))
+        return
+    subprocess.run(cmd, env=env, check=True, shell=shell, executable="/bin/bash" if shell else None)
+
+
+def wrapper(name, target_cmd):
+    os.makedirs(BIN, exist_ok=True)
+    path = os.path.join(BIN, name)
+    with open(path, "w") as fh:
+        fh.write("#!/bin/sh\nexec " + target_cmd + ' "$@"\n')
+    os.chmod(path, 0o755)
+
+
+def download(url, sha256=None, tries=3):
+    for i in range(tries):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "code-quality-suite"})
+            with urllib.request.urlopen(req, timeout=300) as r:
+                data = r.read()
+            break
+        except OSError as e:
+            if i == tries - 1:
+                raise RuntimeError(f"download failed: {url}: {e}")
+            time.sleep(2 * (i + 1))
+    digest = hashlib.sha256(data).hexdigest()
+    if sha256 and digest != sha256:
+        raise RuntimeError(f"checksum mismatch for {url}: {digest}")
+    if not sha256:
+        log("WARN", f"no pinned checksum for {url.rsplit('/', 1)[-1]} (sha256 {digest})")
+    return data
+
+
+def unpack(data, name, dest):
+    os.makedirs(dest, exist_ok=True)
+    low = name.lower()
+    if low.endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for info in z.infolist():
+                z.extract(info, dest)
+                mode = (info.external_attr >> 16) & 0o777
+                if mode:
+                    os.chmod(os.path.join(dest, info.filename), mode)
+    elif any(low.endswith(x) for x in (".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".tar")):
+        with tarfile.open(fileobj=io.BytesIO(data)) as t:
+            t.extractall(dest, filter="data") if hasattr(tarfile, "data_filter") else t.extractall(dest)
+    elif low.endswith(".gz"):
+        with open(os.path.join(dest, name[:-3]), "wb") as fh:
+            fh.write(gzip.decompress(data))
+    else:
+        with open(os.path.join(dest, name), "wb") as fh:
+            fh.write(data)
+
+
+def find_bin(root, spec):
+    """spec: 'name' (found by file name) or 'name=relative/path' (suffix match)."""
+    name, _, rel = spec.partition("=")
+    want = rel or name
+    best = None
+    for d, _, files in os.walk(root):
+        for f in files:
+            p = os.path.join(d, f)
+            if (rel and p.endswith("/" + rel)) or (not rel and f == want):
+                if best is None or len(p) < len(best):
+                    best = p
+    if not best and not rel:
+        # why: raw-binary assets keep their release name (e.g. buildifier-linux-amd64)
+        files = [os.path.join(d, f) for d, _, fs in os.walk(root) for f in fs]
+        if len(files) == 1:
+            best = files[0]
+    return name, best
+
+
+def link_bins(root, bins):
+    for spec in bins:
+        name, path = find_bin(root, spec)
+        if not path:
+            raise RuntimeError(f"binary '{name}' not found after unpacking")
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        wrapper(name, f'"{path}"')
+
+
+def fill(template, a, amap, tag=""):
+    v = tag[1:] if tag.startswith("v") else tag
+    if amap is not None and a not in amap:
+        raise RuntimeError(f"no build for architecture {a}")
+    return template.replace("{arch}", (amap or {}).get(a, "")).replace("{tag}", tag).replace("{ver}", v)
+
+
+# ------------------------------------------------------------------ channels
+
+def do_download(tid, spec, a):
+    if "github" in spec:
+        g = spec["github"]
+        asset = fill(g["asset"], a, g.get("arch"), g["tag"])
+        url = f"https://github.com/{g['repo']}/releases/download/{g['tag']}/{asset}"
+        sha = (g.get("sha256") or {}).get(a) if isinstance(g.get("sha256"), dict) else g.get("sha256")
+        bins = [fill(b, a, g.get("arch"), g["tag"]) for b in g["bins"]]  # why: per-arch binary names
+    else:
+        u = spec["url"]
+        url = fill(u["url"], a, u.get("arch"))
+        asset, sha, bins = url.rsplit("/", 1)[-1], u.get("sha256"), u["bins"]
+    # why: one directory per download URL, so tools sharing a release (PMD for Java, JSP and
+    # Velocity; wasm-tools for WIT and WAT) download it once
+    dest = os.path.join(PKG, "dl-" + hashlib.sha1(url.encode()).hexdigest()[:12])
+    if DRY:
+        log("DRY", f"download {url}")
+        return
+    # why: the marker sits next to the directory, not inside it, so a raw-binary asset is still
+    # the only file there (find_bin's single-file fallback)
+    mark = dest + ".complete"
+    if not os.path.isfile(mark):
+        shutil.rmtree(dest, ignore_errors=True)
+        unpack(download(url, sha), asset.split("?")[0], dest)
+        open(mark, "w").close()
+    link_bins(dest, bins)
+
+
+def do_jar(tid, spec, env):
+    j = spec.get("jar") or spec.get("phar")
+    is_jar = "jar" in spec
+    dest = os.path.join(PKG, "dl-" + hashlib.sha1(j["url"].encode()).hexdigest()[:12])
+    os.makedirs(dest, exist_ok=True)
+    path = os.path.join(dest, j["url"].rsplit("/", 1)[-1])
+    if DRY:
+        log("DRY", f"download {j['url']}")
+        return
+    if not os.path.isfile(path):
+        with open(path, "wb") as fh:
+            fh.write(download(j["url"], j.get("sha256")))
+    if is_jar:
+        opts = " ".join(j.get("java_opts", []))
+        target = f"java {opts} -cp \"{path}\" {j['main']}" if j.get("main") else f"java {opts} -jar \"{path}\""
+        wrapper(j["bin"], target)
+    else:
+        wrapper(j["bin"], f'php "{path}"')
+
+
+_PIP_DONE = set()
+
+
+def do_pip(spec, env):
+    p = spec["pip"]
+    pkg = p["pkg"].split("==")[0].split(">")[0].split("<")[0].split("[")[0].strip().lower()
+    venv = os.path.join(VENV, pkg)
+    py = p.get("python", "python3")
+    if p["pkg"] not in _PIP_DONE:
+        if not os.path.exists(os.path.join(venv, "bin", "pip")):
+            sh([py, "-m", "venv", venv], env)
+        sh([os.path.join(venv, "bin", "pip"), "install", "--no-cache-dir", "--disable-pip-version-check", "-q",
+            p["pkg"], *p.get("extra", [])], env)
+        _PIP_DONE.add(p["pkg"])
+    if DRY:
+        return
+    for spec_bin in p["bins"]:
+        name, _, rel = spec_bin.partition("=")
+        if rel:
+            _, path = find_bin(venv, spec_bin)
+        else:
+            path = os.path.join(venv, "bin", name)
+        if not path or not os.path.exists(path):
+            raise RuntimeError(f"pip package {p['pkg']} did not provide '{name}'")
+        wrapper(name, f'"{path}"')
+
+
+# ------------------------------------------------------------------ resolution
+
+def collect(reg, targets):
+    tools, runtimes = [], []
+    for t in targets:
+        if t == "_global":
+            tools += reg["global_tools"]
+        elif t.startswith("tool:"):
+            tools.append(t[5:])
+        elif t.startswith("runtime:"):
+            runtimes.append(t[8:])
+        else:
+            lid, _, sub = t.partition("/")
+            lang = next((l for l in reg["languages"] if l["id"] == lid), None)
+            if not lang:
+                log("WARN", f"unknown language '{t}' (ignored)")
+                continue
+            # why: subtype tools (helm, spectral, ansible-lint...) only when such files exist;
+            # opt-in tools (default_enabled false, often heavy) only when the rules file enables
+            # them, which the engine reports as a 'tool:<id>' target
+            cand = lang["tools"] + [x for st in lang.get("subtypes", []) if st["id"] == sub
+                                    for x in st.get("tools", [])]
+            tools += [x for x in cand if reg["tools"].get(x, {}).get("default_enabled", True)]
+    tools = [t for t in dict.fromkeys(tools) if t in reg["tools"]]
+    for tid in tools:
+        runtimes += reg["tools"][tid].get("needs", [])
+    return tools, list(dict.fromkeys(runtimes))
+
+
+def installed(kind, ident):
+    return os.path.exists(os.path.join(STATE, f"{kind}.{ident}"))
+
+
+def mark(kind, ident, ok=True):
+    if DRY:
+        return
+    os.makedirs(STATE, exist_ok=True)
+    good, bad = os.path.join(STATE, f"{kind}.{ident}"), os.path.join(STATE, f"failed.{kind}.{ident}")
+    open(good if ok else bad, "w").close()
+    if ok and os.path.exists(bad):
+        os.remove(bad)  # why: a retry that works clears the earlier failure
+
+
+def run_specs(kind, ident, specs, env, a, apt_done):
+    for spec in specs:
+        if "apt" in spec:
+            missing = [p for p in spec["apt"] if p not in apt_done]
+            if missing:
+                apt_install(missing, env)
+                apt_done.update(missing)
+        elif "pip" in spec:
+            do_pip(spec, env)
+        elif "npm" in spec:
+            sh(["npm", "install", "--prefix", NPM, "--no-audit", "--no-fund", "--omit=dev", "--loglevel=error",
+                *spec["npm"]], env)
+        elif "github" in spec or "url" in spec:
+            do_download(ident, spec, a)
+        elif "jar" in spec or "phar" in spec:
+            do_jar(ident, spec, env)
+        elif "script" in spec:
+            sh(spec["script"].replace("{suite}", SUITE), env, shell=True)
+
+
+_APT_UPDATED = [False]
+_APT_OPTS = []
+
+
+def apt_install(pkgs, env):
+    """apt from the Ubuntu snapshot QS_APT_SNAPSHOT (same archive date for every build)."""
+    e = dict(env, DEBIAN_FRONTEND="noninteractive")
+    if not _APT_UPDATED[0]:
+        sh(["apt-get", "update", "-qq"], e)
+        snap = os.environ.get("QS_APT_SNAPSHOT", "off")
+        if snap != "off":
+            try:
+                # why --error-on=any: apt only warns when an index fails, which would hide a blocked server
+                sh(["apt-get", "update", "-qq", "--error-on=any", "-o", f"APT::Snapshot={snap}"], e)
+                _APT_OPTS[:] = ["-o", f"APT::Snapshot={snap}"]
+            except Exception:  # why: a proxy without access to snapshot.ubuntu.com must not block installs
+                log("WARN", f"apt snapshot {snap} unavailable; using the live Ubuntu archive")
+                sh(["apt-get", "update", "-qq"], e)
+        _APT_UPDATED[0] = True
+    sh(["apt-get", "install", "-y", "-qq", "--no-install-recommends", *_APT_OPTS, *pkgs], e)
+
+
+def write_runtime_env(reg):
+    """Env and PATH of every installed runtime, read by the engine at start-up."""
+    lines, paths = [], [BIN]
+    for rid, r in reg["runtimes"].items():
+        if installed("runtime", rid):
+            paths += r.get("path", [])
+            lines += [f"{k}={v}" for k, v in r.get("env", {}).items()]
+    if os.path.isdir(os.path.join(QS, "dotnet-tools")):
+        paths.append(os.path.join(QS, "dotnet-tools"))
+    lines.append("PATH_PREPEND=" + ":".join(dict.fromkeys(paths)))
+    if not DRY:
+        with open(RUNTIME_ENV, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+
+
+def main(argv):
+    global DRY
+    strict = "--strict" in argv
+    DRY = "--dry-run" in argv
+    targets = [a for a in argv if not a.startswith("--")]
+    reg = json.load(open(REGISTRY, encoding="utf-8"))
+    env = env_with_runtimes(reg)
+    a = arch()
+    tools, runtimes = collect(reg, targets)
+    ok, failed, apt_done = [], [], set()
+    for rid in runtimes:
+        if installed("runtime", rid):
+            continue
+        try:
+            log("INFO", f"runtime {rid}: {reg['runtimes'][rid]['name']}")
+            run_specs("runtime", rid, reg["runtimes"][rid]["install"], env, a, apt_done)
+            mark("runtime", rid)
+        except Exception as e:  # why: one broken runtime must not block every other language
+            failed.append(f"runtime:{rid}")
+            mark("runtime", rid, ok=False)
+            log("ERROR", f"runtime {rid}: {e}")
+    # why: batch every apt package of this request into one apt-get call (one layer, one update)
+    apt_pkgs = [p for tid in tools if not installed("tool", tid)
+                for s in reg["tools"][tid].get("install", []) for p in s.get("apt", [])]
+    if apt_pkgs:
+        try:
+            apt_install(list(dict.fromkeys(p for p in apt_pkgs if p not in apt_done)), env)
+            apt_done.update(apt_pkgs)
+        except Exception as e:
+            log("ERROR", f"apt: {e} (retrying per tool)")
+    npm_specs = [p for tid in tools if not installed("tool", tid)
+                 for s in reg["tools"][tid].get("install", []) for p in s.get("npm", [])]
+    npm_done = False
+    if npm_specs:
+        try:
+            sh(["npm", "install", "--prefix", NPM, "--no-audit", "--no-fund", "--omit=dev", "--loglevel=error",
+                *dict.fromkeys(npm_specs)], env)
+            npm_done = True
+        except Exception as e:
+            log("ERROR", f"npm: {e} (retrying per tool)")
+    for tid in tools:
+        tool = reg["tools"][tid]
+        if installed("tool", tid) or not tool.get("install"):
+            continue
+        specs = [s for s in tool["install"] if not ("npm" in s and npm_done)]
+        try:
+            run_specs("tool", tid, specs, env, a, apt_done)
+            missing = [b for b in tool.get("bin", []) if not shutil.which(b, path=env["PATH"])]
+            if missing and not DRY:
+                raise RuntimeError(f"installed but not on PATH: {', '.join(missing)}")
+            mark("tool", tid)
+            ok.append(tid)
+        except Exception as e:
+            failed.append(tid)
+            mark("tool", tid, ok=False)
+            log("ERROR", f"{tid}: {e}")
+    # why the which(): when the Node runtime failed, npm is missing and running it would raise,
+    # failing the whole image layer and discarding every tool installed in it
+    if npm_specs and not DRY and shutil.which("npm", path=env["PATH"]):
+        subprocess.run(["npm", "cache", "clean", "--force", "--loglevel=error"], env=env, check=False)
+    write_runtime_env(reg)
+    if os.path.isdir(QS) and not DRY:
+        subprocess.run(["chmod", "-R", "a+rX", QS], check=False)
+    log("INFO", f"installed {len(ok)} tool(s); failed {len(failed)}" + (f": {', '.join(failed)}" if failed else ""))
+    return 1 if (failed and strict) else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Exception as exc:  # why: an installer bug must surface, not vanish inside docker build
+        log("ERROR", f"installer crashed: {exc!r}")
+        raise

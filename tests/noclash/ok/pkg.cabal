@@ -1,0 +1,7 @@
+cabal-version: 3.0
+name: pkg
+version: 0.1.0.0
+
+library
+  exposed-modules: Lib
+  build-depends: base

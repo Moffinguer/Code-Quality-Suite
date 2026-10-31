@@ -1,0 +1,23 @@
+openapi: 3.0.3
+info:
+  title: Demo
+  version: 1.0.0
+  description: Demo API.
+  contact:
+    name: Team
+    email: team@example.com
+servers:
+  - url: https://api.example.com
+tags:
+  - name: ping
+    description: Health.
+paths:
+  /ping:
+    get:
+      operationId: ping
+      description: Health check.
+      tags:
+        - ping
+      responses:
+        "200":
+          description: OK

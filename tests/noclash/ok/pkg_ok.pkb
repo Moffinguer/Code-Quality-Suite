@@ -1,0 +1,7 @@
+CREATE OR REPLACE PACKAGE BODY pkg_ok IS
+  PROCEDURE p IS
+  BEGIN
+    NULL;
+  END p;
+END pkg_ok;
+/

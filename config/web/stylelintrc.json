@@ -1,0 +1,37 @@
+{
+  "extends": [
+    "stylelint-config-standard"
+  ],
+  "overrides": [
+    {
+      "files": [
+        "**/*.scss"
+      ],
+      "extends": [
+        "stylelint-config-standard-scss"
+      ],
+      "rules": {
+        "scss/double-slash-comment-empty-line-before": null,
+        "scss/dollar-variable-empty-line-before": null
+      }
+    },
+    {
+      "files": [
+        "**/*.less"
+      ],
+      "extends": [
+        "stylelint-config-standard-less"
+      ]
+    },
+    {
+      "files": [
+        "**/*.html",
+        "**/*.htm",
+        "**/*.xhtml",
+        "**/*.vue",
+        "**/*.svelte"
+      ],
+      "customSyntax": "postcss-html"
+    }
+  ]
+}

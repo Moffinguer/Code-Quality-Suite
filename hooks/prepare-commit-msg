@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
+# code-quality-suite hook
 # prepare-commit-msg - preload a Conventional Commits template with the commit
 # file manifest (A/M/D...), uncommented and editable.
 set -euo pipefail
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 
 MSG_FILE="$1"
@@ -14,12 +15,17 @@ case "$SOURCE" in
   *) exit 0 ;;
 esac
 
-TYPES="${COMMIT_TYPES_HUMAN:-feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert}"
-manifest="$(git diff --cached --name-status --diff-filter=ACMRD 2>/dev/null | awk '{print substr($1,1,1), $NF}')"
+LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
+# shellcheck disable=SC1090
+if [ -f "$LIB" ]; then . "$LIB"; QS_POLICY_NO_DOCKER=1 qs_policy_load; fi
+TYPES="${QS_COMMIT_TYPES:-feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert}"; TYPES="${TYPES//|/, }"
+# why: quotePath keeps accented file names as ASCII escapes (the message must stay ASCII)
+manifest="$(git -c core.quotePath=true diff --cached --name-status --diff-filter=ACMRD 2>/dev/null \
+  | sed -E 's/^([A-Z])[0-9]*\t([^\t]*\t)?/\1 /')"
 
 tmp="$(mktemp)"
 {
-  echo "<type>(scope): short description (<=50 chars)"
+  echo "<type>(scope): short description (<=${QS_COMMIT_SUBJECT_MAX:-50} chars, ASCII only)"
   echo ""
   echo "# Commit files (become part of the body; edit or delete):"
   [ -n "$manifest" ] && printf '%s\n' "$manifest"
@@ -27,7 +33,8 @@ tmp="$(mktemp)"
   cat <<TPL
 # -- Conventional Commits -------------------------------------
 # Subject (1st line):  <type>[(scope)][!]: <description>
-#   imperative, <=50 chars, no trailing period.
+#   imperative, <=${QS_COMMIT_SUBJECT_MAX:-50} chars, no trailing period, ASCII only
+#   (no accents or n-tilde: commit.charset in .quality-rules.json).
 # Types: ${TYPES}
 #
 # Body (optional, after a blank line): the what and the why (<=72/line).

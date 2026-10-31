@@ -1,0 +1,77 @@
+# Every provider the gateway knows, shared by config.yaml (real work) and demo.yaml (free demo):
+# both include this file. Provider keys come from .env and LiteLLM reads them by name; a provider
+# without a key just fails over to the next entry of the role. Check which keys work with
+# scripts/ai-keys.sh.
+#
+# Model ids checked on 2026-10-14 (Groq, Cerebras, Gemini, OpenRouter, DeepSeek) and 2026-10-22
+# (NVIDIA NIM, SambaNova, Cohere, GitHub Models) against each provider's model list. Mistral and
+# Codestral use the "-latest" aliases. Providers rename models every few months: when one fails,
+# look up its replacement and change one line.
+#
+# Data: everything below except anthropic/* and local-coder is a free tier or a cheap foreign
+# provider: public data only (AGENTS.md data classes).
+model_list:
+  # ---- Anthropic API: paid, internal data (not your Claude subscription) ----
+  - model_name: claude-opus
+    litellm_params: {model: anthropic/claude-opus-5-5, api_key: os.environ/ANTHROPIC_API_KEY}
+  - model_name: claude-sonnet
+    litellm_params: {model: anthropic/claude-sonnet-5-5, api_key: os.environ/ANTHROPIC_API_KEY}
+  - model_name: claude-haiku
+    litellm_params: {model: anthropic/claude-haiku-4-5-20251001, api_key: os.environ/ANTHROPIC_API_KEY}
+
+  # ---- free tiers ----
+  - model_name: groq-gpt-oss              # very fast; ~1,000 requests/day
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY}
+  - model_name: groq-llama-fast
+    litellm_params: {model: groq/llama-3.1-8b-instant, api_key: os.environ/GROQ_API_KEY}
+  - model_name: cerebras-gpt-oss          # free tier: 65k context, 1M tokens/day
+    litellm_params: {model: cerebras/gpt-oss-120b, api_key: os.environ/CEREBRAS_API_KEY}
+  - model_name: cerebras-qwen
+    litellm_params: {model: cerebras/qwen-3.8-27b, api_key: os.environ/CEREBRAS_API_KEY}
+  - model_name: gemini-flash              # 1M context; quota per Google project
+    litellm_params: {model: gemini/gemini-3.8-flash, api_key: os.environ/GEMINI_API_KEY}
+  - model_name: gemini-flash-lite
+    litellm_params: {model: gemini/gemini-3.5-flash-lite, api_key: os.environ/GEMINI_API_KEY}
+  - model_name: openrouter-free           # OpenRouter picks a free model with the features asked
+    litellm_params: {model: openrouter/openrouter/free, api_key: os.environ/OPENROUTER_API_KEY}
+  - model_name: nvidia-gpt-oss            # 40 requests/minute; phone verification at sign-up
+    litellm_params: {model: nvidia_nim/openai/gpt-oss-120b, api_key: os.environ/NVIDIA_NIM_API_KEY}
+  - model_name: sambanova-gpt-oss         # trial credits
+    litellm_params: {model: sambanova/gpt-oss-120b, api_key: os.environ/SAMBANOVA_API_KEY}
+  - model_name: mistral-small             # free tier trains on prompts
+    litellm_params: {model: mistral/mistral-small-latest, api_key: os.environ/MISTRAL_API_KEY}
+  - model_name: codestral                 # code model; own key (console.mistral.ai > Codestral)
+    litellm_params: {model: codestral/codestral-latest, api_key: os.environ/CODESTRAL_API_KEY}
+  - model_name: cohere-command            # trial key: 1,000 calls/month
+    litellm_params: {model: cohere_chat/command-a-03-2025, api_key: os.environ/COHERE_API_KEY}
+  - model_name: github-gpt                # GitHub token with "models: read"; ~150 requests/day
+    litellm_params: {model: github/openai/gpt-4.1-mini, api_base: https://models.github.ai/inference,
+                     api_key: os.environ/GITHUB_API_KEY}
+
+  # ---- DeepSeek: paid and cheap, only with a topped-up balance; servers in China ----
+  - model_name: deepseek-flash
+    litellm_params: {model: deepseek/deepseek-flash, api_key: os.environ/DEEPSEEK_API_KEY}
+
+  # ---- local (docker compose --profile local): the only target for regulated code ----
+  - model_name: local-coder
+    litellm_params: {model: ollama_chat/qwen2.5-coder:7b, api_base: http://ollama:11434}
+
+  # ---- optional FreeLLMAPI pool (docker compose --profile free; FREELLMAPI_KEY in .env) ----
+  - model_name: free-pool
+    litellm_params: {model: openai/auto, api_base: http://freellmapi:3001/v1, api_key: os.environ/FREELLMAPI_KEY}
+
+  # ---- any model of a provider by its own id, e.g. "nvidia_nim/meta/llama-3.3-70b-instruct"
+  # (ai-ask.sh <that name> "...") to try models without editing this file ----
+  - {model_name: "groq/*", litellm_params: {model: "groq/*", api_key: os.environ/GROQ_API_KEY}}
+  - {model_name: "cerebras/*", litellm_params: {model: "cerebras/*", api_key: os.environ/CEREBRAS_API_KEY}}
+  - {model_name: "gemini/*", litellm_params: {model: "gemini/*", api_key: os.environ/GEMINI_API_KEY}}
+  - {model_name: "openrouter/*", litellm_params: {model: "openrouter/*", api_key: os.environ/OPENROUTER_API_KEY}}
+  - {model_name: "nvidia_nim/*", litellm_params: {model: "nvidia_nim/*", api_key: os.environ/NVIDIA_NIM_API_KEY}}
+  - {model_name: "sambanova/*", litellm_params: {model: "sambanova/*", api_key: os.environ/SAMBANOVA_API_KEY}}
+  - {model_name: "mistral/*", litellm_params: {model: "mistral/*", api_key: os.environ/MISTRAL_API_KEY}}
+  - {model_name: "cohere_chat/*", litellm_params: {model: "cohere_chat/*", api_key: os.environ/COHERE_API_KEY}}
+  - {model_name: "github/*", litellm_params: {model: "github/*", api_base: https://models.github.ai/inference,
+                                             api_key: os.environ/GITHUB_API_KEY}}
+  - {model_name: "huggingface/*", litellm_params: {model: "huggingface/*", api_key: os.environ/HUGGINGFACE_API_KEY}}
+  - {model_name: "cloudflare/*", litellm_params: {model: "cloudflare/*", api_key: os.environ/CLOUDFLARE_API_KEY}}
+  - {model_name: "deepseek/*", litellm_params: {model: "deepseek/*", api_key: os.environ/DEEPSEEK_API_KEY}}

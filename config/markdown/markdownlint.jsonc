@@ -1,0 +1,8 @@
+{
+  // markdownlint base: the standard rule set, minus the noisiest rules for technical docs.
+  "default": true,
+  "MD013": false, // line length: prose wraps freely
+  "MD024": { "siblings_only": true }, // why: a changelog repeats '### Added' under every release
+  "MD033": false, // inline HTML is common in docs
+  "MD041": false  // the first line does not have to be an H1
+}

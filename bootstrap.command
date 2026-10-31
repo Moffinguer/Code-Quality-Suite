@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# Doble clic en macOS. Mac trae bash, asi que solo delega en bootstrap.sh.
+# Double-click launcher for macOS: runs bootstrap.sh (macOS ships bash).
 cd "$(dirname "$0")"
 ./bootstrap.sh "$@"

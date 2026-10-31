@@ -1,0 +1,45 @@
+# FREE DEMO: every role on free tiers, so the whole agent hierarchy runs without paying.
+# Enable it with LITELLM_CONFIG=demo.yaml in .env, then: docker compose up -d --force-recreate litellm
+# PUBLIC DATA ONLY: free tiers may log or train on prompts. Never use it with Junta code; for that,
+# go back to config.yaml (paid roles) or role-local.
+# Quality and quotas are those of free models: expect slower answers and fallbacks during the day.
+include:
+  - providers.yaml
+
+model_list:
+  - model_name: role-lead                 # planning: large context, good reasoning
+    litellm_params: {model: gemini/gemini-3.8-flash, api_key: os.environ/GEMINI_API_KEY}
+  - model_name: role-review
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY}
+  - model_name: role-dev                  # code: fast models with tool calling
+    litellm_params: {model: cerebras/gpt-oss-120b, api_key: os.environ/CEREBRAS_API_KEY}
+  - model_name: role-intern
+    litellm_params: {model: groq/openai/gpt-oss-120b, api_key: os.environ/GROQ_API_KEY}
+  - model_name: role-long
+    litellm_params: {model: gemini/gemini-3.8-flash, api_key: os.environ/GEMINI_API_KEY}
+  - model_name: role-local
+    litellm_params: {model: ollama_chat/qwen2.5-coder:7b, api_base: http://ollama:11434}
+
+router_settings:
+  fallbacks:
+    - role-lead: [cerebras-gpt-oss, groq-gpt-oss, nvidia-gpt-oss, sambanova-gpt-oss, openrouter-free,
+                  mistral-small, github-gpt, free-pool]
+    - role-review: [cerebras-gpt-oss, nvidia-gpt-oss, gemini-flash, sambanova-gpt-oss, openrouter-free,
+                    mistral-small, github-gpt, free-pool]
+    - role-dev: [codestral, groq-gpt-oss, nvidia-gpt-oss, sambanova-gpt-oss, gemini-flash, openrouter-free,
+                 mistral-small, github-gpt, free-pool]
+    - role-intern: [cerebras-gpt-oss, nvidia-gpt-oss, gemini-flash-lite, sambanova-gpt-oss, openrouter-free,
+                    mistral-small, github-gpt, cohere-command, free-pool, deepseek-flash]
+    - role-long: [gemini-flash-lite, deepseek-flash]
+  num_retries: 1
+  timeout: 300
+  allowed_fails: 1
+  cooldown_time: 60
+
+litellm_settings:
+  drop_params: true
+  turn_off_message_logging: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: true

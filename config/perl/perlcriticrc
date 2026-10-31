@@ -1,0 +1,25 @@
+severity = 3
+
+[InputOutput::ProhibitBacktickOperators]
+only_in_void_context = 1
+
+# why: temporary relaxation
+[-Subroutines::ProhibitExcessComplexity]
+[-Modules::ProhibitExcessMainComplexity]
+
+# why: a legitimate style, not confusing
+[-Variables::ProhibitConditionalDeclarations]
+
+# why: functions may legitimately need many arguments
+[-Subroutines::ProhibitManyArgs]
+
+[RegularExpressions::ProhibitComplexRegexes]
+max_characters = 620
+
+[-InputOutput::RequireBriefOpen]
+
+[Modules::RequireExplicitPackage]
+exempt_scripts = 0
+
+# why: formatting belongs to perltidy
+[-CodeLayout::RequireTidyCode]

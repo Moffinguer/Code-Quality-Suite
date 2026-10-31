@@ -1,0 +1,5 @@
+table Monster {
+  hp: short;
+}
+
+root_type Monster;

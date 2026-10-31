@@ -1,71 +1,48 @@
-# Guía de instalación, configuración y uso
+# Install, configuration, and usage guide
 
-Sistema completo de desarrollo asistido por IA con control de calidad. Se compone
-de **cuatro capas** que funcionan juntas; cada una aporta valor por sí sola.
+A full AI-assisted development system with quality control, built in layers that
+each add value on their own. Recommended order: 1 -> CI -> 2 -> 3 -> 4.
 
----
+## Tools used
 
-## Herramientas usadas (resumen)
+| Area | Tools |
+|------|-------|
+| Quality gate | 184 languages; full matrix in `docs/LANGUAGES.md` (installed on demand) |
+| Rules | one editable file, `.quality-rules.json` (`docs/QUALITY-RULES.md`) |
+| Base container | Docker, Ubuntu 24.04 + Python 3 (engine and installer only) |
+| Model gateway | LiteLLM (roles, fallbacks, keys, budgets) + FreeLLMAPI (free pool) + Ollama (local), `ai-stack/` |
+| AI agents | Claude Code (subagents by role), Codex CLI, Gemini CLI; Goose as an alternative |
 
-| Área | Herramientas |
-|------|--------------|
-| Formato/análisis Java | google-java-format, Checkstyle, PMD |
-| Formato/análisis web | Prettier, ESLint (+typescript-eslint, plugin-html), Stylelint, html-validate |
-| Markdown / XML / Docker | markdownlint-cli2, xmllint, hadolint |
-| Perl | perltidy, perlimports, perl -cw, Perl::Critic |
-| SQL (Oracle) | SQLFluff (dialecto Oracle) |
-| Python | black, autopep8, isort, unify, eradicate, pylint, mypy |
-| C / C++ | clang-format, cppcheck, clang-tidy |
-| Shell | shfmt, shellcheck |
-| Contenedor base | Docker, JDK 21 (Temurin), Node 20, Python 3, Perl |
+## Layer 1 - Quality gate
 
----
+Cross-platform install (see README). Every language gets a syntax check, one
+formatter and its linters, at the quality level set in `.quality-rules.json`. The
+image starts with the engine only; each language's tools are installed by the first
+commit that contains it, and versions the project does not reveal are asked once.
 
-## Capa 1 — Gate de calidad
+## Layer 2 - Local Git hooks
 
-### Qué se comprueba
+`pre-commit` formats + analyzes staged files and blocks on failure. `pre-push`
+verifies the pushed range in check mode (read-only) plus an optional heavy stage.
+`commit-msg` enforces Conventional Commits. `prepare-commit-msg` preloads a
+template with the changed-file manifest. For a clone-and-go flow, use
+`git-integration/` (init.templateDir). The hooks live once per machine
+(`~/.config/code-quality-suite/hooks`, linked from every repository) and the tools in one Docker
+image per suite version shared by all repositories. Five-minute setup:
+`docs/QUICKSTART-HOOKS.md`; updates: `docs/UPDATING.md`.
 
-Java, Markdown, XML, Dockerfile, HTML/XHTML, JS/TS, CSS/SCSS, JSP, **Perl**, **SQL (Oracle)**, **Python**, **C/C++** y **Shell**. Ver la tabla completa en el README.
+## Layer 3 - CI/CD
 
-### Configuración de reglas
+Integrate on any platform with `scripts/ci-check.sh`, which analyzes only the
+changed files of the current PR/branch range, keeping pipelines fast. Local hooks
+can be skipped with `--no-verify`; CI cannot.
 
-- Perl: `config/.perlcriticrc`, `config/.perltidyrc`, `config/perlimports.toml`
-- SQL (Oracle): `config/.sqlfluff`
-- Python: `config/.pylintrc`
-- C/C++: `config/.clang-format`, `config/.clang-tidy`
+## Layer 4 - AI-assisted development
 
----
+The suite acts as an impartial referee: any AI-generated code must pass the same
+local gate before entering the repo. `scripts/ai-init.sh <repo>` adds the agent files
+(`AGENTS.md`, shared skills, Claude Code subagents by role, the gate hook, the Junta
+knowledge map) and `ai-stack/` runs the local model gateway. Step by step, from an empty
+machine to a first OT: `docs/AI-SETUP.md`. Skills and the norms map: `docs/SKILLS.md`.
 
-## Capa 2 — Hooks de Git locales
-
-Los hooks de Git automatizan la ejecución de la suite de calidad en tu máquina local de forma transparente:
-
-1. **`pre-commit`**:
-   - Se ejecuta automáticamente al hacer `git commit`.
-   - Identifica los archivos en staging, ejecuta la suite en modo `fix` dentro del contenedor Docker, aplica los formateadores y re-añade los archivos modificados al commit.
-   - Si se detectan errores de sintaxis o violaciones de reglas que no se pueden corregir automáticamente, aborta el commit.
-
-2. **`pre-push`**:
-   - Se ejecuta automáticamente al hacer `git push`.
-   - Ejecuta la suite en modo `check` (montaje de solo lectura) sobre todos los commits que se van a subir al servidor remoto.
-   - Garantiza que ningún desarrollador pueda subir código mal formateado o con advertencias de calidad.
-
-3. **`commit-msg`**:
-   - Valida que el mensaje del commit cumpla estrictamente con la especificación de **Conventional Commits**.
-
-4. **`prepare-commit-msg`**:
-   - Genera una plantilla interactiva con el manifiesto de archivos modificados para facilitar la redacción del mensaje de commit.
-
----
-
-## Capa 3 — Integración Continua (CI/CD)
-
-La suite de calidad se puede integrar en cualquier plataforma de CI/CD (GitHub Actions, GitLab CI, Jenkins, etc.) utilizando el script `scripts/ci-check.sh`.
-
-Este script optimiza el pipeline analizando únicamente los archivos modificados en el rango de commits del Pull Request o rama actual, evitando analizar todo el repositorio en cada ejecución y reduciendo drásticamente los tiempos de compilación.
-
----
-
-## Capa 4 — Desarrollo Asistido por IA
-
-Al utilizar agentes de IA o asistentes de código en tu IDE, la suite actúa como un "árbitro" de calidad implacable. Cualquier código generado por una IA debe pasar obligatoriamente por el gate de calidad local antes de ser aceptado en el repositorio, garantizando que el código generado mantenga siempre la consistencia de estilo, robustez y buenas prácticas del proyecto.
+Model inventory to plug in: `docs/PROVIDERS.md` and `docs/MODELS.md`.

@@ -1,0 +1,7 @@
+CREATE OR REPLACE PACKAGE BODY b IS
+  PROCEDURE p IS
+  BEGIN
+    x :=
+  END p;
+END b;
+/

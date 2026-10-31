@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<ruleset name="Quality Suite - Velocity"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 https://pmd.sourceforge.io/ruleset_2_0_0.xsd">
+  <description>PMD Velocity rules (also reports templates that do not parse).</description>
+  <rule ref="category/velocity/bestpractices.xml"/>
+  <rule ref="category/velocity/errorprone.xml"/>
+  <rule ref="category/velocity/design.xml">
+    <exclude name="NoInlineJavaScript"/>
+    <exclude name="NoInlineStyles"/>
+  </rule>
+</ruleset>

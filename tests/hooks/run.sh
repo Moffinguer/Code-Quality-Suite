@@ -1,0 +1,444 @@
+#!/usr/bin/env bash
+# End-to-end test of install.sh + hooks with a fake docker CLI (tests/hooks/fake-docker):
+# commit formats and stages, marks scripts, creates/ignores the rules file, logs, applies
+# rule changes, blocks broken code; push verifies in check mode.
+set -euo pipefail
+[ "${QS_TEST_DEBUG:-0}" = 1 ] && set -x
+SUITE="$(cd "$(dirname "$0")/../.." && pwd)"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+export FAKE_DOCKER_DIR="$T/docker" QS_SUITE_HOST="$SUITE" QS_NO_PROMPT=1 QS_REPO_FILES=0
+# why: never touch the real global git config or the real list of installed repositories
+export GIT_CONFIG_GLOBAL="$T/gitconfig" QS_HOME="$T/qs-home"; : > "$GIT_CONFIG_GLOBAL"
+# why: setup-global writes ~/.bashrc and the clone template under HOME
+export HOME="$T/home"; mkdir -p "$HOME"
+mkdir -p "$T/bin"; ln -s "$SUITE/tests/hooks/fake-docker" "$T/bin/docker"; export PATH="$T/bin:$PATH"
+fail(){ echo "FAIL: $*" >&2; exit 1; }
+ok(){ echo "ok   $*"; }
+
+git init -q -b main "$T/repo"; cd "$T/repo"
+git config user.email t@example.com; git config user.name tester
+"$SUITE/install.sh" "$T/repo" >/dev/null
+[ -x .git/hooks/pre-commit ] && ok "hooks installed" || fail "hooks"
+
+printf 'import os\ndef f( a ):\n    return os.path.join(a,"x")   \n' > app.py
+printf 'echo "hi"\n' > run.sh; chmod +x run.sh
+printf 'select a from t\n' > q.sql
+git add app.py run.sh q.sql
+git commit -q -m "feat: add sample files" || fail "first commit was blocked"
+ok "first commit"
+git show HEAD:app.py | grep -q 'def f(a):' && ok "formatting committed" || fail "app.py not formatted in the commit"
+git show HEAD:run.sh | head -1 | grep -q '^#!/usr/bin/env bash' && ok "shebang committed" || fail "no shebang"
+git show HEAD:q.sql | grep -q '^SELECT a' && ok "SQL formatted" || fail "sql"
+[ -f .quality-rules.json ] && ok "rules file created" || fail "no rules file"
+git status --porcelain --ignored | grep -q '^!! .quality-rules.json' && ok "rules file ignored" || fail "rules file not ignored"
+grep -q 'action=ruff-format status=SUCCESS' .git/quality-suite/quality-suite.log && ok "per-tool log" || fail "log"
+grep -q 'qs.langs=_global' "$FAKE_DOCKER_DIR/calls.log" && grep -q 'python' "$FAKE_DOCKER_DIR/calls.log" \
+  && ok "on-demand install layer" || fail "no install layer"
+
+python3 - <<'PY'
+import json; p='.quality-rules.json'; d=json.load(open(p))
+d['languages']['python']['formatting']['ruff-format']['rules']['line-length'] = 120
+json.dump(d, open(p, 'w'), indent=2)
+PY
+printf 'x = 1\n' > b.py; git add b.py
+git commit -q -m "feat: second file" || fail "second commit"
+grep -q 'modified languages.python.formatting.ruff-format.rules.line-length: 100 -> 120' .git/quality-suite/quality-suite.log \
+  && ok "rule change logged" || fail "rule change not logged"
+grep -q 'line-length = 120' .git/quality-suite/generated/python/ruff/ruff.toml && ok "native config regenerated (inherited by lint)" \
+  || fail "generated config"
+
+printf 'def broken(:\n  pass\n' > bad.py; git add bad.py
+if git commit -q -m "feat: broken" 2>/dev/null; then fail "broken code was committed"; else ok "broken code blocked"; fi
+git reset -q HEAD bad.py; rm bad.py
+
+# partial staging: the unstaged edit must neither be committed nor lost
+body='def g():\n    return 1\n\n\ndef h():\n    return 3\n\n\ndef i():\n    return 4\n\n\ndef j():\n    return 5\n'
+printf "$body" > part.py; git add part.py; git commit -q -m "feat: part" || fail "part commit"
+printf "${body/return 1/return  2}" > part.py; git add part.py
+printf "${body/return 1/return  2}SECRET_DEBUG = True\n" > part.py
+git commit -q -m "fix: partial" || fail "partial commit"
+git show HEAD:part.py | grep -q SECRET_DEBUG && fail "unstaged edit was committed" || ok "unstaged edit not committed"
+grep -q SECRET_DEBUG part.py && ok "unstaged edit kept in the working tree" || fail "unstaged edit lost"
+git show HEAD:part.py | grep -q '    return 2' && ok "staged part formatted" || fail "staged part not formatted"
+git checkout -q -- part.py
+# overlap: the formatter changes the very lines next to the unstaged edit -> nothing changes
+printf 'def k():\n    return  1\n' > near.py; git add near.py
+printf 'def k():\n    return  1\nNEAR = 1\n' > near.py
+before="$(cat near.py)"
+if git commit -q -m "feat: near" 2>/dev/null; then fail "overlapping partial commit went through"; fi
+[ "$(cat near.py)" = "$before" ] && ok "overlap: working tree untouched" || fail "overlap changed the working tree"
+git show :near.py | grep -q 'return  1' && ok "overlap: index untouched" || fail "overlap changed the index"
+git reset -q HEAD near.py; rm -f near.py
+
+# accents in file names
+printf 'x=1\n' > "configuración.py"; git add "configuración.py"
+git commit -q -m "feat: accent" || fail "accent commit"
+git show "HEAD:configuración.py" | grep -q '^x = 1' && ok "accented file name checked" || fail "accented file skipped"
+
+# encoding: text damaged by a wrong-encoding save stops the commit and names the files
+printf 'msg = "Canci\303\263n"\n' > enc.py; git add enc.py; git commit -q -m "feat: enc" || fail "enc commit"
+printf 'msg = "Canci\303\203\302\263n"\nx = 1\n' > enc.py            # UTF-8 read as Windows-1252, saved as UTF-8
+printf 'a = "a\361o"\n' > ansi.py                                     # saved as Windows-1252 (ANSI)
+git add enc.py ansi.py
+out="$(git commit -m 'fix: enc' 2>&1)" && fail "mojibake committed"
+printf '%s\n' "$out" | grep -q 'ENCODING: 2 file(s)' && printf '%s\n' "$out" | grep -q "should be \"Canci$(printf '\303\263')n\"" \
+  && printf '%s\n' "$out" | grep -q 'ansi.py' && ok "mojibake and ANSI files stop the commit, listed by name" \
+  || fail "encoding report: $out"
+printf '%s\n' "$out" | grep -q 'ruff' && fail "tools ran on an encoding failure" || ok "nothing analysed after an encoding failure"
+out="$(git encoding 2>&1)" && fail "git encoding passed"
+printf '%s\n' "$out" | grep -q 'enc.py' && ok "git encoding lists the changed files" || fail "git encoding: $out"
+git encoding --fix >/dev/null 2>&1 || fail "git encoding --fix"
+grep -q "$(printf 'Canci\303\263n')" enc.py && grep -q "$(printf 'a\303\261o')" ansi.py && ok "git encoding --fix repaired both" \
+  || fail "repair: $(cat enc.py ansi.py)"
+git add enc.py ansi.py; git commit -q -m "fix: enc" || fail "commit after the repair"
+# a commit with no recognised language still runs the repository checks
+printf -- '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n' > id_key; git add id_key
+if git commit -q -m "feat: key" 2>/dev/null; then fail "private key committed"; else ok "private key blocked"; fi
+git reset -q HEAD id_key; rm -f id_key
+
+git init -q --bare "$T/remote.git"; git remote add origin "$T/remote.git"
+git push -q origin main 2>/dev/null && ok "push verified in check mode" || fail "push"
+# damage already committed (and pushed) only warns: the commit and the push touch another line
+printf 'old = "Canci\303\203\302\263n"\n' > legacy.py; git add legacy.py
+git -c core.hooksPath=/dev/null commit -q -m "feat: legacy" || fail "legacy commit"
+git push -q --no-verify origin main 2>/dev/null || fail "legacy push"
+printf 'old = "Canci\303\203\302\263n"\ny = 2\n' > legacy.py; git add legacy.py
+out="$(git commit -m 'fix: legacy' 2>&1)" || fail "pre-existing mojibake blocked the commit: $out"
+printf '%s\n' "$out" | grep -q 'WARN encoding legacy.py.*already in HEAD' && ok "pre-existing mojibake only warns" \
+  || fail "no warning: $out"
+git push -q origin main 2>/dev/null && ok "push: damage already on the remote only warns" || fail "legacy push blocked"
+grep -q 'comp=pre-push.*status=SUCCESS' .git/quality-suite/quality-suite.log && ok "push logged" || fail "push log"
+
+# push checks the committed tree, not the working tree
+printf 'def broken(:\n  pass\n' > late.py; git add late.py; git commit -q --no-verify -m "feat: late"
+printf 'x = 1\n' > late.py      # fixed only in the working tree
+if git push -q origin main 2>/dev/null; then fail "broken commit was pushed"; else ok "push checks the committed content"; fi
+git reset -q --hard HEAD~1
+
+# CI: a missing base fails loudly
+if QUALITY_SUITE_DIR="$SUITE" "$SUITE/scripts/ci-check.sh" origin/does-not-exist >/dev/null 2>&1; then
+  fail "ci-check passed without a base"; else ok "ci-check fails without its base"; fi
+# commit message policy: ASCII only by default (commit.charset)
+printf 'y = 2\n' > cm.py; git add cm.py
+if git commit -q -m "feat: añadir validación" 2>/dev/null; then fail "non-ASCII commit message accepted"; else ok "non-ASCII commit message blocked"; fi
+git commit -q -m "feat: anadir validacion" || fail "ASCII message rejected"
+ok "ASCII commit message accepted"
+
+# encoding policy: every text file must be UTF-8 (encoding.charset)
+printf 'A\xf1o = 1\n' > latin.txt; git add latin.txt
+if git commit -q -m "feat: latin" 2>/dev/null; then fail "non-UTF-8 file committed"; else ok "non-UTF-8 file blocked"; fi
+git reset -q HEAD latin.txt; rm -f latin.txt
+python3 - <<'PY'
+import json; p='.quality-rules.json'; d=json.load(open(p))
+d['encoding']['by_glob'] = {'legacy/*.properties': 'iso-8859-1'}
+json.dump(d, open(p, 'w'), indent=2)
+PY
+mkdir -p legacy; printf 'msg=Espa\xf1a\n' > legacy/m.properties; git add legacy/m.properties
+git commit -q -m "feat: legacy properties" || fail "declared ISO-8859-1 file rejected"
+git show HEAD:legacy/m.properties | od -An -tx1 | grep -q f1 && ok "legacy charset kept byte-exact" || fail "legacy file altered"
+
+# branch model: <version>/<ot>/.../ORIGINAL, final branches beside it (git aliases)
+export GIT_EDITOR="sed -i.bak -e s/DESCRIPCION_BREVE/integrate/"
+git checkout -q -b develop && git push -q origin develop 2>/dev/null || fail "push develop"
+git np 6.22.6 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ORIGINAL ] && ok "git np: version branch" || fail "np version"
+if git nr abc >/dev/null 2>&1; then fail "non-numeric OT accepted"; else ok "OT segment follows branches.levels"; fi
+git np 188858 >/dev/null && git np RF001 >/dev/null || fail "np nested"
+git nr login >/dev/null; printf 'L = 1\n' > login.py; git add login.py; git commit -q -m "feat: login" || fail "commit login"
+if git nr sub 2>/dev/null; then fail "final branch got a child"; else ok "final branch cannot have children"; fi
+git checkout -q 6.22.6/188858/RF001/ORIGINAL && git nr bank >/dev/null
+printf 'B = 1\n' > bank.py; git add bank.py; git commit -q -m "feat: bank" || fail "commit bank"
+git push -q origin 6.22.6/188858/RF001/bank 2>/dev/null || fail "push final branch"
+git convertir-padre --yes >/dev/null 2>&1 && [ "$(git branch --show-current)" = 6.22.6/188858/RF001/bank/ORIGINAL ] \
+  && git ls-remote --heads origin | grep -q 'RF001/bank/ORIGINAL$' && ! git ls-remote --heads origin | grep -q 'RF001/bank$' \
+  && ok "convertir-padre renames local and remote" || fail "convertir-padre"
+git nr bugfix >/dev/null; printf 'F = 1\n' > fix.py; git add fix.py; git commit -q -m "fix: bank bug" || fail "commit bugfix"
+git integra >/dev/null 2>&1 && [ "$(git branch --show-current)" = 6.22.6/188858/RF001/bank/ORIGINAL ] \
+  && git log -1 --format=%s | grep -q '^feat(bugfix): integrate' && ok "integra: final -> its ORIGINAL" || fail "integra final"
+git checkout -q 6.22.6/188858/RF001/ORIGINAL
+if git integra >/dev/null 2>&1; then fail "integrated with pending children"; else ok "integra waits for the children"; fi
+git checkout -q 6.22.6/188858/RF001/bank/ORIGINAL && git integra >/dev/null 2>&1 || fail "integra bank"
+git checkout -q 6.22.6/188858/RF001/login && git integra >/dev/null 2>&1 || fail "integra login (rebase + merge)"
+git integra >/dev/null 2>&1 && git integra >/dev/null 2>&1 || fail "integra RF001 -> OT -> version"
+[ "$(git branch --show-current)" = 6.22.6/ORIGINAL ] || fail "expected to be on 6.22.6/ORIGINAL"
+git integra >/dev/null 2>&1 && [ "$(git branch --show-current)" = develop ] && git rev-parse -q --verify refs/tags/6.22.6 >/dev/null \
+  && git show develop:fix.py >/dev/null && git show develop:login.py >/dev/null && ok "version ORIGINAL tagged and merged into develop" \
+  || fail "version -> develop"
+if QUALITY_ALLOW_REBASE=0 git -c core.hooksPath=.git/hooks rebase 6.22.6/188858/ORIGINAL 6.22.6/ORIGINAL >/dev/null 2>&1; then
+  fail "shared ORIGINAL was rebased"; else git rebase --abort >/dev/null 2>&1 || true; ok "shared ORIGINAL cannot be rebased"; fi
+git checkout -q develop; git checkout -q -b mi-rama
+if git push -q origin mi-rama 2>/dev/null; then fail "off-model branch pushed"; else ok "off-model branch name blocked on push"; fi
+git checkout -q develop
+tree="$(git arbol 6.22.6)"; grep -q '   + 6.22.6/188858/ORIGINAL' <<<"$tree" && ok "git arbol" || fail "arbol: $tree"
+# agents in their own worktree (Claude Code isolation: worktree, branch worktree-<name>)
+git np 6.22.7 >/dev/null && git np 200001 >/dev/null || fail "np for the worktree test"
+git worktree add -q -b worktree-agent1 ../wt HEAD >/dev/null 2>&1 || fail "worktree add"
+( cd ../wt && git nr task1 --from 6.22.7/200001/ORIGINAL >/dev/null && printf 'T = 1\n' > task1.py \
+  && git add task1.py && git commit -q -m "feat: task one" && git subir >/dev/null 2>&1 && git switch -q - ) \
+  || fail "final branch created from a worktree (git nr --from)"
+git checkout -q 6.22.7/200001/task1 && git integra -m "feat(task1): add task one" -m "Norms: none" >/dev/null 2>&1 \
+  && [ "$(git log -1 --format=%s)" = "feat(task1): add task one" ] && git log -1 --format=%b | grep -q '^Refs: ' \
+  && [ "$(git branch --show-current)" = 6.22.7/200001/ORIGINAL ] \
+  && ok "agent flow: worktree + git nr --from + git integra -m" || fail "worktree agent flow"
+git worktree remove --force ../wt; git checkout -q develop
+# a whole structure from stdin: creates what is missing, keeps what exists, adds siblings
+printf '6.22.8\n  300001\n    RF1\n      a\n      b\n' | git estructura >/dev/null 2>&1 \
+  && git rev-parse -q --verify 6.22.8/300001/RF1/ORIGINAL >/dev/null && git rev-parse -q --verify 6.22.8/300001/RF1/b >/dev/null \
+  && [ "$(git branch --show-current)" = develop ] && ok "git estructura creates a tree from stdin" || fail "estructura create"
+before="$(git rev-parse 6.22.8/300001/RF1/a)"
+out="$(printf '6.22.8/300001/RF1/a\n6.22.8/300001/RF1/c\n' | git es --push 2>&1)" || fail "estructura sibling: $out"
+[ "$(git rev-parse 6.22.8/300001/RF1/a)" = "$before" ] && grep -q '= 6.22.8/300001/RF1/a ' <<<"$out" \
+  && grep -q '+ 6.22.8/300001/RF1/c ' <<<"$out" && git ls-remote --heads origin | grep -q '6.22.8/300001/RF1/ORIGINAL$' \
+  && ok "git estructura keeps existing branches, adds siblings, pushes" || fail "estructura sibling: $out"
+if printf '6.22.8/x1/y\n' | git es >/dev/null 2>&1 || git rev-parse -q --verify 6.22.8/x1/y >/dev/null; then
+  fail "estructura accepted an invalid OT"; else ok "git estructura validates everything before creating"; fi
+# release: recursive check, changelog, unmerged branches set aside, tag, merge into develop, tree deleted
+git checkout -q develop && printf '# Demo\n\nText.\n' > README.md \
+  && printf '<project>\n  <groupId>g</groupId>\n  <artifactId>a</artifactId>\n  <version>6.22.6</version>\n</project>\n' > pom.xml \
+  && git add README.md pom.xml && git commit -q -m "build: maven project" && git push -q origin develop 2>/dev/null || fail "pom on develop"
+printf '7.1.0\n  300100\n    RF1\n      login\n      pay\n  300101\n    x\n' | git es --push >/dev/null 2>&1 || fail "release tree"
+git checkout -q 7.1.0/300100/RF1/login && printf 'L1 = 1\n' > l1.py && git add l1.py && git commit -q -m "feat(login): add form" \
+  && git commit -q --allow-empty -m "fix(login): check user" --trailer "Norms: JDA-SEG-010" || fail "release commits"
+git checkout -q 7.1.0/300100/RF1/pay && printf 'P1 = 1\n' > p1.py && git add p1.py && git commit -q -m "feat(pay): draft" \
+  && git push -q origin HEAD 2>/dev/null || fail "pay branch"
+git checkout -q 7.1.0/300100/RF1/login && git integra -m "feat(login): login page" >/dev/null 2>&1 || fail "integra login"
+git checkout -q 7.1.0/300100/RF1/ORIGINAL && git integra --force -m "feat(RF1): requirement RF1" >/dev/null 2>&1 || fail "integra RF1"
+git checkout -q 7.1.0/300100/ORIGINAL && git integra -m "feat(300100): OT 300100" >/dev/null 2>&1 || fail "integra OT"
+git checkout -q develop && printf 'D = 1\n' > d.py && git add d.py && git commit -q -m "fix: hotfix on develop" \
+  && git push -q origin develop 2>/dev/null || fail "develop hotfix"
+if git changelog v7.1.0 --version 7.1.0 > cl.out 2>&1; then fail "release allowed while develop is ahead"; fi
+grep -q "develop has 1 commit(s) that 7.1.0/ORIGINAL lacks" cl.out && ok "release preview: develop must be inside the version ORIGINAL first" \
+  || { cat cl.out; fail "develop ahead"; }
+# a plain 'git merge' runs pre-merge-commit before MERGE_HEAD exists: parent into ORIGINAL passes
+git checkout -q 7.1.0/ORIGINAL && git merge -q --no-edit develop > subir.out 2>&1 && git push -q origin HEAD 2>/dev/null \
+  && ok "plain git merge of the parent into an ORIGINAL passes the hooks" || { cat subir.out; fail "plain merge into ORIGINAL"; }
+git checkout -q 7.1.0/300100/RF1/login
+if git merge -q --no-edit develop > subir.out 2>&1; then fail "merge into a final branch allowed"; fi
+grep -q "breaks the branch model" subir.out && git merge --abort && ok "plain git merge into a final branch is blocked" \
+  || { cat subir.out; fail "merge into final"; }
+git checkout -q develop; rm -f subir.out
+git branch -q unmerged/7.1.0/300100/RF1/pay develop       # a name left by an earlier release
+git changelog v7.1.0 --version 7.1.0 -o notes.md > cl.out 2>&1 || { cat cl.out; fail "changelog rc"; }
+grep -q '^#### 7.1.0/300100/RF1/login' cl.out && grep -q 'fix(login): check user (.*) \[Norms: JDA-SEG-010\]' cl.out \
+  && grep -q '\[ok\] 7.1.0/300101/x: contained in 7.1.0/300101/ORIGINAL' cl.out \
+  && grep -q 'pay: 1 commit(s) not in 7.1.0/300100/RF1/ORIGINAL -> will be set aside as unmerged/7.1.0/300100/RF1/pay-2' cl.out \
+  && grep -q '^# Release v7.1.0' notes.md && git rev-parse -q --verify 7.1.0/ORIGINAL >/dev/null \
+  && ok "git changelog: per-branch changelog, recursive check, free name for the branch set aside" || { cat cl.out; fail "changelog"; }
+grep -q '^- Login page (.*OT 300100, JDA-SEG-010' cl.out && ok "git changelog: CHANGELOG.md entry in Common Changelog format" \
+  || { cat cl.out; fail "release notes preview"; }
+# git release (step 1): the push of RELEASE fails: the tree stays; a second run resumes
+mkdir -p "$T/remote.git/hooks"; printf '#!/bin/sh\nwhile read o n r; do case "$r" in */RELEASE) exit 1 ;; esac; done; exit 0\n' \
+  > "$T/remote.git/hooks/pre-receive"; chmod +x "$T/remote.git/hooks/pre-receive"
+if git release v7.1.0 --version 7.1.0 --yes > rel.out 2>&1; then fail "release passed a refused push"; fi
+grep -q "push of 7.1.0/RELEASE failed" rel.out && git ls-remote --heads origin | grep -q 'refs/heads/7.1.0/ORIGINAL$' \
+  && git rev-parse -q --verify 7.1.0/RELEASE >/dev/null && ok "a failed push leaves the branch tree untouched" || { cat rel.out; fail "push failure"; }
+rm -f "$T/remote.git/hooks/pre-receive"
+git release --version 7.1.0 --yes > rel.out 2>&1 || { cat rel.out; fail "release resume"; }
+subjects="$(git log --format=%s develop..7.1.0/RELEASE | head -n2 | tr '\n' '|')"
+[ "$subjects" = "docs(readme): version 7.1.0|docs(changelog): 7.1.0|" ] \
+  && [ "$(git branch --show-current)" = 7.1.0/RELEASE ] && [ "$(git show 7.1.0/RELEASE:VERSION)" = 7.1.0 ] \
+  && git show 7.1.0/RELEASE:pom.xml | grep -q '<version>7.1.0</version>' \
+  && git show 7.1.0/RELEASE:CHANGELOG.md | grep -q '^## 7.1.0 - [0-9-]*$' \
+  && git show 7.1.0/RELEASE:CHANGELOG.md | grep -q '^- Login page (' \
+  && git show 7.1.0/RELEASE:README.md | grep -q 'qs:version.*version 7.1.0' \
+  && [ "$(git for-each-ref --format='%(refname:short)' refs/heads/7.1.0/)" = 7.1.0/RELEASE ] \
+  && [ "$(git ls-remote --heads origin | grep -c 'refs/heads/7.1.0/')" = 1 ] \
+  && git rev-parse -q --verify unmerged/7.1.0/300100/RF1/pay-2 >/dev/null \
+  && git ls-remote --heads origin | grep -q 'refs/heads/unmerged/7.1.0/300100/RF1/pay-2$' \
+  && ok "git release: RELEASE with version, CHANGELOG.md and README badge commits; tree deleted; unmerged set aside" \
+  || { echo "subjects: $subjects"; cat rel.out; git log --oneline develop..7.1.0/RELEASE; fail "release step 1"; }
+git release --version 7.1.0 > rel.out 2>&1 && grep -q 'already prepared' rel.out && ok "git release again: already prepared" || { cat rel.out; fail "release twice"; }
+# git publicar (step 2): refused push of develop -> resumes; then merged, tagged, pushed, RELEASE deleted
+printf '#!/bin/sh\nwhile read o n r; do [ "$r" = refs/heads/develop ] && exit 1; done; exit 0\n' > "$T/remote.git/hooks/pre-receive"
+chmod +x "$T/remote.git/hooks/pre-receive"
+if git publicar --yes > rel.out 2>&1; then fail "publicar passed a refused push"; fi
+grep -q "push failed" rel.out && git rev-parse -q --verify 7.1.0/RELEASE >/dev/null && ok "git publicar: a failed push keeps RELEASE" \
+  || { cat rel.out; fail "publicar push failure"; }
+rm -f "$T/remote.git/hooks/pre-receive"
+git publicar --version 7.1.0 --yes > rel.out 2>&1 || { cat rel.out; fail "publicar resume"; }
+[ -z "$(git for-each-ref refs/heads/7.1.0/ refs/remotes/origin/7.1.0/)" ] \
+  && git ls-remote --tags origin | grep -q 'refs/tags/v7.1.0$' && git tag -l --format='%(contents)' v7.1.0 | grep -q 'Login page' \
+  && [ "$(git log -1 --format=%s develop)" = "chore(release): v7.1.0" ] && git show develop:l1.py >/dev/null \
+  && git show develop:CHANGELOG.md | grep -q '^## 7.1.0' && ! git show develop:p1.py >/dev/null 2>&1 \
+  && [ "$(git branch --show-current)" = develop ] \
+  && ok "git publicar: merged into develop, tag annotated with the notes, RELEASE deleted" || { cat rel.out; fail "publicar"; }
+# SemVer: the next version comes from tags, version trees and VERSION
+git np patch > np.out 2>&1 && [ "$(git branch --show-current)" = 7.1.1/ORIGINAL ] && [ "$(git show HEAD:VERSION)" = 7.1.1 ] \
+  && git show HEAD:pom.xml | grep -q '<version>7.1.1</version>' && [ "$(git log -1 --format=%s)" = "chore(version): 7.1.1" ] \
+  && ok "git np patch: next semver, VERSION and pom.xml committed on the ORIGINAL" || { cat np.out; fail "np patch"; }
+if git checkout -q develop && git np 7.2 > np.out 2>&1; then fail "non-semver version accepted"; else ok "version root must be semver"; fi
+rm -f np.out
+# another release reached develop: bringing develop into a tree keeps the tree's version, merges the rest
+sed -i 's|<version>7.1.0</version>|<version>7.1.5</version>\n  <description>d</description>|' pom.xml && printf '7.1.5\n' > VERSION \
+  && git add pom.xml VERSION && git -c core.hooksPath=/dev/null commit -q -m "chore(version): 7.1.5" || fail "develop 7.1.5"
+git checkout -q 7.1.1/ORIGINAL && git merge -q --no-edit develop > m.out 2>&1 && [ "$(cat VERSION)" = 7.1.1 ] \
+  && grep -q '<version>7.1.1</version>' pom.xml && grep -q '<description>d</description>' pom.xml \
+  && ok "merge driver: VERSION and pom.xml keep the tree version, other pom changes merged" || { cat m.out pom.xml VERSION; fail "merge driver"; }
+git checkout -q develop && git reset -q --hard HEAD~1; rm -f m.out
+# a version tree copied from a branch of another one (git nueva-version), lives next to it
+git checkout -q develop
+{ git np 8.0.0 && git np 400001 && git nr a; } >/dev/null 2>&1 && printf 'A = 1\n' > a8.py && git add a8.py \
+  && git commit -q -m "feat(a): add a" && git integra -m "feat(a): module a" >/dev/null 2>&1 || fail "tree 8.0.0"
+git nr b >/dev/null 2>&1 && printf 'B = 1\n' > b8.py && git add b8.py && git commit -q -m "feat(b): add b" || fail "branch b"
+out="$(git nv 8.0.0-SNAPSHOT --from 8.0.0/400001/ORIGINAL 2>&1)" || { echo "$out"; fail "nueva-version"; }
+[ "$(git show 8.0.0-SNAPSHOT/ORIGINAL:VERSION)" = 8.0.0-SNAPSHOT ] \
+  && git show 8.0.0-SNAPSHOT/ORIGINAL:pom.xml | grep -q '<version>8.0.0-SNAPSHOT</version>' \
+  && git show 8.0.0-SNAPSHOT/400001/b:b8.py >/dev/null && git show 8.0.0-SNAPSHOT/400001/ORIGINAL:a8.py >/dev/null \
+  && [ "$(git show 8.0.0-SNAPSHOT/400001/b:VERSION)" = 8.0.0-SNAPSHOT ] \
+  && git merge-base --is-ancestor 8.0.0-SNAPSHOT/400001/ORIGINAL 8.0.0-SNAPSHOT/400001/b \
+  && git merge-base --is-ancestor 8.0.0-SNAPSHOT/ORIGINAL 8.0.0-SNAPSHOT/400001/ORIGINAL \
+  && [ "$(git show 8.0.0/ORIGINAL:VERSION)" = 8.0.0 ] && [ "$(git branch --show-current)" = 8.0.0/400001/b ] \
+  && ok "git nueva-version: new tree from a branch of another, copies keep their path and work, synced" \
+  || { echo "$out"; git arbol 8.0.0-SNAPSHOT; fail "nueva-version result"; }
+# both trees released; with two RELEASE branches, publicar wants --version; combinar joins them
+git integra -m "feat(b): module b" >/dev/null 2>&1 && git integra -m "feat(400001): OT 400001" >/dev/null 2>&1 || fail "integra 8.0.0"
+git checkout -q 8.0.0-SNAPSHOT/400001/b && git integra -m "feat(b): module b" >/dev/null 2>&1 \
+  && git integra -m "feat(400001): OT 400001" >/dev/null 2>&1 \
+  && printf 'S = 1\n' > s8.py && git add s8.py && git commit -q -m "fix(snap): snapshot tweak" || fail "integra snapshot"
+git checkout -q develop
+git release --version 8.0.0 --yes > rel.out 2>&1 && git release --version 8.0.0-SNAPSHOT --yes >> rel.out 2>&1 \
+  || { cat rel.out; fail "release both"; }
+if git publicar --yes > rel.out 2>&1; then fail "publicar picked one of two RELEASE branches"; fi
+grep -q 'publish one at a time: git publicar --version' rel.out && ok "two RELEASE branches: publicar needs --version" \
+  || { cat rel.out; fail "publicar ambiguity"; }
+git combinar --incluir 8.0.0,8.0.0-SNAPSHOT --version 8.1.0 --yes > rel.out 2>&1 || { cat rel.out; fail "combinar"; }
+cl="$(git show 8.1.0/RELEASE:CHANGELOG.md)"
+[ -z "$(git for-each-ref refs/heads/8.0.0/ refs/heads/8.0.0-SNAPSHOT/ refs/remotes/origin/8.0.0/ refs/remotes/origin/8.0.0-SNAPSHOT/)" ] \
+  && [ "$(git show 8.1.0/RELEASE:VERSION)" = 8.1.0 ] && git show 8.1.0/RELEASE:pom.xml | grep -q '<version>8.1.0</version>' \
+  && git show 8.1.0/RELEASE:a8.py >/dev/null && git show 8.1.0/RELEASE:b8.py >/dev/null && git show 8.1.0/RELEASE:s8.py >/dev/null \
+  && [ "$(grep -c '^- Module b' <<<"$cl")" = 1 ] && grep -q '^- Snapshot tweak' <<<"$cl" && grep -q '^## 8.1.0 - ' <<<"$cl" \
+  && ! grep -q '^## 8.0.0' <<<"$cl" && [ "$(git log --format=%s develop..8.1.0/RELEASE | grep -c '^docs(changelog)')" = 1 ] \
+  && git ls-remote --heads origin | grep -q 'refs/heads/8.1.0/RELEASE$' \
+  && ok "git combinar: oldest first into 8.1.0/RELEASE, combined ones deleted, one changelog entry" \
+  || { cat rel.out; echo "$cl"; git log --oneline --graph develop..8.1.0/RELEASE | head -40; fail "combinar result"; }
+git publicar --version 8.1.0 --yes > rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 8.1.0" ] \
+  && ok "git publicar --version: the combined release reaches develop" || { cat rel.out; fail "publicar 8.1.0"; }
+rm -f rel.out
+
+tree="$(git arbol)"; grep -q '^~  unmerged/7.1.0/300100/RF1/pay-2' <<<"$tree" && ok "git arbol shows branches set aside" || fail "arbol archived: $tree"
+git branch -q -D unmerged/7.1.0/300100/RF1/pay; rm -f cl.out rel.out notes.md
+unset GIT_EDITOR
+
+# standard repository files: created at install from the history and pom.xml, checked by the gate
+git init -q -b develop "$T/repo-files"; cd "$T/repo-files"
+git config user.email ana@example.org; git config user.name "Ana Example"
+printf '<project>\n  <groupId>es.x</groupId>\n  <artifactId>demo</artifactId>\n  <version>1.1.0-SNAPSHOT</version>\n  <name>Demo App</name>\n  <description>Demo application.</description>\n</project>\n' > pom.xml
+git add pom.xml && git commit -q -m "feat: first version" && git tag v1.0.0
+QS_REPO_FILES=1 "$SUITE/install.sh" "$T/repo-files" > inst.out 2>&1 || { cat inst.out; fail "install with repository files"; }
+missing=""; for f in README.md CHANGELOG.md VERSION CONTRIBUTING.md CODE_OF_CONDUCT.md LICENSE AUTHORS CONTRIBUTORS.md \
+  CITATION.cff SECURITY.md SUPPORT.md CODEOWNERS MAINTAINERS.md ROADMAP.md FAQ.md INSTALL.md ARCHITECTURE.md API.md DEVELOPMENT.md; do
+  [ -f "$f" ] || missing="$missing $f"; done
+[ -z "$missing" ] && [ "$(cat VERSION)" = 1.1.0 ] && grep -q '^## \[\{0,1\}1.0.0\]\{0,1\} - ' CHANGELOG.md \
+  && grep -q '^# Demo App' README.md && grep -q 'version 1.0.0' README.md && grep -q 'Ana Example <ana@example.org>' AUTHORS \
+  && ok "install creates the 19 standard files from git history and pom.xml" || { cat inst.out; echo "missing:$missing"; fail "repository files"; }
+rm -f inst.out
+printf 'own text\n' > FAQ.md
+out="$(git repo-files 2>&1)" && grep -q 'FAQ.md *exists' <<<"$out" && [ "$(cat FAQ.md)" = "own text" ] \
+  && git repo-files --force FAQ.md >/dev/null 2>&1 && grep -q '^# FAQ' FAQ.md \
+  && ok "git repo-files never overwrites; --force NAME regenerates one" || { echo "$out"; fail "repo-files again"; }
+git add -A && out="$(git commit -m "docs: repository files" 2>&1)" && grep -q 'qs:fill' <<<"$out" \
+  && ok "generated files commit (placeholders only warn)" || { echo "$out"; fail "commit repository files"; }
+printf '1.0\n' > VERSION && git add VERSION
+if git commit -q -m "chore: bad version" 2>/dev/null; then fail "non-semver VERSION committed"; else ok "gate: VERSION must be semver"; fi
+git checkout -q HEAD -- VERSION
+printf '\n## [Unreleased]\n' >> CHANGELOG.md && git add CHANGELOG.md
+if out="$(git commit -m "docs: unreleased" 2>&1)"; then fail "invalid CHANGELOG.md committed"; fi
+grep -q "Unreleased" <<<"$out" && ok "gate: CHANGELOG.md follows Common Changelog" || { echo "$out"; fail "changelog gate"; }
+git checkout -q HEAD -- CHANGELOG.md
+cd "$T/repo"
+
+# agents: the Claude Code hook gets the gate findings for the file it just edited
+printf 'def broken(:\n  pass\n' > agent.py
+rc=0; printf '{"tool_name":"Write","tool_input":{"file_path":"%s/agent.py"}}' "$PWD" \
+  | "$SUITE/scripts/qs-run.sh" --hook 2> agent.err || rc=$?
+[ "$rc" = 2 ] && grep -q "Quality gate findings" agent.err && ok "agent hook reports findings (exit 2)" \
+  || fail "agent hook rc=$rc: $(cat agent.err)"
+printf 'x = 1\n' > agent.py
+rc=0; printf '{"tool_input":{"file_path":"agent.py"}}' | "$SUITE/scripts/qs-run.sh" --hook 2>/dev/null || rc=$?
+[ "$rc" = 0 ] && ok "agent hook quiet on clean files" || fail "agent hook on clean file rc=$rc"
+# the hook resolves the repository from the edited file (agents in a worktree), not from its cwd
+mkdir -p sub; printf 'def broken(:\n  pass\n' > sub/agent2.py
+rc=0; ( cd /; printf '{"tool_input":{"file_path":"%s/sub/agent2.py"}}' "$OLDPWD" | "$SUITE/scripts/qs-run.sh" --hook ) 2> agent.err || rc=$?
+[ "$rc" = 2 ] && grep -q "sub/agent2.py" agent.err && ok "agent hook finds the repository from the file path" \
+  || fail "agent hook from another cwd rc=$rc: $(cat agent.err)"
+rm -rf agent.py agent.err sub
+
+# one image per suite version for every repository: a second repo reuses the tools of the first
+[ "$(readlink .git/hooks/pre-commit)" = "$QS_HOME/hooks/pre-commit" ] && grep -q 'exec bash "$SUITE/hooks/pre-commit"' "$QS_HOME/hooks/pre-commit" \
+  && ! grep -q '^QUALITY_SUITE_IMAGE=' .git/hooks/quality-suite.env \
+  && ok "repo hooks are symbolic links to one common folder; the image is not frozen per repository" || fail "common hooks / image key"
+git init -q -b main "$T/repo2"
+( cd "$T/repo2" && git config user.email t@example.com && git config user.name tester \
+  && QS_HOOK_LINKS=0 "$SUITE/install.sh" "$T/repo2" >/dev/null && printf 'x = 1\n' > a.py && printf 'int main(void) { return 0; }\n' > m.c \
+  && git add a.py m.c && git commit -q -m "feat: python and c" ) >/dev/null 2>&1 || fail "commit in a second repository"
+last="$(grep '^LAYER' "$FAKE_DOCKER_DIR/calls.log" | tail -n1)"
+grep -qw c <<<"${last##*:}" && ! grep -qw python <<<"${last##*:}" && grep -q "code-quality-suite:$(cat "$SUITE/VERSION")" <<<"$last" \
+  && ok "second repository adds only its new languages to the shared image" || fail "shared image: $last"
+grep -qxF "$T/repo2" "$QS_HOME/repos.list" && ok "installed repositories are registered" || fail "repos.list"
+[ ! -L "$T/repo2/.git/hooks/pre-commit" ] && grep -q "exec \"$QS_HOME/hooks/pre-commit\"" "$T/repo2/.git/hooks/pre-commit" \
+  && ok "without symbolic links a one-line stub runs the common hook (commits above went through it)" || fail "stub hook"
+# a lock left by a killed commit (dead pid) does not block the next one
+mkdir -p "$QS_HOME/image.lock"; echo 999999 > "$QS_HOME/image.lock/pid"; date +%s > "$QS_HOME/image.lock/since"
+( cd "$T/repo2" && printf 'local x = 1\nreturn x\n' > m.lua && git add m.lua && timeout 120 git commit -q -m "feat: lua" ) >/dev/null 2>&1 \
+  && [ ! -d "$QS_HOME/image.lock" ] && ok "stale install lock is taken over and released" || fail "stale lock"
+# a tools layer that fails to build keeps the image, says so, and the commit still runs the checks
+( cd "$T/repo2" && printf '[main]\nkey = value\n' > s.ini && git add s.ini && FAKE_DOCKER_FAIL_BUILD=1 git commit -q -m "feat: ini" ) 2> fail.err \
+  && grep -q "could not be added to the image" fail.err && grep -q "installer crashed: simulated" fail.err \
+  && ! docker image inspect -f '{{index .Config.Labels "qs.langs"}}' "code-quality-suite:$(cat "$SUITE/VERSION")" | grep -qw ini \
+  && ok "a failed tools layer is reported (log tail) and the commit still runs the built-in checks" \
+  || { cat fail.err >&2; fail "failed layer"; }
+rm -f fail.err
+# suite moved: the wrapper blocks with a clear message instead of skipping the checks
+sed -i.bak 's|^QUALITY_SUITE_DIR=.*|QUALITY_SUITE_DIR="/nonexistent"|' "$T/repo2/.git/hooks/quality-suite.env"
+( cd "$T/repo2" && printf 'y = 2\n' > b.py && git add b.py && git commit -q -m "feat: b" ) 2> moved.err \
+  && fail "commit passed without the suite" || { grep -q "the suite is not at '/nonexistent'" moved.err \
+  && ok "missing suite blocks the commit with instructions" || fail "moved suite: $(cat moved.err)"; }
+# update: a new suite version in another folder -> images removed, repositories re-pointed,
+# tools reinstalled on the next commit like a clean install
+cp -r "$SUITE" "$T/suite2"; echo 9.9.9 > "$T/suite2/VERSION"
+"$T/suite2/scripts/qs-update.sh" --yes --lazy > update.log 2>&1 || fail "qs-update: $(cat update.log)"
+grep -q "re-pointed $(grep -c . "$QS_HOME/repos.list") repositories" update.log && [ -z "$(ls "$FAKE_DOCKER_DIR" | grep -F '@')" ] \
+  && grep -q "QUALITY_SUITE_DIR=\"$T/suite2\"" "$T/repo2/.git/hooks/quality-suite.env" \
+  && ok "git actualizar-suite: images removed, repositories re-pointed" || fail "update: $(cat update.log; ls "$FAKE_DOCKER_DIR")"
+( cd "$T/repo2" && git commit -q -m "feat: b" ) >/dev/null 2>&1 || fail "commit after the update"
+last="$(grep '^LAYER' "$FAKE_DOCKER_DIR/calls.log" | tail -n1)"
+grep -q 'code-quality-suite:9.9.9' <<<"$last" && grep -qw python <<<"${last##*:}" \
+  && ok "after the update the first commit reinstalls its tools in the new image" || fail "reinstall: $last"
+"$T/suite2/scripts/qs-update.sh" --status > status.log 2>&1; grep -q "Tools for    : _global python" status.log \
+  && ok "qs-update --status" || fail "status: $(cat status.log)"
+rm -f moved.err update.log
+# once per machine: setup-global, then everything is a git command
+bash "$SUITE/git-integration/setup-global.sh" > sg.out 2>&1 || { cat sg.out; fail "setup-global"; }
+grep -q "^export QS_SUITE=\"$SUITE\"" "$HOME/.bashrc" && git config --global alias.iniciar >/dev/null \
+  && git config --global alias.ayuda >/dev/null && ok "setup-global: global aliases and QS_SUITE" || { cat sg.out; fail "setup-global result"; }
+rm -f sg.out
+mkdir "$T/nuevo"
+( cd "$T/nuevo" && QS_REPO_FILES=1 git iniciar > ../iniciar.out 2>&1 ) || { cat "$T/iniciar.out"; fail "git iniciar"; }
+( cd "$T/nuevo" && [ "$(git branch --show-current)" = develop ] && grep -q 'code-quality-suite' .git/hooks/pre-commit \
+  && [ -f AGENTS.md ] && [ -f README.md ] && [ -f VERSION ] && grep -qx '/AGENTS.md' .gitignore && grep -qx '/.claude/' .gitignore \
+  && grep -qx '/.quality-rules.json' .gitignore && [ -f .claude/skills/git-commands/SKILL.md ] \
+  && [ -z "$(git status --porcelain --untracked-files=all | grep -E ' (AGENTS.md|CLAUDE.md|opencode.json|\.claude/|\.agents/|\.opencode/|knowledge/)')" ] \
+  && git status --porcelain --untracked-files=all | grep -q ' README.md' ) \
+  && ok "git iniciar: develop, hooks, standard files; AI files on disk but git-ignored; manual as a skill" \
+  || { cat "$T/iniciar.out"; (cd "$T/nuevo" && git status --short && cat .gitignore); fail "git iniciar result"; }
+# why capture first: grep -q stops reading and the writer gets SIGPIPE under pipefail
+a1="$(cd "$T/nuevo" && git ayuda np)"; a2="$(cd "$T/nuevo" && git ayuda nueva-version)"; a3="$(cd "$T" && git ayuda)"
+grep -q '^### git np' <<<"$a1" && ! grep -q '^### git nr' <<<"$a1" && grep -q 'git nv' <<<"$a2" \
+  && grep -q '^## 2. Which command when' <<<"$a3" && ok "git ayuda: manual and one command (also outside a repository)" \
+  || { echo "$a1" | head -5; fail "git ayuda"; }
+# AI files committed by mistake: git ia takes them out of the index and keeps them on disk
+( cd "$T/nuevo" && git config user.email t@example.com && git config user.name tester \
+  && git add -f AGENTS.md knowledge .claude && git -c core.hooksPath=/dev/null commit -q -m "chore: oops" \
+  && git ia > ../ia.out 2>&1 && grep -q 'taken out of the index' ../ia.out && [ -f AGENTS.md ] \
+  && [ -z "$(git ls-files --cached -- AGENTS.md knowledge .claude | grep -v '^$' | head -n1)" ] \
+  && git diff --cached --name-only | grep -q '^AGENTS.md$' && git ia --actualizar | grep -q 'untouched' ) \
+  && ok "git ia: committed AI files out of the index (kept on disk); --actualizar keeps AGENTS.md" \
+  || { cat "$T/ia.out"; fail "git ia untrack"; }
+# AI layer: ai-init adds opencode.json and generates the OpenCode agents with their gateway roles
+git init -q -b develop "$T/ai"
+( cd "$T/ai" && bash "$SUITE/scripts/ai-init.sh" . >/dev/null ) || fail "ai-init"
+[ -f "$T/ai/opencode.json" ] && grep -q '^model: litellm/role-dev$' "$T/ai/.opencode/agents/developer.md" \
+  && grep -q '^model: litellm/role-review$' "$T/ai/.opencode/agents/reviewer.md" \
+  && grep -q '^  edit: deny$' "$T/ai/.opencode/agents/reviewer.md" \
+  && ! grep -q 'edit: deny' "$T/ai/.opencode/agents/developer.md" && [ -f "$T/ai/.claude/skills/quality-gate/SKILL.md" ] \
+  && ok "ai-init: OpenCode agents on gateway roles, permissions from the tools, skills synced" || fail "ai-init opencode"
+echo "all hook checks passed"

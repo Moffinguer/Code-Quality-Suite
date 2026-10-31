@@ -1,0 +1,6 @@
+# hadolint base rules. failure-threshold: lowest severity that fails (error|warning|info|style).
+failure-threshold: warning
+ignored: []
+trustedRegistries:
+  - docker.io
+  - ghcr.io

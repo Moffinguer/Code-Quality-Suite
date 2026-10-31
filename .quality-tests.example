@@ -1,0 +1,7 @@
+# .quality-tests - commands run before each push (one per line; # = comment).
+# Place this file (without .example) at your repo root. If absent, no tests run.
+# Each command runs from the repo root; any non-zero exit blocks the push.
+mvn -B test
+# npm test --silent
+# cargo test
+# pytest -q

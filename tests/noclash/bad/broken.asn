@@ -1,0 +1,3 @@
+Demo DEFINITIONS ::= BEGIN
+  P ::= SEQUENCE {
+END

@@ -1,67 +1,100 @@
 #!/usr/bin/env bash
-# pre-commit - format and analyze staged files; block the commit on failure.
+# code-quality-suite hook
+# pre-commit - format and analyse the staged files; block the commit on failure.
+# The rules come from .quality-rules.json (repo root, git-ignored, created on first use).
+# What is checked is exactly what is committed: unstaged edits of partially staged files
+# are set aside during the run and restored afterwards.
 set -euo pipefail
 
-HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+ENV_FILE="${HOOK_DIR}/quality-suite.env"
+# why: set -a exports the settings so child scripts (ensure-langs, run-tests) see them
+if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+[ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ] && . "${QUALITY_SUITE_DIR}/log-lib.sh" || { qs_log(){ :; }; qs_result(){ :; }; }
+[ -n "${QUALITY_SUITE_DIR:-}" ] || { echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2; exit 1; }
+. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
 
-IMAGE="${QUALITY_SUITE_IMAGE:-code-quality-suite:latest}"
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+REPO_ROOT="$(qs_repo_root)"
+STATE="$(qs_state_dir)"
+mkdir -p "$STATE"
+: "${QUALITY_LOG_FILE:=${STATE}/quality-suite.log}"; export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
+cd "$REPO_ROOT"
 
-ensure_image() {
-  if docker image inspect "$IMAGE" >/dev/null 2>&1; then return 0; fi
-  if [ -z "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "${QUALITY_SUITE_DIR}/Dockerfile" ]; then
-    echo "[quality-suite] ERROR: image '$IMAGE' missing and no source to build it (QUALITY_SUITE_DIR)." >&2
-    exit 1
-  fi
-  echo "[quality-suite] Image '$IMAGE' not found; building (languages: ${QUALITY_LANGS:-none})..."
-  "${QUALITY_SUITE_DIR}/scripts/build-image.sh" "${QUALITY_SUITE_DIR}" "$IMAGE" ${QUALITY_LANGS:-} \
-    || { echo "[quality-suite] ERROR building the image." >&2; exit 1; }
-}
-ensure_image
+# why: the rules file is personal to the clone; keep it out of commits without touching .gitignore.
+EXCL="$(git rev-parse --git-path info/exclude)"
+grep -qx '/.quality-rules.json' "$EXCL" 2>/dev/null || { mkdir -p "$(dirname "$EXCL")"; echo '/.quality-rules.json' >> "$EXCL"; }
 
-# why: no mapfile, to stay compatible with macOS bash 3.2.
-STAGED=()
-while IFS= read -r line; do
-  [ -n "$line" ] && STAGED+=("$line")
-done < <(git diff --cached --name-only --diff-filter=ACM)
-
+# Staged files as a NUL-separated list (spaces, accents and long lists are safe).
+LIST="${STATE}/files.lst"
+git diff --cached --name-only -z --diff-filter=ACMR > "$LIST"
+qs_read_list "$LIST"
+STAGED=(${QS_FILES[@]+"${QS_FILES[@]}"})
 [ "${#STAGED[@]}" -eq 0 ] && exit 0
+
 echo "[quality-suite] Analyzing ${#STAGED[@]} staged file(s)..."
+qs_log INFO pre-commit "commit start files=${#STAGED[@]}"
 
-# Lazy install: rebuild the image if these files introduce a new language.
-if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" ]; then
-  "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "${QUALITY_SUITE_DIR}" "${HOOK_DIR}/quality-suite.env" "$IMAGE" -- "${STAGED[@]}"
-  [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+# Install the tools of any language seen for the first time (network only here).
+"${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "$QUALITY_SUITE_DIR" "$ENV_FILE" "$QUALITY_SUITE_IMAGE" --from "$LIST" \
+  || echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
+if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+
+# Executable bits from the index (scripts get a shebang during formatting).
+: > "${STATE}/exec-files.txt"
+git diff --cached --raw -z --diff-filter=ACMR | {
+  while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+    case "$meta" in *" R"*|*" C"*) IFS= read -r -d '' path ;; esac   # rename/copy: source, then target
+    case "$meta" in :??????" 100755 "*) printf '%s\n' "$path" ;; esac
+  done
+} >> "${STATE}/exec-files.txt"
+
+# Partially staged files: set the unstaged edits aside so the check sees the commit content.
+PATCH="${STATE}/unstaged.patch"
+INDEX_TREE="$(git write-tree)"
+git diff --binary --no-color --no-ext-diff > "$PATCH" || true
+if [ -s "$PATCH" ]; then
+  cp "$PATCH" "${STATE}/unstaged.backup.patch"   # why: a copy survives even a killed hook
+  git diff --name-only -z | xargs -0 git checkout -- 2>/dev/null || true
 fi
+restore_unstaged() {
+  [ -s "$PATCH" ] || return 0
+  if git apply --whitespace=nowarn "$PATCH" 2>/dev/null; then
+    rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
+    return 0
+  fi
+  # why: the formatter touched lines next to your unstaged edits; roll everything back to the
+  # state before the commit (index and working tree) instead of leaving a half-applied mix.
+  git read-tree "$INDEX_TREE"
+  git checkout -- . 2>/dev/null || true
+  git apply --whitespace=nowarn "$PATCH" && rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
+  echo "[quality-suite] The formatter changes overlap your unstaged edits; nothing was changed." >&2
+  echo "  Stage the whole file (git add) or set the rest aside (git stash --keep-index), then commit again." >&2
+  return 1
+}
 
-DOCKER_OPTS=(
-  --rm --network none --read-only --tmpfs /tmp
-  --cap-drop ALL --security-opt no-new-privileges
-  -e HOME=/tmp
-  -e QUALITY_MODE=fix
-  -e PMD_JAVA_VERSION="${PMD_JAVA_VERSION:-21}"
-)
-case "$(uname -s)" in
-  Linux)               DOCKER_OPTS+=( --user "$(id -u):$(id -g)" ) ;;
-  MINGW*|MSYS*|CYGWIN*) export MSYS_NO_PATHCONV=1 ;;
-esac
+# why: whatever happens below, the user's unstaged edits come back
+trap 'restore_unstaged >/dev/null 2>&1 || true' EXIT
 
-if docker run "${DOCKER_OPTS[@]}" -v "${REPO_ROOT}:/workspace" -w /workspace \
-     "${IMAGE}" "${STAGED[@]}"; then
-  container_rc=0
-else
-  container_rc=$?
+ENVF="$(qs_env_file "$ENV_FILE" "${STATE}/docker.env")"
+qs_docker_opts; qs_git_opts
+rc=0
+docker run "${QS_DOCKER_OPTS[@]}" ${QS_GIT_OPTS[@]+"${QS_GIT_OPTS[@]}"} --env-file "$(qs_hostpath "$ENVF")" \
+  -e QUALITY_MODE=fix -e QS_PERSIST=1 -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
+  -e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
+  -e QS_BASE_REV=HEAD -e QS_SCHEMA_REF="$(qs_schema_uri)" -e QS_BRANCH="$(git branch --show-current 2>/dev/null || true)" \
+  -v "$(qs_hostpath "$REPO_ROOT"):/workspace" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
+  "$QUALITY_SUITE_IMAGE" run || rc=$?
+rm -f "$ENVF"
+
+# why: formatting and identifying marks (shebang/modeline) belong to this commit.
+git add --pathspec-from-file="$LIST" --pathspec-file-nul 2>/dev/null || true
+restore_unstaged || rc=1
+
+if [ "$rc" -ne 0 ]; then
+  qs_result pre-commit "${#STAGED[@]} file(s)" fix ERROR "commit aborted"
+  echo "[quality-suite] Analysis found problems. Commit aborted (details: ${QUALITY_LOG_FILE})."
+  exit "$rc"
 fi
-
-# why: re-stage what the formatter rewrote (partial-staging note in README).
-for f in "${STAGED[@]}"; do
-  [ -f "${REPO_ROOT}/${f}" ] && git add -- "${f}"
-done
-
-if [ "${container_rc}" -ne 0 ]; then
-  echo "[quality-suite] Analysis found problems. Commit aborted."
-  exit "${container_rc}"
-fi
+qs_result pre-commit "${#STAGED[@]} file(s)" fix SUCCESS
 echo "[quality-suite] OK"
 exit 0

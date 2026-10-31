@@ -1,2 +1,17 @@
 **/**/.env
+!tests/noclash/ok/.env
 .aider*
+quality-suite.log
+__pycache__/
+# >>> code-quality-suite: AI agent files and local rules stay out of the repository (git ia)
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/opencode.json
+/.agents/
+/.claude/
+/.gemini/
+/.opencode/
+/knowledge/
+/.quality-rules.json
+# <<< code-quality-suite

@@ -1,14 +1,19 @@
+# Only the engine, the generated registry/schema, base configs and the installer go in.
 .git
 **/node_modules
+**/__pycache__
 **/.aider*
-workspace-services
 docs
 examples
 scripts
 hooks
+tests
+tools
+registry/src
+git-integration
 bootstrap.*
 install.sh
+log-lib.sh
 *.md
-VERSION
 .gitattributes
 .gitignore

@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE module PUBLIC "-//Checkstyle//DTD Checkstyle Configuration 1.3//EN" "https://checkstyle.org/dtds/configuration_1_3.dtd">
+<!-- Java .properties bundles: keys missing in a locale variant (Translation compares
+     messages.properties with messages_es.properties, messages_en...). It runs on whole
+     directories, so every file of a bundle is compared. Duplicate keys are a built-in check.
+     why charset: .properties files may be declared ISO-8859-1 in the encoding policy. -->
+<module name="Checker">
+  <property name="charset" value="${checkstyle.charset}" default="UTF-8"/>
+  <property name="fileExtensions" value="properties"/>
+  <module name="Translation">
+    <property name="baseName" value="^.+$"/>
+  </module>
+</module>

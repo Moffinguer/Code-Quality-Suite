@@ -1,0 +1,68 @@
+# Local model gateway for the AI agents (see docs/AI-SETUP.md). Keys in .env, models and roles in
+# litellm/config.yaml.
+#   docker compose up -d                      db + LiteLLM (every provider key in .env)
+#   LITELLM_CONFIG=demo.yaml (in .env)        free demo: every role on free tiers (public data only)
+#   docker compose --profile local up -d      + Ollama (local models; the only target for regulated code)
+#   docker compose --profile free up -d       + FreeLLMAPI (optional pool of more free tiers)
+#   LiteLLM    http://localhost:4000  OpenAI-compatible API + admin UI (/ui); models, roles,
+#              fallbacks, virtual keys and budgets are stored in Postgres (STORE_MODEL_IN_DB)
+#   FreeLLMAPI http://localhost:3001  free-tier providers behind one key (public data only)
+#   Ollama     http://localhost:11434
+# Every port is bound to 127.0.0.1: nothing is reachable from the network.
+name: qs-ai
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes: [db-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm -d litellm"]
+      interval: 10s
+      retries: 10
+
+  litellm:
+    # why litellm-database: the image with Prisma for the Postgres-backed model catalog.
+    # why pinned: PyPI 1.82.7/1.82.8 were compromised (March 2026); keep an explicit, reviewed tag.
+    image: ghcr.io/berriai/litellm-database:${LITELLM_TAG:-v1.105.0}
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["127.0.0.1:4000:4000"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://litellm:${POSTGRES_PASSWORD}@db:5432/litellm
+      STORE_MODEL_IN_DB: "True"
+    # why the folder: config.yaml and demo.yaml both include providers.yaml
+    volumes: ["./litellm:/app/litellm:ro"]
+    # LITELLM_CONFIG=demo.yaml in .env: every role on free tiers (public data only)
+    command: ["--config", "/app/litellm/${LITELLM_CONFIG:-config.yaml}", "--port", "4000"]
+
+  freellmapi:
+    image: ghcr.io/tashfeenahmed/freellmapi:${FREELLMAPI_TAG:-v0.13.7}
+    profiles: ["free"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:3001:3001"]
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      # required with this profile (it refuses to start without it); empty is fine otherwise
+      ENCRYPTION_KEY: ${FREELLMAPI_ENCRYPTION_KEY:-}
+    volumes: [freellmapi-data:/app/server/data]
+
+  ollama:
+    image: ollama/ollama:${OLLAMA_TAG:-0.40.3}
+    profiles: ["local"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:11434:11434"]
+    volumes: [ollama-data:/root/.ollama]
+    # GPU (NVIDIA + Docker Desktop WSL2): uncomment
+    # deploy: {resources: {reservations: {devices: [{driver: nvidia, count: all, capabilities: [gpu]}]}}}
+
+volumes:
+  db-data:
+  freellmapi-data:
+  ollama-data:
