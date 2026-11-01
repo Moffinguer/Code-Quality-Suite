@@ -50,40 +50,59 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SUITE="$(cd "$DIR/.." && pwd)"
 HOOK_ENV="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)/quality-suite.env"
 # shellcheck disable=SC1090
-[ -f "$HOOK_ENV" ] && { set -a; . "$HOOK_ENV"; set +a; }
+[ -f "$HOOK_ENV" ] && {
+	set -a
+	. "$HOOK_ENV"
+	set +a
+}
 : "${QUALITY_SUITE_DIR:=$SUITE}"
 # shellcheck disable=SC1091
 . "$DIR/git-flow-lib.sh"
 qs_policy_load
 
-die() { echo "[rama] $*" >&2; exit 1; }
+die() {
+	echo "[rama] $*" >&2
+	exit 1
+}
 say() { echo "[rama] $*"; }
 YES=0 FORCE=0 FROM="" MSG=() ARGS=()
 while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --yes|-y) YES=1 ;;
-    --force) FORCE=1 ;;
-    --from) [ "$#" -ge 2 ] || die "--from needs a branch"; FROM="$2"; shift ;;
-    --from=*) FROM="${1#--from=}" ;;
-    -m) [ "$#" -ge 2 ] || die "-m needs a message"; MSG+=("$2"); shift ;;
-    *) ARGS+=("$1") ;;
-  esac
-  shift
+	case "$1" in
+	--yes | -y) YES=1 ;;
+	--force) FORCE=1 ;;
+	--from)
+		[ "$#" -ge 2 ] || die "--from needs a branch"
+		FROM="$2"
+		shift
+		;;
+	--from=*) FROM="${1#--from=}" ;;
+	-m)
+		[ "$#" -ge 2 ] || die "-m needs a message"
+		MSG+=("$2")
+		shift
+		;;
+	*) ARGS+=("$1") ;;
+	esac
+	shift
 done
 set -- ${ARGS[@]+"${ARGS[@]}"}
-CMD="${1:-}"; shift || true
+CMD="${1:-}"
+shift || true
 has_origin() { git remote get-url origin >/dev/null 2>&1; }
 fetch_origin() { has_origin && git fetch -q --prune origin 2>/dev/null || true; }
 confirm() {
-  [ "$YES" = 1 ] && return 0
-  local r; printf '%s [y/N] ' "$1" > /dev/tty; read -r r < /dev/tty || r=""
-  case "$r" in y|Y|s|S|yes|si) return 0 ;; esac; return 1
+	[ "$YES" = 1 ] && return 0
+	local r
+	printf '%s [y/N] ' "$1" >/dev/tty
+	read -r r </dev/tty || r=""
+	case "$r" in y | Y | s | S | yes | si) return 0 ;; esac
+	return 1
 }
 exists_ref() { git rev-parse -q --verify "$1" >/dev/null 2>&1; }
 # any local or remote branch named exactly <b>, or under the folder <b>/
 taken() {
-  exists_ref "refs/heads/$1" || exists_ref "refs/remotes/origin/$1" \
-    || [ -n "$(git for-each-ref --count=1 "refs/heads/$1/" "refs/remotes/origin/$1/")" ]
+	exists_ref "refs/heads/$1" || exists_ref "refs/remotes/origin/$1" ||
+		[ -n "$(git for-each-ref --count=1 "refs/heads/$1/" "refs/remotes/origin/$1/")" ]
 }
 
 # --- versions: Semantic Versioning (https://semver.org) ----------------------------------------
@@ -91,294 +110,346 @@ SEMVER_RELEASE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 # released or planned versions, lowest first: tags (a 'v' prefix is fine), version trees (also the
 # ones set aside), the VERSION file of the mainline
 known_versions() {
-  local m; m="$(best_ref "$QS_BR_MAINLINE" || true)"
-  { git tag -l | sed 's/^[vV]//'
-    all_branches | awk -F/ -v a="$QS_BR_ARCHIVE" 'NF > 1 { print ($1 == a ? $2 : $1) }'
-    if [ -n "$m" ] && [ -n "$QS_BR_VERSION_FILE" ]; then git show "$m:$QS_BR_VERSION_FILE" 2>/dev/null || true; fi
-  } | tr -d '\r ' | { grep -E "$SEMVER_RELEASE" || true; } | sort -t. -k1,1n -k2,2n -k3,3n -u
+	local m
+	m="$(best_ref "$QS_BR_MAINLINE" || true)"
+	{
+		git tag -l | sed 's/^[vV]//'
+		all_branches | awk -F/ -v a="$QS_BR_ARCHIVE" 'NF > 1 { print ($1 == a ? $2 : $1) }'
+		if [ -n "$m" ] && [ -n "$QS_BR_VERSION_FILE" ]; then git show "$m:$QS_BR_VERSION_FILE" 2>/dev/null || true; fi
+	} | tr -d '\r ' | { grep -E "$SEMVER_RELEASE" || true; } | sort -t. -k1,1n -k2,2n -k3,3n -u
 }
-next_version() {  # major|minor|patch -> the version after the highest known one
-  local last ma mi pa
-  last="$(known_versions | tail -n1)"; last="${last:-0.0.0}"
-  IFS=. read -r ma mi pa <<<"$last"
-  case "$1" in
-    major) echo "$((ma + 1)).0.0" ;; minor) echo "$ma.$((mi + 1)).0" ;; patch) echo "$ma.$mi.$((pa + 1))" ;;
-  esac
+next_version() { # major|minor|patch -> the version after the highest known one
+	local last ma mi pa
+	last="$(known_versions | tail -n1)"
+	last="${last:-0.0.0}"
+	IFS=. read -r ma mi pa <<<"$last"
+	case "$1" in
+	major) echo "$((ma + 1)).0.0" ;; minor) echo "$ma.$((mi + 1)).0" ;; patch) echo "$ma.$mi.$((pa + 1))" ;;
+	esac
 }
-version_subject() { local s="chore(version): $1"; [ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: $1"; printf '%s' "$s"; }
+version_subject() {
+	local s="chore(version): $1"
+	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: $1"
+	printf '%s' "$s"
+}
 
 # The engine of the suite image, for edits that need a parser (pom.xml, CHANGELOG.md).
-engine() {  # engine <folder> <qs.py command> [args...]
-  # shellcheck disable=SC1091
-  [ -n "${QS_DOCKER_LIB:-}" ] || { . "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; QS_DOCKER_LIB=1; }
-  command -v docker >/dev/null 2>&1 || return 1
-  qs_engine_tool "$@"
+engine() { # engine <folder> <qs.py command> [args...]
+	# shellcheck disable=SC1091
+	[ -n "${QS_DOCKER_LIB:-}" ] || {
+		. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"
+		QS_DOCKER_LIB=1
+	}
+	command -v docker >/dev/null 2>&1 || return 1
+	qs_engine_tool "$@"
 }
 
 # version_commit <branch> <version>: one commit on <branch> (without checking it out) that writes
 # the version to VERSION, the pom.xml files that share the root version and package.json
 # (branches.pom_version decides: update, snapshot, check, off). Nothing when they already hold it.
 version_commit() {
-  local b="$1" v="$2" parent gd tmp changed f blob mode tree commit
-  [ -n "$QS_BR_VERSION_FILE" ] || [ "$QS_BR_POM" != off ] || return 0
-  parent="$(git rev-parse "refs/heads/$b")"
-  gd="$(git rev-parse --absolute-git-dir)/quality-suite"; tmp="$gd/version-tmp"
-  rm -rf "$tmp" "$tmp.index"; mkdir -p "$tmp"
-  # why: only the files that hold the version, as committed on the branch (the work tree is untouched)
-  git ls-tree -r -z --name-only "$parent" | { grep -zE '(^|/)(pom\.xml|package\.json)$' || true; } > "$gd/version.list"
-  if [ -n "$QS_BR_VERSION_FILE" ] && git cat-file -e "$parent:$QS_BR_VERSION_FILE" 2>/dev/null; then
-    printf '%s\0' "$QS_BR_VERSION_FILE" >> "$gd/version.list"
-  fi
-  if [ -s "$gd/version.list" ]; then xargs -0 git archive --format=tar "$parent" < "$gd/version.list" | tar -xi -C "$tmp"; fi
-  if changed="$(engine "$tmp" version-set "$v" --pom "$QS_BR_POM" --version-file "$QS_BR_VERSION_FILE" 2> "$gd/version.err")"; then
-    sed 's/^\[quality-suite\] /[rama] /' "$gd/version.err" >&2
-  else
-    echo "[rama] WARN: the suite image could not run (Docker): only $QS_BR_VERSION_FILE is written." >&2
-    [ "$QS_BR_POM" = off ] || echo "       pom.xml: mvn versions:set -DnewVersion=$v -DgenerateBackupPoms=false" >&2
-    changed=""
-    if [ -n "$QS_BR_VERSION_FILE" ] && [ "$(cat "$tmp/$QS_BR_VERSION_FILE" 2>/dev/null)" != "$v" ]; then
-      mkdir -p "$(dirname "$tmp/$QS_BR_VERSION_FILE")"; printf '%s\n' "$v" > "$tmp/$QS_BR_VERSION_FILE"; changed="$QS_BR_VERSION_FILE"
-    fi
-  fi
-  changed="$(printf '%s\n' "$changed" | tr -d '\r' | grep -v '^$' || true)"
-  if [ -n "$changed" ]; then
-    ( export GIT_INDEX_FILE="$tmp.index"
-      git read-tree "$parent"
-      while IFS= read -r f; do
-        blob="$(git hash-object -w --path="$f" "$tmp/$f")"
-        mode="$(git ls-tree "$parent" -- "$f" | awk '{print $1}')"
-        git update-index --add --cacheinfo "${mode:-100644},$blob,$f"
-      done <<<"$changed"
-      tree="$(git write-tree)"
-      commit="$(git commit-tree "$tree" -p "$parent" -m "$(version_subject "$v")")"
-      git update-ref "refs/heads/$b" "$commit" "$parent" )
-    say "$b: version $v in $(printf '%s' "$changed" | tr '\n' ' ')"
-  fi
-  rm -rf "$tmp" "$tmp.index" "$gd/version.list" "$gd/version.err"
+	local b="$1" v="$2" parent gd tmp changed f blob mode tree commit
+	[ -n "$QS_BR_VERSION_FILE" ] || [ "$QS_BR_POM" != off ] || return 0
+	parent="$(git rev-parse "refs/heads/$b")"
+	gd="$(git rev-parse --absolute-git-dir)/quality-suite"
+	tmp="$gd/version-tmp"
+	rm -rf "$tmp" "$tmp.index"
+	mkdir -p "$tmp"
+	# why: only the files that hold the version, as committed on the branch (the work tree is untouched)
+	git ls-tree -r -z --name-only "$parent" | { grep -zE '(^|/)(pom\.xml|package\.json)$' || true; } >"$gd/version.list"
+	if [ -n "$QS_BR_VERSION_FILE" ] && git cat-file -e "$parent:$QS_BR_VERSION_FILE" 2>/dev/null; then
+		printf '%s\0' "$QS_BR_VERSION_FILE" >>"$gd/version.list"
+	fi
+	if [ -s "$gd/version.list" ]; then xargs -0 git archive --format=tar "$parent" <"$gd/version.list" | tar -xi -C "$tmp"; fi
+	if changed="$(engine "$tmp" version-set "$v" --pom "$QS_BR_POM" --version-file "$QS_BR_VERSION_FILE" 2>"$gd/version.err")"; then
+		sed 's/^\[quality-suite\] /[rama] /' "$gd/version.err" >&2
+	else
+		echo "[rama] WARN: the suite image could not run (Docker): only $QS_BR_VERSION_FILE is written." >&2
+		[ "$QS_BR_POM" = off ] || echo "       pom.xml: mvn versions:set -DnewVersion=$v -DgenerateBackupPoms=false" >&2
+		changed=""
+		if [ -n "$QS_BR_VERSION_FILE" ] && [ "$(cat "$tmp/$QS_BR_VERSION_FILE" 2>/dev/null)" != "$v" ]; then
+			mkdir -p "$(dirname "$tmp/$QS_BR_VERSION_FILE")"
+			printf '%s\n' "$v" >"$tmp/$QS_BR_VERSION_FILE"
+			changed="$QS_BR_VERSION_FILE"
+		fi
+	fi
+	changed="$(printf '%s\n' "$changed" | tr -d '\r' | grep -v '^$' || true)"
+	if [ -n "$changed" ]; then
+		(
+			export GIT_INDEX_FILE="$tmp.index"
+			git read-tree "$parent"
+			while IFS= read -r f; do
+				blob="$(git hash-object -w --path="$f" "$tmp/$f")"
+				mode="$(git ls-tree "$parent" -- "$f" | awk '{print $1}')"
+				git update-index --add --cacheinfo "${mode:-100644},$blob,$f"
+			done <<<"$changed"
+			tree="$(git write-tree)"
+			commit="$(git commit-tree "$tree" -p "$parent" -m "$(version_subject "$v")")"
+			git update-ref "refs/heads/$b" "$commit" "$parent"
+		)
+		say "$b: version $v in $(printf '%s' "$changed" | tr '\n' ' ')"
+	fi
+	rm -rf "$tmp" "$tmp.index" "$gd/version.list" "$gd/version.err"
 }
 
-cmd_nueva() {  # $1 = padre|final, $2 = name
-  local kind="$1" seg="${2:-}" cur node new base
-  [ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
-  case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF") die "'$QS_BR_LEAF' is reserved" ;; esac
-  if [ -n "$FROM" ]; then
-    fetch_origin
-    cur="$FROM"
-    exists_ref "refs/heads/$cur" || exists_ref "refs/remotes/origin/$cur" || die "--from: branch '$cur' not found"
-  else
-    cur="$(current_branch)" || die "detached HEAD"
-  fi
-  if [ "$cur" = "$QS_BR_MAINLINE" ]; then
-    [ "$kind" = padre ] || die "a version branch is always a parent: git np $seg  (creates $seg/$QS_BR_LEAF)"
-    case "$seg" in
-      major|minor|patch) fetch_origin; local last; last="$(known_versions | tail -n1)"
-        seg="$(next_version "$seg")"; say "next ${2} version after ${last:-none}: $seg" ;;
-    esac
-    new="$seg/$QS_BR_LEAF"
-  elif is_parent_branch "$cur"; then
-    node="$(branch_node "$cur")"
-    new="$node/$seg"; [ "$kind" = padre ] && new="$new/$QS_BR_LEAF"
-  else
-    die "'$cur' is a final branch and cannot have children. Make it a parent first: git convertir-padre"
-  fi
-  local why; why="$(valid_branch_name "$new")" || die "invalid name '$new': $why"
-  fetch_origin
-  taken "${new%/"$QS_BR_LEAF"}" && die "'${new%/"$QS_BR_LEAF"}' already exists (as a branch or a folder of branches)"
-  base="$(best_ref "$cur")"; base="${base:-$cur}"
-  git branch -q --no-track "$new" "$base"
-  # why: the version tree starts with its version written down, so every branch below inherits it
-  [ "$cur" = "$QS_BR_MAINLINE" ] && version_commit "$new" "$seg"
-  git checkout -q "$new"
-  say "created '$new' from '$base' (parent: $(parent_branch "$new"))"
-  [ "$kind" = padre ] && say "children: git np <name> (parent) / git nr <name> (final)"
-  return 0
+cmd_nueva() { # $1 = padre|final, $2 = name
+	local kind="$1" seg="${2:-}" cur node new base
+	[ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
+	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF") die "'$QS_BR_LEAF' is reserved" ;; esac
+	if [ -n "$FROM" ]; then
+		fetch_origin
+		cur="$FROM"
+		exists_ref "refs/heads/$cur" || exists_ref "refs/remotes/origin/$cur" || die "--from: branch '$cur' not found"
+	else
+		cur="$(current_branch)" || die "detached HEAD"
+	fi
+	if [ "$cur" = "$QS_BR_MAINLINE" ]; then
+		[ "$kind" = padre ] || die "a version branch is always a parent: git np $seg  (creates $seg/$QS_BR_LEAF)"
+		case "$seg" in
+		major | minor | patch)
+			fetch_origin
+			local last
+			last="$(known_versions | tail -n1)"
+			seg="$(next_version "$seg")"
+			say "next ${2} version after ${last:-none}: $seg"
+			;;
+		esac
+		new="$seg/$QS_BR_LEAF"
+	elif is_parent_branch "$cur"; then
+		node="$(branch_node "$cur")"
+		new="$node/$seg"
+		[ "$kind" = padre ] && new="$new/$QS_BR_LEAF"
+	else
+		die "'$cur' is a final branch and cannot have children. Make it a parent first: git convertir-padre"
+	fi
+	local why
+	why="$(valid_branch_name "$new")" || die "invalid name '$new': $why"
+	fetch_origin
+	taken "${new%/"$QS_BR_LEAF"}" && die "'${new%/"$QS_BR_LEAF"}' already exists (as a branch or a folder of branches)"
+	base="$(best_ref "$cur")"
+	base="${base:-$cur}"
+	git branch -q --no-track "$new" "$base"
+	# why: the version tree starts with its version written down, so every branch below inherits it
+	[ "$cur" = "$QS_BR_MAINLINE" ] && version_commit "$new" "$seg"
+	git checkout -q "$new"
+	say "created '$new' from '$base' (parent: $(parent_branch "$new"))"
+	[ "$kind" = padre ] && say "children: git np <name> (parent) / git nr <name> (final)"
+	return 0
 }
 
-convert_branch() {  # final branch '<F>/<x>' -> '<F>/<x>/ORIGINAL', local and on origin
-  local cur="$1" new remote=0
-  is_mainline "$cur" && die "'$cur' is a mainline branch"
-  is_parent_branch "$cur" && die "'$cur' is already a parent branch"
-  valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
-  new="$cur/$QS_BR_LEAF"
-  if has_origin && git ls-remote --exit-code --heads origin "refs/heads/$cur" >/dev/null 2>&1; then remote=1; fi
-  if [ "$remote" = 1 ]; then
-    echo "[rama] '$cur' exists on origin. Converting it deletes origin/$cur and pushes '$new'." >&2
-    echo "       Anyone else with '$cur' must run: git fetch --prune && git checkout $new" >&2
-    confirm "Continue?" || die "cancelled"
-  fi
-  # why: a branch that only exists on origin gets its local copy first, then the same rename
-  exists_ref "refs/heads/$cur" || git branch -q --no-track "$cur" "origin/$cur"
-  git branch -m "$cur" "$new"
-  if [ "$remote" = 1 ]; then
-    git push -q origin --delete "$cur"
-    git push -q -u origin "$new"
-  fi
+convert_branch() { # final branch '<F>/<x>' -> '<F>/<x>/ORIGINAL', local and on origin
+	local cur="$1" new remote=0
+	is_mainline "$cur" && die "'$cur' is a mainline branch"
+	is_parent_branch "$cur" && die "'$cur' is already a parent branch"
+	valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
+	new="$cur/$QS_BR_LEAF"
+	if has_origin && git ls-remote --exit-code --heads origin "refs/heads/$cur" >/dev/null 2>&1; then remote=1; fi
+	if [ "$remote" = 1 ]; then
+		echo "[rama] '$cur' exists on origin. Converting it deletes origin/$cur and pushes '$new'." >&2
+		echo "       Anyone else with '$cur' must run: git fetch --prune && git checkout $new" >&2
+		confirm "Continue?" || die "cancelled"
+	fi
+	# why: a branch that only exists on origin gets its local copy first, then the same rename
+	exists_ref "refs/heads/$cur" || git branch -q --no-track "$cur" "origin/$cur"
+	git branch -m "$cur" "$new"
+	if [ "$remote" = 1 ]; then
+		git push -q origin --delete "$cur"
+		git push -q -u origin "$new"
+	fi
 }
 
 cmd_convertir() {
-  local cur
-  cur="$(current_branch)" || die "detached HEAD"
-  fetch_origin
-  convert_branch "$cur"
-  say "'$cur' is now '$cur/$QS_BR_LEAF'. Create children with: git np <name> / git nr <name>"
+	local cur
+	cur="$(current_branch)" || die "detached HEAD"
+	fetch_origin
+	convert_branch "$cur"
+	say "'$cur' is now '$cur/$QS_BR_LEAF'. Create children with: git np <name> / git nr <name>"
 }
 
 cmd_subir() {
-  local cur parent base
-  cur="$(current_branch)" || die "detached HEAD"
-  require_clean
-  parent="$(parent_branch "$cur")"
-  fetch_origin
-  if is_parent_branch "$cur" || is_mainline "$cur"; then
-    # why: an ORIGINAL is shared (children are based on it): bring changes in with merges, never rebase
-    if exists_ref "refs/remotes/origin/$cur" && ! git merge-base --is-ancestor "origin/$cur" "$cur"; then
-      say "merging origin/$cur (others pushed to it)..."
-      git merge -q --no-edit "origin/$cur" || die "conflicts: resolve, 'git commit', then re-run git subir"
-    fi
-    if is_parent_branch "$cur" && [ -n "$parent" ]; then
-      base="$(best_ref "$parent" || true)"
-      if [ -n "$base" ] && ! git merge-base --is-ancestor "$base" "$cur"; then
-        say "merging the parent '$base' into '$cur'..."
-        git merge -q --no-edit "$base" || die "conflicts: resolve, 'git commit', then re-run git subir"
-      fi
-    fi
-    has_origin && { say "pushing $cur..."; git push -q origin "$cur"; }
-  else
-    base="$(best_ref "$parent")"
-    [ -n "$base" ] || die "parent '$parent' not found locally or on origin"
-    if ! git merge-base --is-ancestor "$base" "$cur"; then
-      say "rebasing $cur onto $base..."
-      git rebase -q "$base" || die "conflicts: resolve, 'git rebase --continue', then re-run git subir (rerere remembers)"
-    fi
-    has_origin && { say "pushing $cur (--force-with-lease)..."; git push -q --force-with-lease origin "$cur"; }
-  fi
-  say "done."
+	local cur parent base
+	cur="$(current_branch)" || die "detached HEAD"
+	require_clean
+	parent="$(parent_branch "$cur")"
+	fetch_origin
+	if is_parent_branch "$cur" || is_mainline "$cur"; then
+		# why: an ORIGINAL is shared (children are based on it): bring changes in with merges, never rebase
+		if exists_ref "refs/remotes/origin/$cur" && ! git merge-base --is-ancestor "origin/$cur" "$cur"; then
+			say "merging origin/$cur (others pushed to it)..."
+			git merge -q --no-edit "origin/$cur" || die "conflicts: resolve, 'git commit', then re-run git subir"
+		fi
+		if is_parent_branch "$cur" && [ -n "$parent" ]; then
+			base="$(best_ref "$parent" || true)"
+			if [ -n "$base" ] && ! git merge-base --is-ancestor "$base" "$cur"; then
+				say "merging the parent '$base' into '$cur'..."
+				git merge -q --no-edit "$base" || die "conflicts: resolve, 'git commit', then re-run git subir"
+			fi
+		fi
+		has_origin && {
+			say "pushing $cur..."
+			git push -q origin "$cur"
+		}
+	else
+		base="$(best_ref "$parent")"
+		[ -n "$base" ] || die "parent '$parent' not found locally or on origin"
+		if ! git merge-base --is-ancestor "$base" "$cur"; then
+			say "rebasing $cur onto $base..."
+			git rebase -q "$base" || die "conflicts: resolve, 'git rebase --continue', then re-run git subir (rerere remembers)"
+		fi
+		has_origin && {
+			say "pushing $cur (--force-with-lease)..."
+			git push -q --force-with-lease origin "$cur"
+		}
+	fi
+	say "done."
 }
 
 # git with its chatter ("Automatic merge went well; stopped before committing...") shown only on failure
-quiet_merge() { local out; out="$(git "$@" 2>&1)" && return 0; printf '%s\n' "$out" >&2; return 1; }
+quiet_merge() {
+	local out
+	out="$(git "$@" 2>&1)" && return 0
+	printf '%s\n' "$out" >&2
+	return 1
+}
 
-compose_message() {  # $1 = source branch, $2 = target, $3 = file
-  local src="$1" dst="$2" out="$3" scope commits manifest
-  scope="$(branch_node "$src")"; scope="${scope##*/}"
-  commits="$(git log --reverse --no-merges --format='- %h %s' "$dst..$src" || true)"
-  manifest="$(git -c core.quotePath=true diff --name-status "$dst...$src" || true)"
-  {
-    echo "feat($scope): DESCRIPCION_BREVE"
-    echo ""
-    echo "DESCRIPCION_DETALLADA"
-    echo ""
-    echo "Refs: $src -> $dst"
-    echo ""
-    echo "Commits:"; printf '%s\n' "$commits"
-    echo ""
-    echo "Files:"; printf '%s\n' "$manifest"
-    echo ""
-    echo "# Fill the subject and DESCRIPCION_DETALLADA (ASCII only). '#' lines are removed."
-  } > "$out"
+compose_message() { # $1 = source branch, $2 = target, $3 = file
+	local src="$1" dst="$2" out="$3" scope commits manifest
+	scope="$(branch_node "$src")"
+	scope="${scope##*/}"
+	commits="$(git log --reverse --no-merges --format='- %h %s' "$dst..$src" || true)"
+	manifest="$(git -c core.quotePath=true diff --name-status "$dst...$src" || true)"
+	{
+		echo "feat($scope): DESCRIPCION_BREVE"
+		echo ""
+		echo "DESCRIPCION_DETALLADA"
+		echo ""
+		echo "Refs: $src -> $dst"
+		echo ""
+		echo "Commits:"
+		printf '%s\n' "$commits"
+		echo ""
+		echo "Files:"
+		printf '%s\n' "$manifest"
+		echo ""
+		echo "# Fill the subject and DESCRIPCION_DETALLADA (ASCII only). '#' lines are removed."
+	} >"$out"
 }
 
 cmd_integra() {
-  local cur parent base mode tpl tag depth unmerged="" c cref editor subject
-  cur="$(current_branch)" || die "detached HEAD"
-  valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
-  is_mainline "$cur" && die "'$cur' is a mainline branch; nothing to integrate"
-  parent="$(parent_branch "$cur")"; [ -n "$parent" ] || die "'$cur' has no parent"
-  require_clean
-  fetch_origin
-  if ! exists_ref "refs/heads/$parent"; then
-    exists_ref "refs/remotes/origin/$parent" || die "parent '$parent' does not exist (create it with git np)"
-    git branch -q "$parent" "origin/$parent"
-  elif exists_ref "refs/remotes/origin/$parent" && git merge-base --is-ancestor "$parent" "origin/$parent"; then
-    git branch -q -f "$parent" "origin/$parent" 2>/dev/null || true   # fast-forward the local parent
-  fi
-  if is_parent_branch "$cur"; then
-    if [ "$QS_BR_REQUIRE_CHILDREN" = 1 ] && [ "$FORCE" != 1 ]; then
-      while IFS= read -r c; do
-        [ -n "$c" ] || continue
-        cref="$(best_ref "$c")"; [ -n "$cref" ] || continue
-        git merge-base --is-ancestor "$cref" "$cur" || unmerged="$unmerged $c"
-      done < <(branch_children "$cur")
-      [ -z "$unmerged" ] || die "children not integrated yet:$unmerged  (integrate them first, or --force)"
-    fi
-    mode=merge
-    depth="$(branch_depth "$cur")"
-    if [ "${QS_BR_TAG_LEVEL:-0}" -gt 0 ] && [ "$depth" -eq "$QS_BR_TAG_LEVEL" ]; then
-      tag="$(render_tag "$cur")"
-      if exists_ref "refs/tags/$tag"; then
-        [ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse "$cur")" ] \
-          || die "tag '$tag' already exists on another commit (change branches.tag, e.g. '{version}-{ot}')"
-      else
-        git tag -a "$tag" -m "Release $tag ($cur)" "$cur"
-        say "tag '$tag' created on $cur (push it: git push origin $tag)"
-      fi
-    fi
-  else
-    base="$(best_ref "$parent")"
-    if ! git merge-base --is-ancestor "$base" "$cur"; then
-      say "rebasing $cur onto $base (siblings are rebased onto their ORIGINAL)..."
-      git rebase -q "$base" || die "conflicts: resolve, 'git rebase --continue', then re-run git integra"
-    fi
-    mode="$QS_BR_LEAF_MERGE"
-  fi
-  tpl="$(git rev-parse --absolute-git-dir)/quality-suite/INTEGRA_MSG"; mkdir -p "$(dirname "$tpl")"
-  compose_message "$cur" "$parent" "$tpl"
-  if [ "${#MSG[@]}" -gt 0 ]; then
-    # why: agents cannot drive an editor; keep the generated Refs/Commits/Files part
-    { printf '%s\n\n' "${MSG[0]}"
-      [ "${#MSG[@]}" -gt 1 ] && printf '%s\n\n' "${MSG[@]:1}"
-      awk 'f || /^Refs: /{f=1} f' "$tpl"; } > "$tpl.new" && mv "$tpl.new" "$tpl"
-  else
-    editor="${GIT_EDITOR:-$(git config core.editor 2>/dev/null || echo "${EDITOR:-vi}")}"
-    eval "$editor \"\$tpl\""
-  fi
-  subject="$(grep -vE '^[[:space:]]*#' "$tpl" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
-  case "$subject" in *DESCRIPCION_BREVE*|"") die "subject not filled in; nothing was merged" ;; esac
-  say "$cur -> $parent ($([ "$mode" = squash ] && echo 'squash' || echo 'merge --no-ff'))"
-  git checkout -q "$parent"
-  if [ "$mode" = squash ]; then
-    quiet_merge -c merge.ff=true merge -q --squash "$cur" || die "conflicts in '$parent': resolve, then: git commit -F '$tpl' --cleanup=strip"
-  else
-    quiet_merge merge -q --no-ff --no-commit "$cur" || die "conflicts in '$parent': resolve, then: git commit -F '$tpl' --cleanup=strip"
-  fi
-  git commit -q --cleanup=strip -F "$tpl"
-  say "done: '$cur' integrated into '$parent'. Push: git push origin $parent${tag:+ $tag}"
-  is_parent_branch "$cur" || say "the final branch can go: git branch -d $cur$(exists_ref "refs/remotes/origin/$cur" && echo " && git push origin --delete $cur")"
+	local cur parent base mode tpl tag depth unmerged="" c cref editor subject
+	cur="$(current_branch)" || die "detached HEAD"
+	valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
+	is_mainline "$cur" && die "'$cur' is a mainline branch; nothing to integrate"
+	parent="$(parent_branch "$cur")"
+	[ -n "$parent" ] || die "'$cur' has no parent"
+	require_clean
+	fetch_origin
+	if ! exists_ref "refs/heads/$parent"; then
+		exists_ref "refs/remotes/origin/$parent" || die "parent '$parent' does not exist (create it with git np)"
+		git branch -q "$parent" "origin/$parent"
+	elif exists_ref "refs/remotes/origin/$parent" && git merge-base --is-ancestor "$parent" "origin/$parent"; then
+		git branch -q -f "$parent" "origin/$parent" 2>/dev/null || true # fast-forward the local parent
+	fi
+	if is_parent_branch "$cur"; then
+		if [ "$QS_BR_REQUIRE_CHILDREN" = 1 ] && [ "$FORCE" != 1 ]; then
+			while IFS= read -r c; do
+				[ -n "$c" ] || continue
+				cref="$(best_ref "$c")"
+				[ -n "$cref" ] || continue
+				git merge-base --is-ancestor "$cref" "$cur" || unmerged="$unmerged $c"
+			done < <(branch_children "$cur")
+			[ -z "$unmerged" ] || die "children not integrated yet:$unmerged  (integrate them first, or --force)"
+		fi
+		mode=merge
+		depth="$(branch_depth "$cur")"
+		if [ "${QS_BR_TAG_LEVEL:-0}" -gt 0 ] && [ "$depth" -eq "$QS_BR_TAG_LEVEL" ]; then
+			tag="$(render_tag "$cur")"
+			if exists_ref "refs/tags/$tag"; then
+				[ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$(git rev-parse "$cur")" ] ||
+					die "tag '$tag' already exists on another commit (change branches.tag, e.g. '{version}-{ot}')"
+			else
+				git tag -a "$tag" -m "Release $tag ($cur)" "$cur"
+				say "tag '$tag' created on $cur (push it: git push origin $tag)"
+			fi
+		fi
+	else
+		base="$(best_ref "$parent")"
+		if ! git merge-base --is-ancestor "$base" "$cur"; then
+			say "rebasing $cur onto $base (siblings are rebased onto their ORIGINAL)..."
+			git rebase -q "$base" || die "conflicts: resolve, 'git rebase --continue', then re-run git integra"
+		fi
+		mode="$QS_BR_LEAF_MERGE"
+	fi
+	tpl="$(git rev-parse --absolute-git-dir)/quality-suite/INTEGRA_MSG"
+	mkdir -p "$(dirname "$tpl")"
+	compose_message "$cur" "$parent" "$tpl"
+	if [ "${#MSG[@]}" -gt 0 ]; then
+		# why: agents cannot drive an editor; keep the generated Refs/Commits/Files part
+		{
+			printf '%s\n\n' "${MSG[0]}"
+			[ "${#MSG[@]}" -gt 1 ] && printf '%s\n\n' "${MSG[@]:1}"
+			awk 'f || /^Refs: /{f=1} f' "$tpl"
+		} >"$tpl.new" && mv "$tpl.new" "$tpl"
+	else
+		editor="${GIT_EDITOR:-$(git config core.editor 2>/dev/null || echo "${EDITOR:-vi}")}"
+		eval "$editor \"\$tpl\""
+	fi
+	subject="$(grep -vE '^[[:space:]]*#' "$tpl" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
+	case "$subject" in *DESCRIPCION_BREVE* | "") die "subject not filled in; nothing was merged" ;; esac
+	say "$cur -> $parent ($([ "$mode" = squash ] && echo 'squash' || echo 'merge --no-ff'))"
+	git checkout -q "$parent"
+	if [ "$mode" = squash ]; then
+		quiet_merge -c merge.ff=true merge -q --squash "$cur" || die "conflicts in '$parent': resolve, then: git commit -F '$tpl' --cleanup=strip"
+	else
+		quiet_merge merge -q --no-ff --no-commit "$cur" || die "conflicts in '$parent': resolve, then: git commit -F '$tpl' --cleanup=strip"
+	fi
+	git commit -q --cleanup=strip -F "$tpl"
+	say "done: '$cur' integrated into '$parent'. Push: git push origin $parent${tag:+ $tag}"
+	is_parent_branch "$cur" || say "the final branch can go: git branch -d $cur$(exists_ref "refs/remotes/origin/$cur" && echo " && git push origin --delete $cur")"
 }
 
 cmd_arbol() {
-  local cur prefix
-  cur="$(current_branch || true)"
-  prefix="${1:-}"
-  if [ -z "$prefix" ] && [ -n "$cur" ] && ! is_mainline "$cur"; then prefix="$(branch_version "$cur")"; fi
-  { git for-each-ref --format='%(refname:short)' refs/heads/
-    git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }; } | sort -u \
-  | while IFS= read -r b; do
-      [ -z "$prefix" ] || case "$b" in "$prefix"/*|"$prefix") ;; *) continue ;; esac
-      is_mainline "$b" && continue
-      if is_archived_branch "$b"; then printf '~\t%s\n' "$b"
-      elif valid_branch_name "$b" >/dev/null 2>&1; then printf '%s\t%s\n' "$(branch_node "$b")" "$b"
-      else printf '~\t%s\n' "$b"; fi
-    done | LC_ALL=C sort -t "$(printf '\t')" -k1,1 \
-  | while IFS="$(printf '\t')" read -r node b; do
-      local ind="" p pref ref st="" i depth ahead behind
-      if [ "$node" = "~" ]; then
-        if is_archived_branch "$b"; then echo "~  $b   (set aside by git release)"; else echo "!  $b   (off-model)"; fi
-        continue
-      fi
-      depth="$(awk -F/ '{print NF}' <<<"$node")"
-      for ((i = 1; i < depth; i++)); do ind="$ind   "; done
-      p="$(parent_branch "$b")"; pref="$(best_ref "$p" || true)"; ref="$(best_ref "$b" || true)"
-      if [ -n "$pref" ] && [ -n "$ref" ]; then
-        ahead="$(git rev-list --count "$pref..$ref")"; behind="$(git rev-list --count "$ref..$pref")"
-        if [ "$ahead" = 0 ]; then st=" (nothing pending for $p)"; else st=" (+$ahead pending"; 
-          [ "$behind" = 0 ] && st="$st)" || st="$st, $behind behind $p)"; fi
-      fi
-      exists_ref "refs/heads/$b" || st="$st (remote only)"
-      printf '%s%s %s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
-        "$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
-    done
-  return 0
+	local cur prefix
+	cur="$(current_branch || true)"
+	prefix="${1:-}"
+	if [ -z "$prefix" ] && [ -n "$cur" ] && ! is_mainline "$cur"; then prefix="$(branch_version "$cur")"; fi
+	{
+		git for-each-ref --format='%(refname:short)' refs/heads/
+		git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
+	} | sort -u |
+		while IFS= read -r b; do
+			[ -z "$prefix" ] || case "$b" in "$prefix"/* | "$prefix") ;; *) continue ;; esac
+			is_mainline "$b" && continue
+			if is_archived_branch "$b"; then
+				printf '~\t%s\n' "$b"
+			elif valid_branch_name "$b" >/dev/null 2>&1; then
+				printf '%s\t%s\n' "$(branch_node "$b")" "$b"
+			else printf '~\t%s\n' "$b"; fi
+		done | LC_ALL=C sort -t "$(printf '\t')" -k1,1 |
+		while IFS="$(printf '\t')" read -r node b; do
+			local ind="" p pref ref st="" i depth ahead behind
+			if [ "$node" = "~" ]; then
+				if is_archived_branch "$b"; then echo "~  $b   (set aside by git release)"; else echo "!  $b   (off-model)"; fi
+				continue
+			fi
+			depth="$(awk -F/ '{print NF}' <<<"$node")"
+			for ((i = 1; i < depth; i++)); do ind="$ind   "; done
+			p="$(parent_branch "$b")"
+			pref="$(best_ref "$p" || true)"
+			ref="$(best_ref "$b" || true)"
+			if [ -n "$pref" ] && [ -n "$ref" ]; then
+				ahead="$(git rev-list --count "$pref..$ref")"
+				behind="$(git rev-list --count "$ref..$pref")"
+				if [ "$ahead" = 0 ]; then st=" (nothing pending for $p)"; else
+					st=" (+$ahead pending"
+					[ "$behind" = 0 ] && st="$st)" || st="$st, $behind behind $p)"
+				fi
+			fi
+			exists_ref "refs/heads/$b" || st="$st (remote only)"
+			printf '%s%s %s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
+				"$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
+		done
+	return 0
 }
 
 # --- git estructura -------------------------------------------------------------------------
@@ -394,8 +465,8 @@ cmd_arbol() {
 # A node with children, or written with a trailing '/' or '/ORIGINAL', is a parent; a version is
 # always a parent; every other node is a final branch. A root line 'develop' (the mainline) is
 # allowed and ignored.
-parse_structure() {  # stdin -> "P|F<TAB>node" lines, ancestors first, in input order
-  tr -d '\r' | awk -v leaf="$QS_BR_LEAF" -v main="$QS_BR_MAINLINE" '
+parse_structure() { # stdin -> "P|F<TAB>node" lines, ancestors first, in input order
+	tr -d '\r' | awk -v leaf="$QS_BR_LEAF" -v main="$QS_BR_MAINLINE" '
     function add(node, par,   n, k, a, p) {
       n = split(node, a, "/"); p = ""
       for (k = 1; k <= n; k++) {
@@ -430,95 +501,124 @@ parse_structure() {  # stdin -> "P|F<TAB>node" lines, ancestors first, in input 
 exists_branch() { exists_ref "refs/heads/$1" || exists_ref "refs/remotes/origin/$1"; }
 has_branches_under() { [ -n "$(git for-each-ref --count=1 "refs/heads/$1/" "refs/remotes/origin/$1/")" ]; }
 
-behind_note() {  # ' (N behind <parent>: git subir)' when the branch lacks commits of its parent
-  local b="$1" p pr br n
-  p="$(parent_branch "$b")"; [ -n "$p" ] || return 0
-  pr="$(best_ref "$p" || true)"; br="$(best_ref "$b" || true)"
-  [ -n "$pr" ] && [ -n "$br" ] || return 0
-  n="$(git rev-list --count "$br..$pr")"
-  [ "$n" = 0 ] || printf ' (%s behind %s: git subir)' "$n" "$p"
+behind_note() { # ' (N behind <parent>: git subir)' when the branch lacks commits of its parent
+	local b="$1" p pr br n
+	p="$(parent_branch "$b")"
+	[ -n "$p" ] || return 0
+	pr="$(best_ref "$p" || true)"
+	br="$(best_ref "$b" || true)"
+	[ -n "$pr" ] && [ -n "$br" ] || return 0
+	n="$(git rev-list --count "$br..$pr")"
+	[ "$n" = 0 ] || printf ' (%s behind %s: git subir)' "$n" "$p"
 }
 
 cmd_estructura() {
-  local dry=0 push=0 conv=0 files=() f a plan kind node b p base errs=0 why planned=$'\n' versions=""
-  local topush=() n_new=0 n_ok=0
-  for a in "$@"; do
-    case "$a" in
-      -n|--dry-run) dry=1 ;; --push) push=1 ;; --convertir) conv=1 ;;
-      -*) die "unknown option '$a' (estructura: -n, --push, --convertir, --yes)" ;;
-      *) files+=("$a") ;;
-    esac
-  done
-  plan="$(mktemp)"; trap "rm -f '$plan'" EXIT   # why expanded now: 'plan' is local
-  if [ "${#files[@]}" -gt 0 ]; then
-    for f in "${files[@]}"; do
-      # why: git runs aliases from the top of the repository; GIT_PREFIX is where you were
-      case "$f" in /*|[A-Za-z]:*|-) ;; *) f="${GIT_PREFIX:-}$f" ;; esac
-      if [ "$f" = - ]; then cat; else [ -f "$f" ] || die "no such file: $f"; cat "$f"; fi
-    done
-  else
-    [ -t 0 ] && echo "[rama] type the branch structure (one per line, indent for children), then Ctrl-D:" >&2
-    cat
-  fi | parse_structure > "$plan"
-  [ -s "$plan" ] || die "no branches in the input"
-  fetch_origin
-  exists_branch "$QS_BR_MAINLINE" || die "'$QS_BR_MAINLINE' does not exist; create it first (git checkout -b $QS_BR_MAINLINE)"
+	local dry=0 push=0 conv=0 files=() f a plan kind node b p base errs=0 why planned=$'\n' versions=""
+	local topush=() n_new=0 n_ok=0
+	for a in "$@"; do
+		case "$a" in
+		-n | --dry-run) dry=1 ;; --push) push=1 ;; --convertir) conv=1 ;;
+		-*) die "unknown option '$a' (estructura: -n, --push, --convertir, --yes)" ;;
+		*) files+=("$a") ;;
+		esac
+	done
+	plan="$(mktemp)"
+	# shellcheck disable=SC2064 # why: expanded now, 'plan' is local and gone when EXIT fires
+	trap "rm -f '$plan'" EXIT
+	if [ "${#files[@]}" -gt 0 ]; then
+		for f in "${files[@]}"; do
+			# why: git runs aliases from the top of the repository; GIT_PREFIX is where you were
+			case "$f" in /* | [A-Za-z]:* | -) ;; *) f="${GIT_PREFIX:-}$f" ;; esac
+			if [ "$f" = - ]; then cat; else
+				[ -f "$f" ] || die "no such file: $f"
+				cat "$f"
+			fi
+		done
+	else
+		[ -t 0 ] && echo "[rama] type the branch structure (one per line, indent for children), then Ctrl-D:" >&2
+		cat
+	fi | parse_structure >"$plan"
+	[ -s "$plan" ] || die "no branches in the input"
+	fetch_origin
+	exists_branch "$QS_BR_MAINLINE" || die "'$QS_BR_MAINLINE' does not exist; create it first (git checkout -b $QS_BR_MAINLINE)"
 
-  # pass 1: validate every name and conflict before touching anything
-  while IFS=$'\t' read -r kind node <&3; do
-    if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
-    if ! why="$(valid_branch_name "$b")"; then echo "  ! $b: $why" >&2; errs=$((errs + 1)); continue; fi
-    if [ "$kind" = P ] && ! exists_branch "$b" && exists_branch "$node" && [ "$conv" = 0 ]; then
-      echo "  ! $b: '$node' is a final branch; it needs children, so make it a parent:" \
-           "git estructura --convertir (or: git checkout $node && git convertir-padre)" >&2
-      errs=$((errs + 1))
-    fi
-  done 3< "$plan"
-  [ "$errs" = 0 ] || die "$errs problem(s) in the structure; nothing was created"
+	# pass 1: validate every name and conflict before touching anything
+	while IFS=$'\t' read -r kind node <&3; do
+		if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
+		if ! why="$(valid_branch_name "$b")"; then
+			echo "  ! $b: $why" >&2
+			errs=$((errs + 1))
+			continue
+		fi
+		if [ "$kind" = P ] && ! exists_branch "$b" && exists_branch "$node" && [ "$conv" = 0 ]; then
+			echo "  ! $b: '$node' is a final branch; it needs children, so make it a parent:" \
+				"git estructura --convertir (or: git checkout $node && git convertir-padre)" >&2
+			errs=$((errs + 1))
+		fi
+	done 3<"$plan"
+	[ "$errs" = 0 ] || die "$errs problem(s) in the structure; nothing was created"
 
-  # pass 2: ancestors first, so every new branch starts from its parent's tip
-  while IFS=$'\t' read -r kind node <&3; do
-    case " $versions " in *" ${node%%/*} "*) ;; *) versions="$versions ${node%%/*}" ;; esac
-    if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
-    if exists_branch "$b"; then
-      exists_ref "refs/remotes/origin/$b" || topush+=("$b")
-      printf '  = %-48s exists%s%s\n' "$b" "$(exists_ref "refs/heads/$b" || echo ' (remote only)')" "$(behind_note "$b")"
-      n_ok=$((n_ok + 1)); continue
-    fi
-    if [ "$kind" = F ] && { exists_branch "$node/$QS_BR_LEAF" || has_branches_under "$node"; }; then
-      printf '  = %-48s exists as a parent (%s)\n' "$b" "$node/$QS_BR_LEAF"; n_ok=$((n_ok + 1)); continue
-    fi
-    if [ "$kind" = P ] && exists_branch "$node"; then
-      if [ "$dry" = 1 ]; then printf '  > %-48s would convert final %s\n' "$b" "$node"
-      else convert_branch "$node"; printf '  > %-48s converted from %s\n' "$b" "$node"
-        exists_ref "refs/remotes/origin/$b" || topush+=("$b"); fi
-      planned="$planned$b"$'\n'; n_new=$((n_new + 1)); continue
-    fi
-    p="$(parent_branch "$b")"
-    base="$(best_ref "$p" || true)"
-    if [ -z "$base" ]; then
-      case "$planned" in *$'\n'"$p"$'\n'*) base="$p" ;; *) die "parent '$p' of '$b' not found" ;; esac
-    fi
-    if [ "$dry" = 1 ]; then
-      printf '  + %-48s would be created from %s\n' "$b" "$base"
-    else
-      git branch -q --no-track "$b" "$base"
-      printf '  + %-48s created from %s\n' "$b" "$base"
-      case "$node" in */*) ;; *) [ "$kind" = P ] && version_commit "$b" "$node" ;; esac
-      topush+=("$b")
-    fi
-    planned="$planned$b"$'\n'; n_new=$((n_new + 1))
-  done 3< "$plan"
+	# pass 2: ancestors first, so every new branch starts from its parent's tip
+	while IFS=$'\t' read -r kind node <&3; do
+		case " $versions " in *" ${node%%/*} "*) ;; *) versions="$versions ${node%%/*}" ;; esac
+		if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
+		if exists_branch "$b"; then
+			exists_ref "refs/remotes/origin/$b" || topush+=("$b")
+			printf '  = %-48s exists%s%s\n' "$b" "$(exists_ref "refs/heads/$b" || echo ' (remote only)')" "$(behind_note "$b")"
+			n_ok=$((n_ok + 1))
+			continue
+		fi
+		if [ "$kind" = F ] && { exists_branch "$node/$QS_BR_LEAF" || has_branches_under "$node"; }; then
+			printf '  = %-48s exists as a parent (%s)\n' "$b" "$node/$QS_BR_LEAF"
+			n_ok=$((n_ok + 1))
+			continue
+		fi
+		if [ "$kind" = P ] && exists_branch "$node"; then
+			if [ "$dry" = 1 ]; then
+				printf '  > %-48s would convert final %s\n' "$b" "$node"
+			else
+				convert_branch "$node"
+				printf '  > %-48s converted from %s\n' "$b" "$node"
+				exists_ref "refs/remotes/origin/$b" || topush+=("$b")
+			fi
+			planned="$planned$b"$'\n'
+			n_new=$((n_new + 1))
+			continue
+		fi
+		p="$(parent_branch "$b")"
+		base="$(best_ref "$p" || true)"
+		if [ -z "$base" ]; then
+			case "$planned" in *$'\n'"$p"$'\n'*) base="$p" ;; *) die "parent '$p' of '$b' not found" ;; esac
+		fi
+		if [ "$dry" = 1 ]; then
+			printf '  + %-48s would be created from %s\n' "$b" "$base"
+		else
+			git branch -q --no-track "$b" "$base"
+			printf '  + %-48s created from %s\n' "$b" "$base"
+			case "$node" in */*) ;; *) [ "$kind" = P ] && version_commit "$b" "$node" ;; esac
+			topush+=("$b")
+		fi
+		planned="$planned$b"$'\n'
+		n_new=$((n_new + 1))
+	done 3<"$plan"
 
-  if [ "$dry" = 1 ]; then say "dry run: $n_new to create, $n_ok existing; nothing was changed"; return 0; fi
-  say "$n_new created, $n_ok already existing (current branch unchanged: $(current_branch || echo detached))"
-  if [ "$push" = 1 ] && [ "${#topush[@]}" -gt 0 ]; then
-    if has_origin; then say "pushing ${#topush[@]} branch(es) to origin..."; git push -q -u origin "${topush[@]}"
-    else say "no 'origin' remote: nothing pushed"; fi
-  elif [ "${#topush[@]}" -gt 0 ]; then
-    say "${#topush[@]} branch(es) of this structure are not on origin; share them with: git estructura --push"
-  fi
-  for a in $versions; do echo; cmd_arbol "$a"; done
+	if [ "$dry" = 1 ]; then
+		say "dry run: $n_new to create, $n_ok existing; nothing was changed"
+		return 0
+	fi
+	say "$n_new created, $n_ok already existing (current branch unchanged: $(current_branch || echo detached))"
+	if [ "$push" = 1 ] && [ "${#topush[@]}" -gt 0 ]; then
+		if has_origin; then
+			say "pushing ${#topush[@]} branch(es) to origin..."
+			git push -q -u origin "${topush[@]}"
+		else say "no 'origin' remote: nothing pushed"; fi
+	elif [ "${#topush[@]}" -gt 0 ]; then
+		say "${#topush[@]} branch(es) of this structure are not on origin; share them with: git estructura --push"
+	fi
+	for a in $versions; do
+		echo
+		cmd_arbol "$a"
+	done
 }
 
 # --- git changelog / git release / git publicar ------------------------------------------------
@@ -533,497 +633,607 @@ cmd_estructura() {
 # The changelog comes from the history of '<version>/ORIGINAL' (merge commits of 'git integra'
 # carry 'Refs: <branch> -> <parent>'), so it works even after final branches were deleted.
 
-all_branches() {  # local and origin branch names, deduplicated
-  { git for-each-ref --format='%(refname:lstrip=2)' refs/heads/
-    git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -vx 'HEAD' || true; }; } | LC_ALL=C sort -u
+all_branches() { # local and origin branch names, deduplicated
+	{
+		git for-each-ref --format='%(refname:lstrip=2)' refs/heads/
+		git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -vx 'HEAD' || true; }
+	} | LC_ALL=C sort -u
 }
 # the one tip of a branch: local and origin agree (one contains the other); 'diverged' otherwise
 branch_tip() {
-  local b="$1" l="" r=""
-  exists_ref "refs/heads/$b" && l="$(git rev-parse "refs/heads/$b")"
-  exists_ref "refs/remotes/origin/$b" && r="$(git rev-parse "refs/remotes/origin/$b")"
-  if [ -n "$l" ] && [ -n "$r" ]; then
-    if git merge-base --is-ancestor "$l" "$r"; then echo "$r"
-    elif git merge-base --is-ancestor "$r" "$l"; then echo "$l"
-    else echo diverged; fi
-  else echo "${l:-$r}"; fi
+	local b="$1" l="" r=""
+	exists_ref "refs/heads/$b" && l="$(git rev-parse "refs/heads/$b")"
+	exists_ref "refs/remotes/origin/$b" && r="$(git rev-parse "refs/remotes/origin/$b")"
+	if [ -n "$l" ] && [ -n "$r" ]; then
+		if git merge-base --is-ancestor "$l" "$r"; then
+			echo "$r"
+		elif git merge-base --is-ancestor "$r" "$l"; then
+			echo "$l"
+		else echo diverged; fi
+	else echo "${l:-$r}"; fi
 }
 # nearest existing ORIGINAL above a branch of the tree (its parent in the model, or higher up
 # when that one is gone); the top of the tree for anything else
 nearest_original() {
-  local b="$1" p
-  p="$(branch_node "$b")"; is_parent_branch "$b" || p="$b"
-  while case "$p" in */*) true ;; *) false ;; esac; do
-    p="${p%/*}"
-    if [ "$p/$QS_BR_LEAF" != "$b" ] && exists_branch "$p/$QS_BR_LEAF"; then echo "$p/$QS_BR_LEAF"; return; fi
-  done
-  echo "$REL_TOP"
+	local b="$1" p
+	p="$(branch_node "$b")"
+	is_parent_branch "$b" || p="$b"
+	while case "$p" in */*) true ;; *) false ;; esac do
+		p="${p%/*}"
+		if [ "$p/$QS_BR_LEAF" != "$b" ] && exists_branch "$p/$QS_BR_LEAF"; then
+			echo "$p/$QS_BR_LEAF"
+			return
+		fi
+	done
+	echo "$REL_TOP"
 }
 # a free name for a branch set aside: no ref with that name, under it, or above it (git stores
 # refs as files and folders, so 'a/b' blocks 'a/b/c' and the other way round)
 name_taken() {
-  local n="$1" p="$1"
-  exists_branch "$n" || has_branches_under "$n" && return 0
-  while case "$p" in */*) true ;; *) false ;; esac; do p="${p%/*}"; exists_branch "$p" && return 0; done
-  case "$REL_PLANNED" in *$'\n'"$n"$'\n'*) return 0 ;; esac
-  return 1
+	local n="$1" p="$1"
+	exists_branch "$n" || has_branches_under "$n" && return 0
+	while case "$p" in */*) true ;; *) false ;; esac do
+		p="${p%/*}"
+		exists_branch "$p" && return 0
+	done
+	case "$REL_PLANNED" in *$'\n'"$n"$'\n'*) return 0 ;; esac
+	return 1
 }
 archive_name() {
-  local base="$QS_BR_ARCHIVE/$1" n i
-  n="$base"; i=2
-  while name_taken "$n" && [ "$i" -le 9 ]; do n="$base-$i"; i=$((i + 1)); done
-  name_taken "$n" && n="$QS_BR_ARCHIVE-$(date +%Y%m%d%H%M%S)/$1"
-  name_taken "$n" && return 1
-  echo "$n"
+	local base="$QS_BR_ARCHIVE/$1" n i
+	n="$base"
+	i=2
+	while name_taken "$n" && [ "$i" -le 9 ]; do
+		n="$base-$i"
+		i=$((i + 1))
+	done
+	name_taken "$n" && n="$QS_BR_ARCHIVE-$(date +%Y%m%d%H%M%S)/$1"
+	name_taken "$n" && return 1
+	echo "$n"
 }
 
 # Markdown section of the history of <tip> not reachable from the excluded commits, following first
 # parents; each merge becomes a sub-section with what it brought. Output on stdout.
 #   cl_section <depth> <tip> <exclude>...
 cl_section() {
-  local depth="$1" tip="$2"; shift 2
-  local ex=() e H P h s an ad nm body src sub hd items="" subs="" line p1 p2
-  for e in "$@"; do ex+=("^$e"); done
-  while IFS=$'\x1f' read -r -d $'\x1e' H P h s an ad nm body; do
-    H="${H#$'\n'}"; [ -n "$H" ] || continue
-    read -r p1 p2 _ <<<"$P"
-    if [ -n "${p2:-}" ]; then
-      src="$(sed -n 's/^Refs: \([^ ]*\) -> .*/\1/p' <<<"$body" | head -n1)"
-      [ -n "$src" ] || src="$(sed -n "s/^Merge \(remote-tracking \)\{0,1\}branch '\(origin\/\)\{0,1\}\([^']*\)'.*/\3/p" <<<"$body" | head -n1)"
-      [ -n "$src" ] || src="merge $h"
-      sub="$(cl_section $((depth + 1)) "$p2" "$@" "$p1")"
-      [ -n "$sub" ] || continue                       # a sync merge (parent into child): nothing new
-      hd="$(printf '%*s' $((depth + 1)) '' | tr ' ' '#')"
-      [ "$depth" -ge 5 ] && hd="######"
-      subs="$subs"$'\n'"$hd $src"$'\n'"Integrated $ad by $an ($h): $s"$'\n'"$sub"$'\n'
-    else
-      src="$(sed -n 's/^Refs: \([^ ]*\) -> .*/\1/p' <<<"$body" | head -n1)"
-      line="- $h $s ($an, $ad)${nm:+ [Norms: $nm]}"
-      if [ -n "$src" ] && grep -q '^Commits:' <<<"$body"; then   # squash integration
-        hd="$(printf '%*s' $((depth + 1)) '' | tr ' ' '#')"
-        subs="$subs"$'\n'"$hd $src (squashed)"$'\n'"Integrated $ad by $an ($h): $s"$'\n'
-        subs="$subs$(sed -n '/^Commits:/,/^$/p' <<<"$body" | grep '^- ' || true)"$'\n'
-      else
-        items="$items$line"$'\n'
-      fi
-    fi
-  done < <(git log --first-parent --reverse --date=short \
-             --format='%H%x1f%P%x1f%h%x1f%s%x1f%an%x1f%ad%x1f%(trailers:key=Norms,valueonly,separator=%x2c)%x1f%B%x1e' \
-             "$tip" ${ex[@]+"${ex[@]}"} --)
-  if [ -n "$items" ]; then
-    [ "$depth" = 1 ] && [ -n "$subs" ] && printf '## %s (direct commits)\n' "$REL_TOP"
-    printf '%s' "$items"
-  fi
-  [ -n "$subs" ] && printf '%s' "$subs"
-  return 0
+	local depth="$1" tip="$2"
+	shift 2
+	local ex=() e H P h s an ad nm body src sub hd items="" subs="" line p1 p2
+	for e in "$@"; do ex+=("^$e"); done
+	while IFS=$'\x1f' read -r -d $'\x1e' H P h s an ad nm body; do
+		H="${H#$'\n'}"
+		[ -n "$H" ] || continue
+		read -r p1 p2 _ <<<"$P"
+		if [ -n "${p2:-}" ]; then
+			src="$(sed -n 's/^Refs: \([^ ]*\) -> .*/\1/p' <<<"$body" | head -n1)"
+			[ -n "$src" ] || src="$(sed -n "s/^Merge \(remote-tracking \)\{0,1\}branch '\(origin\/\)\{0,1\}\([^']*\)'.*/\3/p" <<<"$body" | head -n1)"
+			[ -n "$src" ] || src="merge $h"
+			sub="$(cl_section $((depth + 1)) "$p2" "$@" "$p1")"
+			[ -n "$sub" ] || continue # a sync merge (parent into child): nothing new
+			hd="$(printf '%*s' $((depth + 1)) '' | tr ' ' '#')"
+			[ "$depth" -ge 5 ] && hd="######"
+			subs="$subs"$'\n'"$hd $src"$'\n'"Integrated $ad by $an ($h): $s"$'\n'"$sub"$'\n'
+		else
+			src="$(sed -n 's/^Refs: \([^ ]*\) -> .*/\1/p' <<<"$body" | head -n1)"
+			line="- $h $s ($an, $ad)${nm:+ [Norms: $nm]}"
+			if [ -n "$src" ] && grep -q '^Commits:' <<<"$body"; then # squash integration
+				hd="$(printf '%*s' $((depth + 1)) '' | tr ' ' '#')"
+				subs="$subs"$'\n'"$hd $src (squashed)"$'\n'"Integrated $ad by $an ($h): $s"$'\n'
+				subs="$subs$(sed -n '/^Commits:/,/^$/p' <<<"$body" | grep '^- ' || true)"$'\n'
+			else
+				items="$items$line"$'\n'
+			fi
+		fi
+	done < <(git log --first-parent --reverse --date=short \
+		--format='%H%x1f%P%x1f%h%x1f%s%x1f%an%x1f%ad%x1f%(trailers:key=Norms,valueonly,separator=%x2c)%x1f%B%x1e' \
+		"$tip" ${ex[@]+"${ex[@]}"} --)
+	if [ -n "$items" ]; then
+		[ "$depth" = 1 ] && [ -n "$subs" ] && printf '## %s (direct commits)\n' "$REL_TOP"
+		printf '%s' "$items"
+	fi
+	[ -n "$subs" ] && printf '%s' "$subs"
+	return 0
 }
 
 # Analyse the tree of a version: fills REL_* variables, prints nothing.
 release_analyse() {
-  local v="$1" b p tb tp n
-  REL_TOP="$v/$QS_BR_LEAF"; REL_RELEASE="$v/$QS_BR_RELEASE_LEAF"
-  REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
-  REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0
-  exists_branch "$REL_TOP" || { REL_ERRORS+=("'$REL_TOP' does not exist (git arbol $v)"); return 0; }
-  REL_TIP="$(branch_tip "$REL_TOP")"
-  [ "$REL_TIP" = diverged ] && REL_ERRORS+=("$REL_TOP: local and origin diverged; run git subir on it first")
-  REL_BASE="$(best_ref "$QS_BR_MAINLINE" || true)"
-  [ -n "$REL_BASE" ] || REL_ERRORS+=("'$QS_BR_MAINLINE' does not exist")
-  [ "$REL_TIP" = diverged ] || REL_CL_BASE="$REL_BASE"
-  if exists_ref "refs/heads/$QS_BR_MAINLINE" && exists_ref "refs/remotes/origin/$QS_BR_MAINLINE" \
-     && [ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ]; then
-    REL_ERRORS+=("$QS_BR_MAINLINE: local and origin diverged; pull it first")
-  fi
-  if [ "${#REL_ERRORS[@]}" -eq 0 ]; then
-    if git merge-base --is-ancestor "$REL_TIP" "$REL_BASE"; then
-      REL_ERRORS+=("$REL_TOP is already inside $QS_BR_MAINLINE (integrated with git integra?): nothing to release")
-    elif ! git merge-base --is-ancestor "$REL_BASE" "$REL_TIP"; then
-      REL_ERRORS+=("$QS_BR_MAINLINE has $(git rev-list --count "$REL_TIP..$REL_BASE") commit(s) that $REL_TOP lacks; bring them in first: git checkout $REL_TOP && git subir")
-    fi
-  fi
-  if exists_branch "$REL_RELEASE" && [ "${#REL_ERRORS[@]}" -eq 0 ]; then
-    local rt; rt="$(branch_tip "$REL_RELEASE")"
-    if [ "$rt" != diverged ] && git merge-base --is-ancestor "$REL_TIP" "$rt"; then
-      REL_RESUME=1                                       # an interrupted git release: go on from there
-    else
-      REL_ERRORS+=("'$REL_RELEASE' exists and does not contain $REL_TOP (left by an earlier release?); publish or delete it first")
-    fi
-  fi
-  # every branch of the tree against its nearest ORIGINAL
-  while IFS= read -r b; do
-    [ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
-    tb="$(branch_tip "$b")"; p="$(nearest_original "$b")"; tp="$(branch_tip "$p")"
-    if [ "$tb" = diverged ] || [ "$tp" = diverged ]; then
-      REL_ERRORS+=("$([ "$tb" = diverged ] && echo "$b" || echo "$p"): local and origin diverged; run git subir on it first")
-      continue
-    fi
-    n="$(git rev-list --count "$tp..$tb")"
-    if [ "$n" = 0 ]; then
-      REL_OK+=("$b"$'\t'"$p")
-    else
-      local new; new="$(archive_name "$b")" || { REL_ERRORS+=("no free name to set '$b' aside"); continue; }
-      REL_PLANNED="$REL_PLANNED$new"$'\n'
-      REL_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$p"$'\t'"$n")
-    fi
-  done < <(all_branches | awk -v p="$v/" 'index($0, p) == 1')
-  # the branches to delete afterwards: the integrated ones, the old names of those set aside, the top
-  local entry archived=$'\n'
-  for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do archived="$archived${entry%%$'\t'*}"$'\n'; done
-  for entry in ${REL_OK[@]+"${REL_OK[@]}"} "$REL_TOP"$'\t' ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
-    b="${entry%%$'\t'*}"
-    exists_ref "refs/remotes/origin/$b" && REL_DELETE_REMOTE+=("$b")
-    case "$archived" in *$'\n'"$b"$'\n'*) continue ;; esac   # set aside: renamed locally instead
-    exists_ref "refs/heads/$b" && REL_DELETE_LOCAL+=("$b")
-  done
-  # branches of the tree checked out in another worktree cannot be deleted from here
-  local here wt
-  here="$(git rev-parse --show-toplevel)"
-  while IFS= read -r wt; do
-    b="${wt#*$'\t'}"; b="${b#refs/heads/}"
-    case "$b" in "$v"/*|"$QS_BR_MAINLINE") REL_ERRORS+=("'$b' is checked out in another worktree; switch it or remove that worktree") ;; esac
-  done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
-  return 0
+	local v="$1" b p tb tp n
+	REL_TOP="$v/$QS_BR_LEAF"
+	REL_RELEASE="$v/$QS_BR_RELEASE_LEAF"
+	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
+	REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0
+	exists_branch "$REL_TOP" || {
+		REL_ERRORS+=("'$REL_TOP' does not exist (git arbol $v)")
+		return 0
+	}
+	REL_TIP="$(branch_tip "$REL_TOP")"
+	[ "$REL_TIP" = diverged ] && REL_ERRORS+=("$REL_TOP: local and origin diverged; run git subir on it first")
+	REL_BASE="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$REL_BASE" ] || REL_ERRORS+=("'$QS_BR_MAINLINE' does not exist")
+	[ "$REL_TIP" = diverged ] || REL_CL_BASE="$REL_BASE"
+	if exists_ref "refs/heads/$QS_BR_MAINLINE" && exists_ref "refs/remotes/origin/$QS_BR_MAINLINE" &&
+		[ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ]; then
+		REL_ERRORS+=("$QS_BR_MAINLINE: local and origin diverged; pull it first")
+	fi
+	if [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		if git merge-base --is-ancestor "$REL_TIP" "$REL_BASE"; then
+			REL_ERRORS+=("$REL_TOP is already inside $QS_BR_MAINLINE (integrated with git integra?): nothing to release")
+		elif ! git merge-base --is-ancestor "$REL_BASE" "$REL_TIP"; then
+			REL_ERRORS+=("$QS_BR_MAINLINE has $(git rev-list --count "$REL_TIP..$REL_BASE") commit(s) that $REL_TOP lacks; bring them in first: git checkout $REL_TOP && git subir")
+		fi
+	fi
+	if exists_branch "$REL_RELEASE" && [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		local rt
+		rt="$(branch_tip "$REL_RELEASE")"
+		if [ "$rt" != diverged ] && git merge-base --is-ancestor "$REL_TIP" "$rt"; then
+			REL_RESUME=1 # an interrupted git release: go on from there
+		else
+			REL_ERRORS+=("'$REL_RELEASE' exists and does not contain $REL_TOP (left by an earlier release?); publish or delete it first")
+		fi
+	fi
+	# every branch of the tree against its nearest ORIGINAL
+	while IFS= read -r b; do
+		[ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
+		tb="$(branch_tip "$b")"
+		p="$(nearest_original "$b")"
+		tp="$(branch_tip "$p")"
+		if [ "$tb" = diverged ] || [ "$tp" = diverged ]; then
+			REL_ERRORS+=("$([ "$tb" = diverged ] && echo "$b" || echo "$p"): local and origin diverged; run git subir on it first")
+			continue
+		fi
+		n="$(git rev-list --count "$tp..$tb")"
+		if [ "$n" = 0 ]; then
+			REL_OK+=("$b"$'\t'"$p")
+		else
+			local new
+			new="$(archive_name "$b")" || {
+				REL_ERRORS+=("no free name to set '$b' aside")
+				continue
+			}
+			REL_PLANNED="$REL_PLANNED$new"$'\n'
+			REL_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$p"$'\t'"$n")
+		fi
+	done < <(all_branches | awk -v p="$v/" 'index($0, p) == 1')
+	# the branches to delete afterwards: the integrated ones, the old names of those set aside, the top
+	local entry archived=$'\n'
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do archived="$archived${entry%%$'\t'*}"$'\n'; done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"} "$REL_TOP"$'\t' ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		b="${entry%%$'\t'*}"
+		exists_ref "refs/remotes/origin/$b" && REL_DELETE_REMOTE+=("$b")
+		case "$archived" in *$'\n'"$b"$'\n'*) continue ;; esac # set aside: renamed locally instead
+		exists_ref "refs/heads/$b" && REL_DELETE_LOCAL+=("$b")
+	done
+	# branches of the tree checked out in another worktree cannot be deleted from here
+	local here wt
+	here="$(git rev-parse --show-toplevel)"
+	while IFS= read -r wt; do
+		b="${wt#*$'\t'}"
+		b="${b#refs/heads/}"
+		case "$b" in "$v"/* | "$QS_BR_MAINLINE") REL_ERRORS+=("'$b' is checked out in another worktree; switch it or remove that worktree") ;; esac
+	done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
+	return 0
 }
 
-release_changelog() {  # <tag> -> markdown on stdout: what each branch brought (for the review)
-  local tag="$1" b p n entry
-  echo "# Release $tag"
-  echo
-  echo "From \`$REL_TOP\` ($(git rev-parse --short "$REL_TIP")) into \`$QS_BR_MAINLINE\`" \
-       "($(git rev-parse --short "$REL_CL_BASE")): $(git rev-list --count --no-merges "$REL_TIP" "^$REL_CL_BASE") commit(s)."
-  echo
-  cl_section 1 "$REL_TIP" "$REL_CL_BASE" | sed '1{/^$/d}'
-  if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then
-    echo
-    echo "## Not included: never integrated into their ORIGINAL"
-    for entry in "${REL_ARCHIVE[@]}"; do
-      IFS=$'\t' read -r b n p _ <<<"$entry"
-      echo
-      echo "### $b -> set aside as $n"
-      git log --no-merges --date=short --format='- %h %s (%an, %ad)' "$(branch_tip "$p")..$(branch_tip "$b")"
-    done
-  fi
+release_changelog() { # <tag> -> markdown on stdout: what each branch brought (for the review)
+	local tag="$1" b p n entry
+	echo "# Release $tag"
+	echo
+	echo "From \`$REL_TOP\` ($(git rev-parse --short "$REL_TIP")) into \`$QS_BR_MAINLINE\`" \
+		"($(git rev-parse --short "$REL_CL_BASE")): $(git rev-list --count --no-merges "$REL_TIP" "^$REL_CL_BASE") commit(s)."
+	echo
+	cl_section 1 "$REL_TIP" "$REL_CL_BASE" | sed '1{/^$/d}'
+	if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then
+		echo
+		echo "## Not included: never integrated into their ORIGINAL"
+		for entry in "${REL_ARCHIVE[@]}"; do
+			IFS=$'\t' read -r b n p _ <<<"$entry"
+			echo
+			echo "### $b -> set aside as $n"
+			git log --no-merges --date=short --format='- %h %s (%an, %ad)' "$(branch_tip "$p")..$(branch_tip "$b")"
+		done
+	fi
 }
 
 # The CHANGELOG.md entry of the release (Common Changelog), from the suite image; semver advice on stderr.
-release_notes() {  # release_notes [--write]
-  local root; root="$(git rev-parse --show-toplevel)"
-  engine "$root" release-notes --version "$REL_VERSION" --tip "$REL_TIP" --base "$REL_CL_BASE" --tag "$REL_TAG" "$@"
+release_notes() { # release_notes [--write]
+	local root
+	root="$(git rev-parse --show-toplevel)"
+	engine "$root" release-notes --version "$REL_VERSION" --tip "$REL_TIP" --base "$REL_CL_BASE" --tag "$REL_TAG" "$@"
 }
 
-release_report() {  # <tag>: checks and plan, for the preview and before running
-  local tag="$1" entry b p n new e
-  echo "## Checks"
-  echo
-  if [ "${#REL_ERRORS[@]}" -eq 0 ]; then echo "[ok] $REL_TOP is consistent (local/origin) and contains $QS_BR_MAINLINE"; fi
-  for e in ${REL_ERRORS[@]+"${REL_ERRORS[@]}"}; do echo "[!!] $e"; done
-  for entry in ${REL_OK[@]+"${REL_OK[@]}"}; do
-    IFS=$'\t' read -r b p <<<"$entry"; echo "[ok] $b: contained in $p"
-  done
-  for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
-    IFS=$'\t' read -r b new p n <<<"$entry"
-    echo "[!!] $b: $n commit(s) not in $p -> will be set aside as $new"
-  done
-  [ "$REL_RESUME" = 1 ] && echo "[ok] $REL_RELEASE exists and contains $REL_TOP: git release resumes from there"
-  echo
-  echo "## Plan"
-  echo
-  local i=1
-  if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then echo "$i. set aside ${#REL_ARCHIVE[@]} branch(es) as $QS_BR_ARCHIVE/... (local and origin)"; i=$((i + 1)); fi
-  echo "$i. git release: $REL_TOP -> $REL_RELEASE, with up to three commits: $(version_subject "$REL_VERSION")," \
-       "docs(changelog): $REL_VERSION ($QS_BR_CHANGELOG), docs(readme): version $REL_VERSION"; i=$((i + 1))
-  echo "$i. git release: push $REL_RELEASE; delete the rest of the tree: ${#REL_DELETE_LOCAL[@]} local branch(es)$(has_origin && [ "$REL_PUSH" = 1 ] && echo ", ${#REL_DELETE_REMOTE[@]} on origin")"; i=$((i + 1))
-  echo "$i. you: review $QS_BR_CHANGELOG on $REL_RELEASE (edit and commit there if needed)"; i=$((i + 1))
-  echo "$i. git publicar: $REL_RELEASE merged into $QS_BR_MAINLINE (\"$(release_subject "$tag")\"), tag $tag, push, $REL_RELEASE deleted"
+release_report() { # <tag>: checks and plan, for the preview and before running
+	local tag="$1" entry b p n new e
+	echo "## Checks"
+	echo
+	if [ "${#REL_ERRORS[@]}" -eq 0 ]; then echo "[ok] $REL_TOP is consistent (local/origin) and contains $QS_BR_MAINLINE"; fi
+	for e in ${REL_ERRORS[@]+"${REL_ERRORS[@]}"}; do echo "[!!] $e"; done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"}; do
+		IFS=$'\t' read -r b p <<<"$entry"
+		echo "[ok] $b: contained in $p"
+	done
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new p n <<<"$entry"
+		echo "[!!] $b: $n commit(s) not in $p -> will be set aside as $new"
+	done
+	[ "$REL_RESUME" = 1 ] && echo "[ok] $REL_RELEASE exists and contains $REL_TOP: git release resumes from there"
+	echo
+	echo "## Plan"
+	echo
+	local i=1
+	if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then
+		echo "$i. set aside ${#REL_ARCHIVE[@]} branch(es) as $QS_BR_ARCHIVE/... (local and origin)"
+		i=$((i + 1))
+	fi
+	echo "$i. git release: $REL_TOP -> $REL_RELEASE, with up to three commits: $(version_subject "$REL_VERSION")," \
+		"docs(changelog): $REL_VERSION ($QS_BR_CHANGELOG), docs(readme): version $REL_VERSION"
+	i=$((i + 1))
+	echo "$i. git release: push $REL_RELEASE; delete the rest of the tree: ${#REL_DELETE_LOCAL[@]} local branch(es)$(has_origin && [ "$REL_PUSH" = 1 ] && echo ", ${#REL_DELETE_REMOTE[@]} on origin")"
+	i=$((i + 1))
+	echo "$i. you: review $QS_BR_CHANGELOG on $REL_RELEASE (edit and commit there if needed)"
+	i=$((i + 1))
+	echo "$i. git publicar: $REL_RELEASE merged into $QS_BR_MAINLINE (\"$(release_subject "$tag")\"), tag $tag, push, $REL_RELEASE deleted"
 }
 
 release_subject() {
-  local s="chore(release): $1"
-  [ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: release $1"
-  [ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: $1"
-  printf '%s' "$s"
+	local s="chore(release): $1"
+	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: release $1"
+	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: $1"
+	printf '%s' "$s"
 }
 
-release_args() {  # sets REL_TAG REL_VERSION REL_OUT REL_PUSH REL_PREVIEW from the arguments
-  REL_TAG="" REL_VERSION="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --version) REL_VERSION="${2:?--version needs a version}"; shift ;;
-      --version=*) REL_VERSION="${1#--version=}" ;;
-      -o|--output) REL_OUT="${2:?$1 needs a file}"; shift ;;
-      --no-push) REL_PUSH=0 ;;
-      -n|--preview) REL_PREVIEW=1 ;;
-      -*) die "unknown option '$1'" ;;
-      *) [ -z "$REL_TAG" ] || die "one tag only (got '$REL_TAG' and '$1')"; REL_TAG="$1" ;;
-    esac
-    shift
-  done
-  if [ -z "$REL_VERSION" ]; then
-    local cur; cur="$(current_branch || true)"
-    if [ -n "$cur" ] && ! is_mainline "$cur" && ! is_archived_branch "$cur" && valid_branch_name "$cur" >/dev/null 2>&1; then
-      REL_VERSION="$(branch_version "$cur")"
-    else
-      local tops; tops="$(all_branches | awk -v l="/$QS_BR_LEAF" -v r="/$QS_BR_RELEASE_LEAF" '(gsub(l "$", "") || gsub(r "$", "")) && index($0, "/") == 0' | sort -u)"
-      [ "$(grep -c . <<<"$tops")" = 1 ] && REL_VERSION="$tops"
-      [ -n "$REL_VERSION" ] || die "which version? add --version <version> (version trees: $(echo $tops))"
-    fi
-  fi
-  REL_VERSION="${REL_VERSION%%/*}"
-  printf '%s' "$REL_VERSION" | grep -qE -- "$(_br_level_re 1)" || die "'$REL_VERSION' is not a version of the branch model (branches.levels[0])"
-  # why: git release keeps the tag it was given for git publicar (and the changelog link)
-  [ -n "$REL_TAG" ] || REL_TAG="$(git config "qs.release.$REL_VERSION.tag" 2>/dev/null || true)"
-  [ -n "$REL_TAG" ] || REL_TAG="$(render_tag "$REL_VERSION/$QS_BR_LEAF")"
-  git check-ref-format "refs/tags/$REL_TAG" || die "'$REL_TAG' is not a valid tag name"
-  LC_ALL=C grep -q '[^ -~]' <<<"$REL_TAG" && die "the tag must be ASCII: '$REL_TAG'"
-  if exists_ref "refs/tags/$REL_TAG"; then REL_TAG_AT="$(git rev-parse "refs/tags/$REL_TAG^{commit}")"; else REL_TAG_AT=""; fi
-  return 0
+release_args() { # sets REL_TAG REL_VERSION REL_OUT REL_PUSH REL_PREVIEW from the arguments
+	REL_TAG="" REL_VERSION="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--version)
+			REL_VERSION="${2:?--version needs a version}"
+			shift
+			;;
+		--version=*) REL_VERSION="${1#--version=}" ;;
+		-o | --output)
+			REL_OUT="${2:?$1 needs a file}"
+			shift
+			;;
+		--no-push) REL_PUSH=0 ;;
+		-n | --preview) REL_PREVIEW=1 ;;
+		-*) die "unknown option '$1'" ;;
+		*)
+			[ -z "$REL_TAG" ] || die "one tag only (got '$REL_TAG' and '$1')"
+			REL_TAG="$1"
+			;;
+		esac
+		shift
+	done
+	if [ -z "$REL_VERSION" ]; then
+		local cur
+		cur="$(current_branch || true)"
+		if [ -n "$cur" ] && ! is_mainline "$cur" && ! is_archived_branch "$cur" && valid_branch_name "$cur" >/dev/null 2>&1; then
+			REL_VERSION="$(branch_version "$cur")"
+		else
+			local tops
+			tops="$(all_branches | awk -v l="/$QS_BR_LEAF" -v r="/$QS_BR_RELEASE_LEAF" '(gsub(l "$", "") || gsub(r "$", "")) && index($0, "/") == 0' | sort -u)"
+			[ "$(grep -c . <<<"$tops")" = 1 ] && REL_VERSION="$tops"
+			[ -n "$REL_VERSION" ] || die "which version? add --version <version> (version trees: ${tops//$'\n'/ })"
+		fi
+	fi
+	REL_VERSION="${REL_VERSION%%/*}"
+	printf '%s' "$REL_VERSION" | grep -qE -- "$(_br_level_re 1)" || die "'$REL_VERSION' is not a version of the branch model (branches.levels[0])"
+	# why: git release keeps the tag it was given for git publicar (and the changelog link)
+	[ -n "$REL_TAG" ] || REL_TAG="$(git config "qs.release.$REL_VERSION.tag" 2>/dev/null || true)"
+	[ -n "$REL_TAG" ] || REL_TAG="$(render_tag "$REL_VERSION/$QS_BR_LEAF")"
+	git check-ref-format "refs/tags/$REL_TAG" || die "'$REL_TAG' is not a valid tag name"
+	LC_ALL=C grep -q '[^ -~]' <<<"$REL_TAG" && die "the tag must be ASCII: '$REL_TAG'"
+	if exists_ref "refs/tags/$REL_TAG"; then REL_TAG_AT="$(git rev-parse "refs/tags/$REL_TAG^{commit}")"; else REL_TAG_AT=""; fi
+	return 0
 }
 
-cmd_changelog() {  # preview: changelog + release notes + checks + plan; changes nothing
-  release_args "$@"
-  fetch_origin
-  if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
-    say "$REL_VERSION is prepared on $REL_VERSION/$QS_BR_RELEASE_LEAF (git release done): review it, then git publicar"
-    return 0
-  fi
-  release_analyse "$REL_VERSION"
-  [ -n "$REL_TAG_AT" ] && [ "${#REL_ERRORS[@]}" -eq 0 ] && [ "$REL_TAG_AT" != "$REL_TIP" ] \
-    && REL_ERRORS+=("tag '$REL_TAG' already exists on another commit; choose another name")
-  if [ -n "$REL_TIP" ] && [ "$REL_TIP" != diverged ] && [ -n "$REL_CL_BASE" ]; then
-    release_changelog "$REL_TAG"; echo
-    if [ -n "$REL_OUT" ]; then
-      case "$REL_OUT" in /*|[A-Za-z]:*) ;; *) REL_OUT="${GIT_PREFIX:-}$REL_OUT" ;; esac
-      release_changelog "$REL_TAG" > "$REL_OUT"; say "changelog written to $REL_OUT"
-    fi
-    echo "## $QS_BR_CHANGELOG entry (Common Changelog)"; echo
-    release_notes 2>&1 || echo "(the suite image could not run: no release notes preview)"
-    echo
-  fi
-  release_report "$REL_TAG"
-  [ "${#REL_ERRORS[@]}" -eq 0 ] || { echo; say "not releasable yet: fix the [!!] items above"; return 1; }
-  echo; say "preview only, nothing changed. Next: git release $REL_TAG --version $REL_VERSION"
+cmd_changelog() { # preview: changelog + release notes + checks + plan; changes nothing
+	release_args "$@"
+	fetch_origin
+	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
+		say "$REL_VERSION is prepared on $REL_VERSION/$QS_BR_RELEASE_LEAF (git release done): review it, then git publicar"
+		return 0
+	fi
+	release_analyse "$REL_VERSION"
+	[ -n "$REL_TAG_AT" ] && [ "${#REL_ERRORS[@]}" -eq 0 ] && [ "$REL_TAG_AT" != "$REL_TIP" ] &&
+		REL_ERRORS+=("tag '$REL_TAG' already exists on another commit; choose another name")
+	if [ -n "$REL_TIP" ] && [ "$REL_TIP" != diverged ] && [ -n "$REL_CL_BASE" ]; then
+		release_changelog "$REL_TAG"
+		echo
+		if [ -n "$REL_OUT" ]; then
+			case "$REL_OUT" in /* | [A-Za-z]:*) ;; *) REL_OUT="${GIT_PREFIX:-}$REL_OUT" ;; esac
+			release_changelog "$REL_TAG" >"$REL_OUT"
+			say "changelog written to $REL_OUT"
+		fi
+		echo "## $QS_BR_CHANGELOG entry (Common Changelog)"
+		echo
+		release_notes 2>&1 || echo "(the suite image could not run: no release notes preview)"
+		echo
+	fi
+	release_report "$REL_TAG"
+	[ "${#REL_ERRORS[@]}" -eq 0 ] || {
+		echo
+		say "not releasable yet: fix the [!!] items above"
+		return 1
+	}
+	echo
+	say "preview only, nothing changed. Next: git release $REL_TAG --version $REL_VERSION"
 }
 
-commit_files() {  # commit_files <subject> <file>...: commit those files if they changed (hooks run)
-  local subject="$1"; shift
-  local f add=()
-  for f in "$@"; do [ -n "$f" ] && [ -e "$f" ] && add+=("$f"); done
-  [ "${#add[@]}" -gt 0 ] || return 0
-  git add -- "${add[@]}"
-  git diff --cached --quiet && return 0
-  git commit -q -m "$subject" || die "the commit '$subject' was rejected (see the hook messages); fix it, then run the same git release again (it resumes)"
-  say "committed: $subject"
+commit_files() { # commit_files <subject> <file>...: commit those files if they changed (hooks run)
+	local subject="$1"
+	shift
+	local f add=()
+	for f in "$@"; do [ -n "$f" ] && [ -e "$f" ] && add+=("$f"); done
+	[ "${#add[@]}" -gt 0 ] || return 0
+	git add -- "${add[@]}"
+	git diff --cached --quiet && return 0
+	git commit -q -m "$subject" || die "the commit '$subject' was rejected (see the hook messages); fix it, then run the same git release again (it resumes)"
+	say "committed: $subject"
 }
 
-cmd_release() {  # step 1: RELEASE branch with version, changelog and README badge; tree deleted
-  local entry b new p n root
-  release_args "$@"
-  [ "$REL_PREVIEW" = 1 ] && { cmd_changelog "$@"; return; }
-  require_clean || die "working tree not clean: commit or stash first"
-  fetch_origin
-  if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
-    say "$REL_VERSION/$QS_BR_RELEASE_LEAF is already prepared. Review $QS_BR_CHANGELOG there, then: git publicar --version $REL_VERSION"
-    return 0
-  fi
-  release_analyse "$REL_VERSION"
-  [ -n "$REL_TAG_AT" ] && [ "${#REL_ERRORS[@]}" -eq 0 ] && [ "$REL_TAG_AT" != "$REL_TIP" ] \
-    && REL_ERRORS+=("tag '$REL_TAG' already exists on another commit; choose another name")
-  if [ "${#REL_ERRORS[@]}" -gt 0 ]; then release_report "$REL_TAG" >&2; die "nothing was changed"; fi
-  release_changelog "$REL_TAG"; echo
-  echo "## $QS_BR_CHANGELOG entry (Common Changelog)"; echo
-  release_notes 2>&1 || die "the suite image could not run (Docker?): it writes $QS_BR_CHANGELOG; nothing was changed"
-  echo; release_report "$REL_TAG"; echo
-  confirm "Prepare $REL_VERSION on $REL_RELEASE?" || die "cancelled; nothing was changed"
-  git config "qs.release.$REL_VERSION.tag" "$REL_TAG"
-  root="$(git rev-parse --show-toplevel)"
+cmd_release() { # step 1: RELEASE branch with version, changelog and README badge; tree deleted
+	local entry b new p n root
+	release_args "$@"
+	[ "$REL_PREVIEW" = 1 ] && {
+		cmd_changelog "$@"
+		return
+	}
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
+		say "$REL_VERSION/$QS_BR_RELEASE_LEAF is already prepared. Review $QS_BR_CHANGELOG there, then: git publicar --version $REL_VERSION"
+		return 0
+	fi
+	release_analyse "$REL_VERSION"
+	[ -n "$REL_TAG_AT" ] && [ "${#REL_ERRORS[@]}" -eq 0 ] && [ "$REL_TAG_AT" != "$REL_TIP" ] &&
+		REL_ERRORS+=("tag '$REL_TAG' already exists on another commit; choose another name")
+	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
+		release_report "$REL_TAG" >&2
+		die "nothing was changed"
+	fi
+	release_changelog "$REL_TAG"
+	echo
+	echo "## $QS_BR_CHANGELOG entry (Common Changelog)"
+	echo
+	release_notes 2>&1 || die "the suite image could not run (Docker?): it writes $QS_BR_CHANGELOG; nothing was changed"
+	echo
+	release_report "$REL_TAG"
+	echo
+	confirm "Prepare $REL_VERSION on $REL_RELEASE?" || die "cancelled; nothing was changed"
+	git config "qs.release.$REL_VERSION.tag" "$REL_TAG"
+	root="$(git rev-parse --show-toplevel)"
 
-  # 1. RELEASE at the tip of the version ORIGINAL (kept until the end: a failure leaves the tree)
-  exists_ref "refs/heads/$REL_RELEASE" || git branch -q --no-track "$REL_RELEASE" "$( [ "$REL_RESUME" = 1 ] && branch_tip "$REL_RELEASE" || echo "$REL_TIP")"
-  git checkout -q "$REL_RELEASE"
-  # 2.-4. the version (a SNAPSHOT pom becomes the release version), CHANGELOG.md, the README badge
-  release_commits
-  # 5. publish RELEASE before touching any remote branch
-  if [ "$REL_PUSH" = 1 ] && has_origin; then
-    git push -q -u origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the tree is untouched. Fix it and run git release again (it resumes)"
-  fi
-  # 6. branches never integrated: set aside as unmerged/<name>
-  for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
-    IFS=$'\t' read -r b new p n <<<"$entry"
-    if exists_ref "refs/heads/$b"; then git branch -m "$b" "$new"
-    else git branch -q --no-track "$new" "origin/$b"; fi          # remote only: keep a local copy too
-    if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then git push -q origin "refs/remotes/origin/$b:refs/heads/$new"; fi
-    echo "[rama] WARN: $b had $n commit(s) not in $p: set aside as $new" >&2
-  done
-  # 7. the rest of the tree (integrated branches, old names, the ORIGINAL)
-  if [ "$REL_PUSH" = 1 ] && has_origin && [ "${#REL_DELETE_REMOTE[@]}" -gt 0 ]; then
-    git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
-  fi
-  [ "${#REL_DELETE_LOCAL[@]}" -gt 0 ] && git branch -q -D "${REL_DELETE_LOCAL[@]}"
-  say "$REL_VERSION prepared on $REL_RELEASE: ${#REL_DELETE_LOCAL[@]} branch(es) of the tree deleted, ${#REL_ARCHIVE[@]} set aside"
-  echo
-  echo "Review now (you are on $REL_RELEASE):"
-  echo "  git show --stat HEAD~2..HEAD          # the release commits"
-  echo "  \$EDITOR $QS_BR_CHANGELOG               # wording, order; then: git commit -am 'docs(changelog): review'"
-  echo "When it is right:"
-  echo "  git publicar                          # merge into $QS_BR_MAINLINE, tag $REL_TAG, push, delete $REL_RELEASE"
-  return 0
+	# 1. RELEASE at the tip of the version ORIGINAL (kept until the end: a failure leaves the tree)
+	exists_ref "refs/heads/$REL_RELEASE" || git branch -q --no-track "$REL_RELEASE" "$([ "$REL_RESUME" = 1 ] && branch_tip "$REL_RELEASE" || echo "$REL_TIP")"
+	git checkout -q "$REL_RELEASE"
+	# 2.-4. the version (a SNAPSHOT pom becomes the release version), CHANGELOG.md, the README badge
+	release_commits
+	# 5. publish RELEASE before touching any remote branch
+	if [ "$REL_PUSH" = 1 ] && has_origin; then
+		git push -q -u origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the tree is untouched. Fix it and run git release again (it resumes)"
+	fi
+	# 6. branches never integrated: set aside as unmerged/<name>
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new p n <<<"$entry"
+		if exists_ref "refs/heads/$b"; then
+			git branch -m "$b" "$new"
+		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
+		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then git push -q origin "refs/remotes/origin/$b:refs/heads/$new"; fi
+		echo "[rama] WARN: $b had $n commit(s) not in $p: set aside as $new" >&2
+	done
+	# 7. the rest of the tree (integrated branches, old names, the ORIGINAL)
+	if [ "$REL_PUSH" = 1 ] && has_origin && [ "${#REL_DELETE_REMOTE[@]}" -gt 0 ]; then
+		git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
+	fi
+	[ "${#REL_DELETE_LOCAL[@]}" -gt 0 ] && git branch -q -D "${REL_DELETE_LOCAL[@]}"
+	say "$REL_VERSION prepared on $REL_RELEASE: ${#REL_DELETE_LOCAL[@]} branch(es) of the tree deleted, ${#REL_ARCHIVE[@]} set aside"
+	echo
+	echo "Review now (you are on $REL_RELEASE):"
+	echo "  git show --stat HEAD~2..HEAD          # the release commits"
+	echo "  \$EDITOR $QS_BR_CHANGELOG               # wording, order; then: git commit -am 'docs(changelog): review'"
+	echo "When it is right:"
+	echo "  git publicar                          # merge into $QS_BR_MAINLINE, tag $REL_TAG, push, delete $REL_RELEASE"
+	return 0
 }
 
-cmd_publicar() {  # step 2: RELEASE merged into develop, tagged, pushed, deleted
-  local tip base notes msg pushed=0 merged=0 root rels
-  # why: with several RELEASE branches, which one reaches develop is said explicitly, one at a time
-  rels="$(release_branches)"
-  if [ "$(grep -c . <<<"$rels")" -gt 1 ] && ! printf ' %s' "$@" | grep -qE ' --version(=| )'; then
-    die "there are $(grep -c . <<<"$rels") RELEASE branches ($(echo $rels)); publish one at a time: git publicar --version <v>  (or join them first: git combinar)"
-  fi
-  release_args "$@"
-  REL_RELEASE="$REL_VERSION/$QS_BR_RELEASE_LEAF"
-  require_clean || die "working tree not clean: commit or stash first"
-  fetch_origin
-  exists_branch "$REL_RELEASE" || die "'$REL_RELEASE' does not exist: prepare it first with git release --version $REL_VERSION"
-  tip="$(branch_tip "$REL_RELEASE")"
-  [ "$tip" = diverged ] && die "$REL_RELEASE: local and origin diverged; pull it first (git checkout $REL_RELEASE && git pull)"
-  base="$(best_ref "$QS_BR_MAINLINE" || true)"; [ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
-  [ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ] && die "$QS_BR_MAINLINE: local and origin diverged; pull it first"
-  if git merge-base --is-ancestor "$tip" "$base"; then merged=1                 # resumed after the merge
-  elif ! git merge-base --is-ancestor "$base" "$tip"; then
-    die "$QS_BR_MAINLINE has $(git rev-list --count "$tip..$base") commit(s) that $REL_RELEASE lacks: git checkout $REL_RELEASE && git merge $QS_BR_MAINLINE, review again, then git publicar"
-  fi
-  [ -n "$REL_TAG_AT" ] && [ "$REL_TAG_AT" != "$tip" ] && die "tag '$REL_TAG' already exists on another commit; give another: git publicar <tag>"
-  root="$(git rev-parse --show-toplevel)"
-  notes="$(git rev-parse --absolute-git-dir)/quality-suite/RELEASE_NOTES.md"; mkdir -p "$(dirname "$notes")"
-  { echo "Release $REL_TAG ($REL_VERSION)"; echo
-    if [ -n "$QS_BR_CHANGELOG" ] && git cat-file -e "$tip:$QS_BR_CHANGELOG" 2>/dev/null; then
-      git show "$tip:$QS_BR_CHANGELOG" | awk -v v="$REL_VERSION" '
+cmd_publicar() { # step 2: RELEASE merged into develop, tagged, pushed, deleted
+	local tip base notes msg pushed=0 merged=0 root rels
+	# why: with several RELEASE branches, which one reaches develop is said explicitly, one at a time
+	rels="$(release_branches)"
+	if [ "$(grep -c . <<<"$rels")" -gt 1 ] && ! printf ' %s' "$@" | grep -qE ' --version(=| )'; then
+		die "there are $(grep -c . <<<"$rels") RELEASE branches (${rels//$'\n'/ }); publish one at a time: git publicar --version <v>  (or join them first: git combinar)"
+	fi
+	release_args "$@"
+	REL_RELEASE="$REL_VERSION/$QS_BR_RELEASE_LEAF"
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	exists_branch "$REL_RELEASE" || die "'$REL_RELEASE' does not exist: prepare it first with git release --version $REL_VERSION"
+	tip="$(branch_tip "$REL_RELEASE")"
+	[ "$tip" = diverged ] && die "$REL_RELEASE: local and origin diverged; pull it first (git checkout $REL_RELEASE && git pull)"
+	base="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
+	[ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ] && die "$QS_BR_MAINLINE: local and origin diverged; pull it first"
+	if git merge-base --is-ancestor "$tip" "$base"; then
+		merged=1 # resumed after the merge
+	elif ! git merge-base --is-ancestor "$base" "$tip"; then
+		die "$QS_BR_MAINLINE has $(git rev-list --count "$tip..$base") commit(s) that $REL_RELEASE lacks: git checkout $REL_RELEASE && git merge $QS_BR_MAINLINE, review again, then git publicar"
+	fi
+	[ -n "$REL_TAG_AT" ] && [ "$REL_TAG_AT" != "$tip" ] && die "tag '$REL_TAG' already exists on another commit; give another: git publicar <tag>"
+	root="$(git rev-parse --show-toplevel)"
+	notes="$(git rev-parse --absolute-git-dir)/quality-suite/RELEASE_NOTES.md"
+	mkdir -p "$(dirname "$notes")"
+	{
+		echo "Release $REL_TAG ($REL_VERSION)"
+		echo
+		if [ -n "$QS_BR_CHANGELOG" ] && git cat-file -e "$tip:$QS_BR_CHANGELOG" 2>/dev/null; then
+			git show "$tip:$QS_BR_CHANGELOG" | awk -v v="$REL_VERSION" '
         /^## / { if (on) exit; on = (index($0, "## [" v "]") == 1 || index($0, "## " v " ") == 1); next }
         on { print }' | sed '/./,$!d'
-    fi; } > "$notes"
-  [ "$(grep -c . "$notes")" -gt 1 ] || echo "[rama] WARN: $QS_BR_CHANGELOG on $REL_RELEASE has no entry for $REL_VERSION" >&2
-  cat "$notes"; echo
-  echo "Plan: $REL_RELEASE -> $QS_BR_MAINLINE (\"$(release_subject "$REL_TAG")\"), tag $REL_TAG$([ "$REL_PUSH" = 1 ] && has_origin && echo ", push $QS_BR_MAINLINE and $REL_TAG"), delete $REL_RELEASE"
-  confirm "Publish $REL_VERSION as $REL_TAG?" || die "cancelled; nothing was changed"
+		fi
+	} >"$notes"
+	[ "$(grep -c . "$notes")" -gt 1 ] || echo "[rama] WARN: $QS_BR_CHANGELOG on $REL_RELEASE has no entry for $REL_VERSION" >&2
+	cat "$notes"
+	echo
+	echo "Plan: $REL_RELEASE -> $QS_BR_MAINLINE (\"$(release_subject "$REL_TAG")\"), tag $REL_TAG$([ "$REL_PUSH" = 1 ] && has_origin && echo ", push $QS_BR_MAINLINE and $REL_TAG"), delete $REL_RELEASE"
+	confirm "Publish $REL_VERSION as $REL_TAG?" || die "cancelled; nothing was changed"
 
-  if exists_ref "refs/heads/$QS_BR_MAINLINE"; then git checkout -q "$QS_BR_MAINLINE"
-  else git checkout -q -b "$QS_BR_MAINLINE" --track "origin/$QS_BR_MAINLINE"; fi
-  [ "$(git rev-parse HEAD)" = "$(git rev-parse "$base")" ] || git merge -q --ff-only "$base"
-  if [ "$merged" = 0 ]; then
-    msg="$(git rev-parse --absolute-git-dir)/quality-suite/RELEASE_MSG"
-    { release_subject "$REL_TAG"; echo; echo
-      echo "Release $REL_TAG of $REL_VERSION: $(git rev-list --count --no-merges "$tip" "^$base") commit(s)."
-      echo "Refs: $REL_RELEASE -> $QS_BR_MAINLINE"; } > "$msg"
-    exists_ref "refs/heads/$REL_RELEASE" || git branch -q --no-track "$REL_RELEASE" "$tip"
-    quiet_merge merge -q --no-ff --no-commit "$REL_RELEASE" \
-      || { git merge --abort 2>/dev/null || true; die "merge into $QS_BR_MAINLINE failed; nothing was changed"; }
-    if ! git commit -q --cleanup=strip -F "$msg"; then
-      git merge --abort 2>/dev/null || true
-      die "the merge commit was rejected (see the hook messages above); nothing was changed"
-    fi
-    say "$REL_RELEASE merged into $QS_BR_MAINLINE"
-  fi
-  if [ -z "$REL_TAG_AT" ]; then
-    git tag -a --cleanup=whitespace -F "$notes" "$REL_TAG" "$tip"; say "tag $REL_TAG created on $REL_RELEASE"
-  fi
-  if [ "$REL_PUSH" = 1 ] && has_origin; then
-    git push -q origin "$QS_BR_MAINLINE" "refs/tags/$REL_TAG" \
-      || die "push failed: $QS_BR_MAINLINE and $REL_TAG are ready locally and $REL_RELEASE is kept. Fix the push and run git publicar again (it resumes)"
-    pushed=1; say "pushed $QS_BR_MAINLINE and $REL_TAG"
-    exists_ref "refs/remotes/origin/$REL_RELEASE" && git push -q origin --delete "$REL_RELEASE"
-  fi
-  exists_ref "refs/heads/$REL_RELEASE" && git branch -q -D "$REL_RELEASE"
-  git config --unset "qs.release.$REL_VERSION.tag" 2>/dev/null || true
-  say "published $REL_VERSION as $REL_TAG; $REL_RELEASE deleted"
-  [ "$pushed" = 1 ] || { has_origin && say "not pushed (--no-push): git push origin $QS_BR_MAINLINE $REL_TAG && git push origin --delete $REL_RELEASE"; }
-  return 0
+	if exists_ref "refs/heads/$QS_BR_MAINLINE"; then
+		git checkout -q "$QS_BR_MAINLINE"
+	else git checkout -q -b "$QS_BR_MAINLINE" --track "origin/$QS_BR_MAINLINE"; fi
+	[ "$(git rev-parse HEAD)" = "$(git rev-parse "$base")" ] || git merge -q --ff-only "$base"
+	if [ "$merged" = 0 ]; then
+		msg="$(git rev-parse --absolute-git-dir)/quality-suite/RELEASE_MSG"
+		{
+			release_subject "$REL_TAG"
+			echo
+			echo
+			echo "Release $REL_TAG of $REL_VERSION: $(git rev-list --count --no-merges "$tip" "^$base") commit(s)."
+			echo "Refs: $REL_RELEASE -> $QS_BR_MAINLINE"
+		} >"$msg"
+		exists_ref "refs/heads/$REL_RELEASE" || git branch -q --no-track "$REL_RELEASE" "$tip"
+		quiet_merge merge -q --no-ff --no-commit "$REL_RELEASE" ||
+			{
+				git merge --abort 2>/dev/null || true
+				die "merge into $QS_BR_MAINLINE failed; nothing was changed"
+			}
+		if ! git commit -q --cleanup=strip -F "$msg"; then
+			git merge --abort 2>/dev/null || true
+			die "the merge commit was rejected (see the hook messages above); nothing was changed"
+		fi
+		say "$REL_RELEASE merged into $QS_BR_MAINLINE"
+	fi
+	if [ -z "$REL_TAG_AT" ]; then
+		git tag -a --cleanup=whitespace -F "$notes" "$REL_TAG" "$tip"
+		say "tag $REL_TAG created on $REL_RELEASE"
+	fi
+	if [ "$REL_PUSH" = 1 ] && has_origin; then
+		git push -q origin "$QS_BR_MAINLINE" "refs/tags/$REL_TAG" ||
+			die "push failed: $QS_BR_MAINLINE and $REL_TAG are ready locally and $REL_RELEASE is kept. Fix the push and run git publicar again (it resumes)"
+		pushed=1
+		say "pushed $QS_BR_MAINLINE and $REL_TAG"
+		exists_ref "refs/remotes/origin/$REL_RELEASE" && git push -q origin --delete "$REL_RELEASE"
+	fi
+	exists_ref "refs/heads/$REL_RELEASE" && git branch -q -D "$REL_RELEASE"
+	git config --unset "qs.release.$REL_VERSION.tag" 2>/dev/null || true
+	say "published $REL_VERSION as $REL_TAG; $REL_RELEASE deleted"
+	[ "$pushed" = 1 ] || { has_origin && say "not pushed (--no-push): git push origin $QS_BR_MAINLINE $REL_TAG && git push origin --delete $REL_RELEASE"; }
+	return 0
 }
 
 # --- git nueva-version / git combinar ----------------------------------------------------------
 # sync_branch <branch> <parent>: bring the parent into the branch with a merge commit made without
 # a work tree (git merge-tree); 1 when they conflict (the branch is left as it was)
 sync_branch() {
-  local b="$1" p="$2" bt pt tree commit
-  bt="$(git rev-parse "refs/heads/$b")"; pt="$(git rev-parse "refs/heads/$p")"
-  git merge-base --is-ancestor "$pt" "$bt" && return 0
-  # why: a copy with nothing of its own (already integrated) just moves to its parent: a merge
-  # commit would make it look unintegrated
-  if git merge-base --is-ancestor "$bt" "$pt"; then git update-ref "refs/heads/$b" "$pt" "$bt"; return 0; fi
-  tree="$(git merge-tree --write-tree "$bt" "$pt" 2>/dev/null)" || return 1
-  tree="$(head -n1 <<<"$tree")"
-  commit="$(git commit-tree "$tree" -p "$bt" -p "$pt" -m "Merge branch '$p' into $b")"
-  git update-ref "refs/heads/$b" "$commit" "$bt"
+	local b="$1" p="$2" bt pt tree commit
+	bt="$(git rev-parse "refs/heads/$b")"
+	pt="$(git rev-parse "refs/heads/$p")"
+	git merge-base --is-ancestor "$pt" "$bt" && return 0
+	# why: a copy with nothing of its own (already integrated) just moves to its parent: a merge
+	# commit would make it look unintegrated
+	if git merge-base --is-ancestor "$bt" "$pt"; then
+		git update-ref "refs/heads/$b" "$pt" "$bt"
+		return 0
+	fi
+	tree="$(git merge-tree --write-tree "$bt" "$pt" 2>/dev/null)" || return 1
+	tree="$(head -n1 <<<"$tree")"
+	commit="$(git commit-tree "$tree" -p "$bt" -p "$pt" -m "Merge branch '$p' into $b")"
+	git update-ref "refs/heads/$b" "$commit" "$bt"
 }
 
 cmd_nueva_version() {
-  local v="" src="$FROM" dry=0 full=0 a node srcv b nb rel why left=() made=() n plan p pre seg i
-  for a in "$@"; do
-    case "$a" in -n|--dry-run) dry=1 ;; --arbol-completo|--full) full=1 ;;
-      -*) die "unknown option '$a' (nueva-version: --from <branch>, --arbol-completo, -n)" ;;
-      *) [ -z "$v" ] || die "one version only (got '$v' and '$a')"; v="$a" ;; esac
-  done
-  [ -n "$v" ] || die "usage: git nueva-version <version> [--from <branch>]   e.g. git nv 6.22.6-SNAPSHOT --from 6.22.6/188858/ORIGINAL"
-  fetch_origin
-  case "$v" in major|minor|patch) v="$(next_version "$v")"; say "next version: $v" ;; esac
-  [ -n "$src" ] || src="$(current_branch)" || die "detached HEAD: add --from <branch>"
-  exists_branch "$src" || die "branch '$src' not found"
-  why="$(valid_branch_name "$v/$QS_BR_LEAF")" || die "invalid version '$v': $why"
-  taken "$v" && die "'$v' already exists (as a branch or a version tree)"
-  # the copies keep their path below the version ('6.22.6/188858/login' -> '<v>/188858/login'):
-  # the branches below the chosen one, the parents between the version and it, or (--arbol-completo)
-  # the whole tree of its version
-  # shellcheck disable=SC2064  # why expanded now: 'plan' is local
-  plan="$(mktemp)"; trap "rm -f '$plan'" EXIT
-  srcv=""; node=""
-  if ! is_mainline "$src" && ! is_archived_branch "$src" && valid_branch_name "$src" >/dev/null 2>&1; then
-    srcv="$(branch_version "$src")"
-    is_parent_branch "$src" && node="$(branch_node "$src")"
-  fi
-  {
-    printf 'R\t%s/%s\t%s\n' "$v" "$QS_BR_LEAF" "$src"
-    if [ -n "$srcv" ] && [ "$full" = 1 ]; then
-      all_branches | awk -v p="$srcv/" -v t="$srcv/$QS_BR_LEAF" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
-        'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }'
-    elif [ -n "$node" ] && [ "$node" != "$srcv" ]; then
-      rel="${node#"$srcv"/}"; pre=""; i=0
-      while IFS= read -r seg; do                 # the parents between the version and the chosen one
-        pre="${pre:+$pre/}$seg"
-        if [ "$pre" = "$rel" ]; then printf 'S\t%s/%s/%s\t%s\n' "$v" "$pre" "$QS_BR_LEAF" "$src"
-        else printf 'P\t%s/%s/%s\t-\n' "$v" "$pre" "$QS_BR_LEAF"; fi
-      done < <(tr '/' '\n' <<<"$rel")
-      all_branches | awk -v p="$node/" -v me="$src" 'index($0, p) == 1 && $0 != me { print "C\t" $0 }'
-    elif [ -n "$node" ]; then
-      all_branches | awk -v p="$node/" -v me="$src" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
-        'index($0, p) == 1 && $0 != me && $0 != r { print "C\t" $0 }'
-    fi
-  } | awk -F'\t' -v v="$v" -v sv="$srcv" '
+	local v="" src="$FROM" dry=0 full=0 a node srcv b nb rel why left=() made=() n plan p pre seg i
+	for a in "$@"; do
+		case "$a" in -n | --dry-run) dry=1 ;; --arbol-completo | --full) full=1 ;;
+		-*) die "unknown option '$a' (nueva-version: --from <branch>, --arbol-completo, -n)" ;;
+		*)
+			[ -z "$v" ] || die "one version only (got '$v' and '$a')"
+			v="$a"
+			;;
+		esac
+	done
+	[ -n "$v" ] || die "usage: git nueva-version <version> [--from <branch>]   e.g. git nv 6.22.6-SNAPSHOT --from 6.22.6/188858/ORIGINAL"
+	fetch_origin
+	case "$v" in major | minor | patch)
+		v="$(next_version "$v")"
+		say "next version: $v"
+		;;
+	esac
+	[ -n "$src" ] || src="$(current_branch)" || die "detached HEAD: add --from <branch>"
+	exists_branch "$src" || die "branch '$src' not found"
+	why="$(valid_branch_name "$v/$QS_BR_LEAF")" || die "invalid version '$v': $why"
+	taken "$v" && die "'$v' already exists (as a branch or a version tree)"
+	# the copies keep their path below the version ('6.22.6/188858/login' -> '<v>/188858/login'):
+	# the branches below the chosen one, the parents between the version and it, or (--arbol-completo)
+	# the whole tree of its version
+	plan="$(mktemp)"
+	# shellcheck disable=SC2064 # why: expanded now, 'plan' is local and gone when EXIT fires
+	trap "rm -f '$plan'" EXIT
+	srcv=""
+	node=""
+	if ! is_mainline "$src" && ! is_archived_branch "$src" && valid_branch_name "$src" >/dev/null 2>&1; then
+		srcv="$(branch_version "$src")"
+		is_parent_branch "$src" && node="$(branch_node "$src")"
+	fi
+	{
+		printf 'R\t%s/%s\t%s\n' "$v" "$QS_BR_LEAF" "$src"
+		if [ -n "$srcv" ] && [ "$full" = 1 ]; then
+			all_branches | awk -v p="$srcv/" -v t="$srcv/$QS_BR_LEAF" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
+				'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }'
+		elif [ -n "$node" ] && [ "$node" != "$srcv" ]; then
+			rel="${node#"$srcv"/}"
+			pre=""
+			i=0
+			while IFS= read -r seg; do # the parents between the version and the chosen one
+				pre="${pre:+$pre/}$seg"
+				if [ "$pre" = "$rel" ]; then
+					printf 'S\t%s/%s/%s\t%s\n' "$v" "$pre" "$QS_BR_LEAF" "$src"
+				else printf 'P\t%s/%s/%s\t-\n' "$v" "$pre" "$QS_BR_LEAF"; fi
+			done < <(tr '/' '\n' <<<"$rel")
+			all_branches | awk -v p="$node/" -v me="$src" 'index($0, p) == 1 && $0 != me { print "C\t" $0 }'
+		elif [ -n "$node" ]; then
+			all_branches | awk -v p="$node/" -v me="$src" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
+				'index($0, p) == 1 && $0 != me && $0 != r { print "C\t" $0 }'
+		fi
+	} | awk -F'\t' -v v="$v" -v sv="$srcv" '
       $1 == "C" { rest = substr($2, length(sv) + 2); print $1 "\t" v "/" rest "\t" $2; next }
-      { print }' | awk -F'\t' -v leaf="$QS_BR_LEAF" '{ n = split($2, a, "/"); if (a[n] == leaf) n--; print n "\t" $0 }' \
-    | sort -s -n -k1,1 | cut -f2- > "$plan"     # why: by node depth, so every parent exists before its children
-  while IFS=$'\t' read -r a nb b; do
-    why="$(valid_branch_name "$nb")" || die "'$nb' is not a valid name: $why"
-    case "$a" in R) echo "  + $nb   from $b (version commit: $v)" ;; P) echo "  + $nb   new parent" ;;
-      *) echo "  + $nb   copy of $b" ;; esac
-  done < "$plan"
-  [ "$dry" = 1 ] && { say "dry run: nothing was created"; return 0; }
-  while IFS=$'\t' read -r a nb b; do
-    case "$a" in
-      R) git branch -q --no-track "$nb" "$(best_ref "$b")"; version_commit "$nb" "$v" ;;
-      P) git branch -q --no-track "$nb" "$(parent_branch "$nb")" ;;
-      *) git branch -q --no-track "$nb" "$(best_ref "$b")"
-         sync_branch "$nb" "$(parent_branch "$nb")" || left+=("$nb") ;;
-    esac
-    made+=("$nb")
-  done < "$plan"
-  say "version tree $v created from $src: ${#made[@]} branch(es), next to the others (git arbol $v)"
-  for n in ${left[@]+"${left[@]}"}; do
-    echo "[rama] WARN: $n conflicts with its new parent; bring it up to date by hand: git checkout $n && git subir" >&2
-  done
-  has_origin && say "share it: git push -u origin ${made[*]}"
-  return 0
+      { print }' | awk -F'\t' -v leaf="$QS_BR_LEAF" '{ n = split($2, a, "/"); if (a[n] == leaf) n--; print n "\t" $0 }' |
+		sort -s -n -k1,1 | cut -f2- >"$plan" # why: by node depth, so every parent exists before its children
+	while IFS=$'\t' read -r a nb b; do
+		why="$(valid_branch_name "$nb")" || die "'$nb' is not a valid name: $why"
+		case "$a" in R) echo "  + $nb   from $b (version commit: $v)" ;; P) echo "  + $nb   new parent" ;;
+		*) echo "  + $nb   copy of $b" ;; esac
+	done <"$plan"
+	[ "$dry" = 1 ] && {
+		say "dry run: nothing was created"
+		return 0
+	}
+	while IFS=$'\t' read -r a nb b; do
+		case "$a" in
+		R)
+			git branch -q --no-track "$nb" "$(best_ref "$b")"
+			version_commit "$nb" "$v"
+			;;
+		P) git branch -q --no-track "$nb" "$(parent_branch "$nb")" ;;
+		*)
+			git branch -q --no-track "$nb" "$(best_ref "$b")"
+			sync_branch "$nb" "$(parent_branch "$nb")" || left+=("$nb")
+			;;
+		esac
+		made+=("$nb")
+	done <"$plan"
+	say "version tree $v created from $src: ${#made[@]} branch(es), next to the others (git arbol $v)"
+	for n in ${left[@]+"${left[@]}"}; do
+		echo "[rama] WARN: $n conflicts with its new parent; bring it up to date by hand: git checkout $n && git subir" >&2
+	done
+	has_origin && say "share it: git push -u origin ${made[*]}"
+	return 0
 }
 
-release_branches() {  # every '<version>/RELEASE' (local or origin)
-  local b
-  while IFS= read -r b; do is_release_branch "$b" && printf '%s\n' "$b"; done < <(all_branches)
-  return 0
+release_branches() { # every '<version>/RELEASE' (local or origin)
+	local b
+	while IFS= read -r b; do is_release_branch "$b" && printf '%s\n' "$b"; done < <(all_branches)
+	return 0
 }
 
 RELEASE_COMMITS_RX='^(chore\((version|release)\)|docs\((changelog|readme)\))[:!]'
@@ -1031,148 +1241,167 @@ RELEASE_COMMITS_RX='^(chore\((version|release)\)|docs\((changelog|readme)\))[:!]
 # The release commits of REL_VERSION on the current branch (REL_RELEASE): version files,
 # CHANGELOG.md entry, README badge. Needs REL_VERSION REL_TIP REL_CL_BASE REL_TAG.
 release_commits() {
-  local root changed pom
-  root="$(git rev-parse --show-toplevel)"
-  pom="$QS_BR_POM"; [ "$pom" = snapshot ] && pom=update
-  changed="$(engine "$root" version-set "$REL_VERSION" --pom "$pom" --version-file "$QS_BR_VERSION_FILE" | tr -d '\r')" \
-    || die "the suite image could not run (Docker?); run the same command again when it works (it resumes)"
-  # shellcheck disable=SC2086
-  [ -z "$changed" ] || commit_files "$(version_subject "$REL_VERSION")" $changed
-  if [ -n "$QS_BR_CHANGELOG" ]; then
-    release_notes --write >/dev/null 2>&1 || die "could not write $QS_BR_CHANGELOG"
-    commit_files "docs(changelog): $REL_VERSION" "$QS_BR_CHANGELOG"
-  fi
-  changed="$(engine "$root" release-docs --version "$REL_VERSION" | tr -d '\r')" || die "could not update the README badge"
-  # shellcheck disable=SC2086
-  [ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
+	local root changed pom
+	root="$(git rev-parse --show-toplevel)"
+	pom="$QS_BR_POM"
+	[ "$pom" = snapshot ] && pom=update
+	changed="$(engine "$root" version-set "$REL_VERSION" --pom "$pom" --version-file "$QS_BR_VERSION_FILE" | tr -d '\r')" ||
+		die "the suite image could not run (Docker?); run the same command again when it works (it resumes)"
+	# shellcheck disable=SC2086
+	[ -z "$changed" ] || commit_files "$(version_subject "$REL_VERSION")" $changed
+	if [ -n "$QS_BR_CHANGELOG" ]; then
+		release_notes --write >/dev/null 2>&1 || die "could not write $QS_BR_CHANGELOG"
+		commit_files "docs(changelog): $REL_VERSION" "$QS_BR_CHANGELOG"
+	fi
+	changed="$(engine "$root" release-docs --version "$REL_VERSION" | tr -d '\r')" || die "could not update the README badge"
+	# shellcheck disable=SC2086
+	[ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
 }
 
 cmd_combinar() {
-  local target="" incl="" a rels=() chosen=() r t key base wt gd ordered=() mb rx old=() n
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --version) target="${2:?--version needs a version}"; shift ;;
-      --version=*) target="${1#--version=}" ;;
-      --incluir|--include) incl="${2:?$1 needs versions}"; shift ;;
-      --incluir=*|--include=*) incl="${1#*=}" ;;
-      *) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --yes)" ;;
-    esac
-    shift
-  done
-  require_clean || die "working tree not clean: commit or stash first"
-  fetch_origin
-  base="$(best_ref "$QS_BR_MAINLINE" || true)"; [ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
-  mapfile -t rels < <(release_branches)
-  [ "${#rels[@]}" -ge 2 ] || die "combinar needs two or more RELEASE branches (now: ${rels[*]:-none}); prepare them with git release --version <v>"
-  for r in "${rels[@]}"; do
-    t="$(branch_tip "$r")"
-    [ "$t" = diverged ] && die "$r: local and origin diverged; pull it first"
-    git merge-base --is-ancestor "$base" "$t" \
-      || die "$r lacks commits of $QS_BR_MAINLINE: git checkout $r && git merge $QS_BR_MAINLINE, then combinar again"
-  done
-  # which ones: --incluir, or a yes/no question for each
-  for r in "${rels[@]}"; do
-    if [ -n "$incl" ]; then
-      case ",$incl," in *",$(branch_version "$r"),"*|*",$r,"*) chosen+=("$r") ;; esac
-    elif confirm "Combine $r ($(git rev-list --count --no-merges "$(branch_tip "$r")" "^$base") commit(s))?"; then
-      chosen+=("$r")
-    fi
-  done
-  [ "${#chosen[@]}" -ge 2 ] || die "choose two or more RELEASE branches to combine (chosen: ${chosen[*]:-none})"
-  if [ -z "$target" ]; then
-    [ "$YES" = 1 ] && die "--yes needs --version <version of the combined release>"
-    printf 'Version of the combined release (e.g. %s): ' "$(next_version patch)" > /dev/tty
-    read -r target < /dev/tty || target=""
-  fi
-  printf '%s' "$target" | grep -qE -- "$(_br_level_re 1)" || die "'$target' is not a version of the branch model (semver: 6.22.7)"
-  REL_RELEASE="$target/$QS_BR_RELEASE_LEAF"
-  if exists_branch "$REL_RELEASE"; then
-    case " ${chosen[*]} " in *" $REL_RELEASE "*) ;; *) die "'$REL_RELEASE' exists and is not among the chosen ones" ;; esac
-  fi
-  taken "$target/$QS_BR_LEAF" && die "'$target/$QS_BR_LEAF' exists: that tree is not released yet"
-  # creation order: the oldest commit of each tree (its version commit when made by git np)
-  mapfile -t ordered < <(for r in "${chosen[@]}"; do
-    # why: sed reads everything; head would end git with SIGPIPE, an error under pipefail
-    key="$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"
-    printf '%s\t%s\n' "$(git log -1 --format=%ct "${key:-$(branch_tip "$r")}")" "$r"
-  done | sort -n -k1,1 | cut -f2-)
-  echo "Combine into $REL_RELEASE (oldest first; their version/changelog/readme commits are left out and written again for $target):"
-  [ "${#ordered[@]}" -eq "${#chosen[@]}" ] || die "could not order the RELEASE branches by creation"
-  for r in "${ordered[@]}"; do
-    echo "  $r  (since $(git log -1 --date=short --format=%ad "$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"))"
-  done
-  confirm "Go on?" || die "cancelled; nothing was changed"
+	local target="" incl="" a rels=() chosen=() r t key base wt gd ordered=() mb rx old=() n
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--version)
+			target="${2:?--version needs a version}"
+			shift
+			;;
+		--version=*) target="${1#--version=}" ;;
+		--incluir | --include)
+			incl="${2:?$1 needs versions}"
+			shift
+			;;
+		--incluir=* | --include=*) incl="${1#*=}" ;;
+		*) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --yes)" ;;
+		esac
+		shift
+	done
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	base="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
+	mapfile -t rels < <(release_branches)
+	[ "${#rels[@]}" -ge 2 ] || die "combinar needs two or more RELEASE branches (now: ${rels[*]:-none}); prepare them with git release --version <v>"
+	for r in "${rels[@]}"; do
+		t="$(branch_tip "$r")"
+		[ "$t" = diverged ] && die "$r: local and origin diverged; pull it first"
+		git merge-base --is-ancestor "$base" "$t" ||
+			die "$r lacks commits of $QS_BR_MAINLINE: git checkout $r && git merge $QS_BR_MAINLINE, then combinar again"
+	done
+	# which ones: --incluir, or a yes/no question for each
+	for r in "${rels[@]}"; do
+		if [ -n "$incl" ]; then
+			case ",$incl," in *",$(branch_version "$r"),"* | *",$r,"*) chosen+=("$r") ;; esac
+		elif confirm "Combine $r ($(git rev-list --count --no-merges "$(branch_tip "$r")" "^$base") commit(s))?"; then
+			chosen+=("$r")
+		fi
+	done
+	[ "${#chosen[@]}" -ge 2 ] || die "choose two or more RELEASE branches to combine (chosen: ${chosen[*]:-none})"
+	if [ -z "$target" ]; then
+		[ "$YES" = 1 ] && die "--yes needs --version <version of the combined release>"
+		printf 'Version of the combined release (e.g. %s): ' "$(next_version patch)" >/dev/tty
+		read -r target </dev/tty || target=""
+	fi
+	printf '%s' "$target" | grep -qE -- "$(_br_level_re 1)" || die "'$target' is not a version of the branch model (semver: 6.22.7)"
+	REL_RELEASE="$target/$QS_BR_RELEASE_LEAF"
+	if exists_branch "$REL_RELEASE"; then
+		case " ${chosen[*]} " in *" $REL_RELEASE "*) ;; *) die "'$REL_RELEASE' exists and is not among the chosen ones" ;; esac
+	fi
+	taken "$target/$QS_BR_LEAF" && die "'$target/$QS_BR_LEAF' exists: that tree is not released yet"
+	# creation order: the oldest commit of each tree (its version commit when made by git np)
+	mapfile -t ordered < <(for r in "${chosen[@]}"; do
+		# why: sed reads everything; head would end git with SIGPIPE, an error under pipefail
+		key="$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"
+		printf '%s\t%s\n' "$(git log -1 --format=%ct "${key:-$(branch_tip "$r")}")" "$r"
+	done | sort -n -k1,1 | cut -f2-)
+	echo "Combine into $REL_RELEASE (oldest first; their version/changelog/readme commits are left out and written again for $target):"
+	[ "${#ordered[@]}" -eq "${#chosen[@]}" ] || die "could not order the RELEASE branches by creation"
+	for r in "${ordered[@]}"; do
+		echo "  $r  (since $(git log -1 --date=short --format=%ad "$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"))"
+	done
+	confirm "Go on?" || die "cancelled; nothing was changed"
 
-  gd="$(git rev-parse --absolute-git-dir)/quality-suite"; wt="$gd/combine-wt"
-  rm -rf "$wt"; git worktree prune
-  git worktree add -q --detach "$wt" "$base" || die "could not create a temporary worktree"
-  rx="$RELEASE_COMMITS_RX"
-  local done_tips=() d m depth best bestd
-  for r in "${ordered[@]}"; do
-    t="$(branch_tip "$r")"
-    # why: a tree copied from another (git nueva-version) shares its first commits with it: replay
-    # only what it added since they split (the deepest common point with the trees already combined)
-    best="$base"; bestd=0
-    for d in ${done_tips[@]+"${done_tips[@]}"}; do
-      m="$(git merge-base "$t" "$d" || true)"; [ -n "$m" ] || continue
-      depth="$(git rev-list --count "$m" "^$base")"
-      [ "$depth" -gt "$bestd" ] && { best="$m"; bestd="$depth"; }
-    done
-    done_tips+=("$t")
-    mb="$best"
-    # why: the integrations of each tree keep their merges (--rebase-merges): the changelog reads them
-    if ! QUALITY_ALLOW_REBASE=1 GIT_SEQUENCE_EDITOR="sed -i -E '/^pick [0-9a-f]+ ${rx#^}/d'" \
-         git -C "$wt" rebase -q -i --rebase-merges --empty=drop --onto HEAD "$mb" "$t" > "$gd/combine.log" 2>&1; then
-      git -C "$wt" rebase --abort >/dev/null 2>&1 || true
-      git worktree remove --force "$wt"
-      sed 's/^/  /' "$gd/combine.log" | tail -n 15 >&2
-      die "$r conflicts with the ones before it; nothing was changed. Merge them by hand on one RELEASE branch, or combine fewer"
-    fi
-  done
-  t="$(git -C "$wt" rev-parse HEAD)"
-  git worktree remove --force "$wt"
-  # the combined branch, then the release commits of the new version on it
-  for r in "${chosen[@]}"; do [ "$r" = "$REL_RELEASE" ] || old+=("$r"); done
-  if [ "$(current_branch || true)" = "$REL_RELEASE" ]; then git checkout -q --detach; fi
-  git branch -q -f --no-track "$REL_RELEASE" "$t"
-  git checkout -q "$REL_RELEASE"
-  REL_VERSION="$target" REL_TIP="$t" REL_CL_BASE="$base" REL_PUSH=1
-  REL_TAG="$(render_tag "$target/$QS_BR_LEAF")"
-  git config "qs.release.$target.tag" "$REL_TAG"
-  release_commits
-  if has_origin; then
-    git push -q -u --force-with-lease origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the RELEASE branches combined are kept"
-  fi
-  for r in ${old[@]+"${old[@]}"}; do
-    exists_ref "refs/remotes/origin/$r" && has_origin && git push -q origin --delete "$r"
-    exists_ref "refs/heads/$r" && git branch -q -D "$r"
-    git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
-  done
-  n="$(release_branches | tr '\n' ' ')"
-  say "combined ${#chosen[@]} release(s) into $REL_RELEASE; ${#old[@]} deleted. RELEASE branches now: $n"
-  echo "Review $QS_BR_CHANGELOG on $REL_RELEASE, then: git publicar --version $target"
+	gd="$(git rev-parse --absolute-git-dir)/quality-suite"
+	wt="$gd/combine-wt"
+	rm -rf "$wt"
+	git worktree prune
+	git worktree add -q --detach "$wt" "$base" || die "could not create a temporary worktree"
+	rx="$RELEASE_COMMITS_RX"
+	local done_tips=() d m depth best bestd
+	for r in "${ordered[@]}"; do
+		t="$(branch_tip "$r")"
+		# why: a tree copied from another (git nueva-version) shares its first commits with it: replay
+		# only what it added since they split (the deepest common point with the trees already combined)
+		best="$base"
+		bestd=0
+		for d in ${done_tips[@]+"${done_tips[@]}"}; do
+			m="$(git merge-base "$t" "$d" || true)"
+			[ -n "$m" ] || continue
+			depth="$(git rev-list --count "$m" "^$base")"
+			[ "$depth" -gt "$bestd" ] && {
+				best="$m"
+				bestd="$depth"
+			}
+		done
+		done_tips+=("$t")
+		mb="$best"
+		# why: the integrations of each tree keep their merges (--rebase-merges): the changelog reads them
+		if ! QUALITY_ALLOW_REBASE=1 GIT_SEQUENCE_EDITOR="sed -i -E '/^pick [0-9a-f]+ ${rx#^}/d'" \
+			git -C "$wt" rebase -q -i --rebase-merges --empty=drop --onto HEAD "$mb" "$t" >"$gd/combine.log" 2>&1; then
+			git -C "$wt" rebase --abort >/dev/null 2>&1 || true
+			git worktree remove --force "$wt"
+			sed 's/^/  /' "$gd/combine.log" | tail -n 15 >&2
+			die "$r conflicts with the ones before it; nothing was changed. Merge them by hand on one RELEASE branch, or combine fewer"
+		fi
+	done
+	t="$(git -C "$wt" rev-parse HEAD)"
+	git worktree remove --force "$wt"
+	# the combined branch, then the release commits of the new version on it
+	for r in "${chosen[@]}"; do [ "$r" = "$REL_RELEASE" ] || old+=("$r"); done
+	if [ "$(current_branch || true)" = "$REL_RELEASE" ]; then git checkout -q --detach; fi
+	git branch -q -f --no-track "$REL_RELEASE" "$t"
+	git checkout -q "$REL_RELEASE"
+	REL_VERSION="$target" REL_TIP="$t" REL_CL_BASE="$base" REL_PUSH=1
+	REL_TAG="$(render_tag "$target/$QS_BR_LEAF")"
+	git config "qs.release.$target.tag" "$REL_TAG"
+	release_commits
+	if has_origin; then
+		git push -q -u --force-with-lease origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the RELEASE branches combined are kept"
+	fi
+	for r in ${old[@]+"${old[@]}"}; do
+		exists_ref "refs/remotes/origin/$r" && has_origin && git push -q origin --delete "$r"
+		exists_ref "refs/heads/$r" && git branch -q -D "$r"
+		git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
+	done
+	n="$(release_branches | tr '\n' ' ')"
+	say "combined ${#chosen[@]} release(s) into $REL_RELEASE; ${#old[@]} deleted. RELEASE branches now: $n"
+	echo "Review $QS_BR_CHANGELOG on $REL_RELEASE, then: git publicar --version $target"
 }
 
-cmd_repo_files() {  # create the missing standard repository files (README, CHANGELOG, VERSION...)
-  local root; root="$(git rev-parse --show-toplevel)"
-  # why: the option loop above already took --force
-  if [ "$FORCE" = 1 ]; then set -- --force "$@"; fi
-  engine "$root" repo-files "$@" || die "the suite image could not run (Docker?)"
+cmd_repo_files() { # create the missing standard repository files (README, CHANGELOG, VERSION...)
+	local root
+	root="$(git rev-parse --show-toplevel)"
+	# why: the option loop above already took --force
+	if [ "$FORCE" = 1 ]; then set -- --force "$@"; fi
+	engine "$root" repo-files "$@" || die "the suite image could not run (Docker?)"
 }
 
 case "$CMD" in
-  nueva-padre|np) cmd_nueva padre "$@" ;;
-  nueva-final|nr) cmd_nueva final "$@" ;;
-  convertir-padre) cmd_convertir ;;
-  subir) cmd_subir ;;
-  integra) cmd_integra ;;
-  arbol) cmd_arbol "$@" ;;
-  estructura|es) cmd_estructura "$@" ;;
-  changelog) cmd_changelog "$@" ;;
-  release) cmd_release "$@" ;;
-  publicar|publish) cmd_publicar "$@" ;;
-  nueva-version|nv) cmd_nueva_version "$@" ;;
-  combinar|combine) cmd_combinar "$@" ;;
-  repo-files|ficheros-repo) cmd_repo_files "$@" ;;
-  *) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 2 ;;
+nueva-padre | np) cmd_nueva padre "$@" ;;
+nueva-final | nr) cmd_nueva final "$@" ;;
+convertir-padre) cmd_convertir ;;
+subir) cmd_subir ;;
+integra) cmd_integra ;;
+arbol) cmd_arbol "$@" ;;
+estructura | es) cmd_estructura "$@" ;;
+changelog) cmd_changelog "$@" ;;
+release) cmd_release "$@" ;;
+publicar | publish) cmd_publicar "$@" ;;
+nueva-version | nv) cmd_nueva_version "$@" ;;
+combinar | combine) cmd_combinar "$@" ;;
+repo-files | ficheros-repo) cmd_repo_files "$@" ;;
+*)
+	awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
+	exit 2
+	;;
 esac
