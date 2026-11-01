@@ -104,7 +104,7 @@ def _matches(pattern, rel):
     Returns:
         True when the pattern matches.
     """
-    if pattern[0] in '"[!':
+    if pattern[0] in '"!' or pattern.startswith("[attr]"):
         return False
     rx = _regex(pattern.lstrip("/"))
     if rx is None:

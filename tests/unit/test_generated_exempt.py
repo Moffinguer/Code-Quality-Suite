@@ -77,6 +77,12 @@ class MatcherSemanticsTest(unittest.TestCase):
         self.assertTrue(self._says(text, "a/b/c.json"))
         self.assertTrue(self._says(text, "a/x.json"))
 
+    def test_bracket_class_pattern(self):
+        """A bracket class matches like git; only [attr] macros are rejected."""
+        self.assertTrue(self._says("[ab]x.txt qs-generated\n", "bx.txt"))
+        self.assertFalse(self._says("[ab]x.txt qs-generated\n", "cx.txt"))
+        self.assertFalse(self._says("[attr]m qs-generated\n", "m"))
+
     def test_basename_pattern_any_depth(self):
         """A pattern without slash matches the basename anywhere."""
         self.assertTrue(self._says("*.gen qs-generated\n", "x/y/z.gen"))

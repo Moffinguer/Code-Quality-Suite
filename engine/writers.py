@@ -499,11 +499,14 @@ def render(fmt, data, spec=None):
 MERGEABLE = {"json", "jsonc", "yaml", "neon", "toml", "ini", "ini-num", "ini-py", "flags"}
 
 
+_NOT_SPECIAL = object()
+
+
 def _build_special(cfg, base_text, rules):
     """Build the formats that wrap the base file instead of merging it.
 
     Returns:
-        The config text, or None when the format is a regular one.
+        The config text (None for checkstyle/pmd without base) or _NOT_SPECIAL if regular.
     """
     fmt = cfg["format"]
     if fmt == "checkstyle":
@@ -527,7 +530,7 @@ def _build_special(cfg, base_text, rules):
             "return $config->setRules(array_merge($config->getRules(), "
             f"json_decode('{payload}', true)));\n"
         )
-    return None
+    return _NOT_SPECIAL
 
 
 def build(cfg, base_text, rules):
@@ -535,7 +538,7 @@ def build(cfg, base_text, rules):
     fmt = cfg["format"]
     rules = rules or {}
     special = _build_special(cfg, base_text, rules)
-    if special is not None:
+    if special is not _NOT_SPECIAL:
         return special
     if base_text is not None and fmt in MERGEABLE:
         return render(fmt, deep_merge(parse(fmt, base_text), rules), cfg)
