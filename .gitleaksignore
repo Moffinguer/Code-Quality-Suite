@@ -1,0 +1,7 @@
+# Gitleaks false positives (fingerprint = file:rule:line). Keep each entry explained.
+#
+# The generated registry and schema list the clang-tidy option "cert-dcl16-c.NewSuffixes" as
+# a JSON "key"; the generic-api-key rule takes that name for a secret. It is a plain option
+# name, not a credential. The line moves when tools/gen.py regenerates the files: update it.
+registry/registry.json:generic-api-key:2866
+schema/quality-rules.schema.json:generic-api-key:3415
