@@ -286,20 +286,46 @@ its own `RELEASE` (`git release --version <v>`). Then:
 - **One at a time.** With two or more `RELEASE` branches, `git publicar` refuses to guess:
   `git publicar --version <v>` merges exactly that one.
 - **Joined first.** `git combinar` asks yes/no for each `<v>/RELEASE`, then the version of the
-  result, and rebases the chosen ones **in creation order** (oldest tree first: the date of its
-  first commit) into `<version>/RELEASE`:
+  result, and joins the chosen ones **in creation order** (oldest tree first: the date of its
+  first commit not in `develop`) into `<version>/RELEASE`:
 
   ```bash
   git combinar                                              # questions
   git combinar --incluir 6.22.6,6.22.6-SNAPSHOT --version 6.22.7 --yes
   ```
 
-  The integration merges are kept (`--rebase-merges`), so the changelog of the result lists every
-  change once, and a tree copied from another replays only what it added after the copy. The
-  version, changelog and README commits of the joined ones are left out and written again for the
-  new version. The joined `RELEASE` branches are deleted (local and origin) and the new one is
-  pushed. On a conflict nothing changes: join those by hand on one `RELEASE` branch, or combine
-  fewer.
+  `develop` keeps moving after the trees are prepared, so:
+
+  1. **Up to date with develop.** A `RELEASE` that does not contain `develop` gets a warning, and
+     combinar merges `develop` into it as a **temporary commit**: no branch moves. Conflicts in
+     the release files (`VERSION`, the pom and `package.json` version, the README badge,
+     `CITATION.cff`, `CHANGELOG.md`) are solved for `develop`, because they are written again at
+     the end. Any other conflict stops everything with "nothing was changed", the conflicted
+     files and the steps: `git checkout <v>/RELEASE && git merge develop`, resolve
+     (`CHANGELOG.md` keeps both sides' entries in semver order; `VERSION`, the pom version, the
+     badge and `CITATION.cff` keep the `RELEASE` version; other files by hand), commit, run
+     combinar again. A merge of `develop` made by hand is used as it is.
+  2. **One squash per version.** The result starts at `develop` and gets, oldest tree first, one
+     commit `chore(combine): <v> changes` per `RELEASE` with only its own changes: nothing of
+     `develop`, none of its version/changelog/readme commits, nothing an earlier tree already
+     brought (a tree copied from another with `git nueva-version` squashes only what it added
+     after the copy). Its body lists the subjects it squashes and a line
+     `Squashes: <v>/RELEASE <sha>` naming the original tip. A squash with nothing new is left
+     out. Edits made inside a release commit (other than the version lines) are not kept.
+  3. **Release commits.** Then the version, `CHANGELOG.md` and README badge commits of the new
+     version. The changelog entry is built from the original histories (the `git integra`
+     merges and their `Refs:`), so each change is listed once with its OT, and the squashes
+     never appear in it.
+  4. **Originals kept.** The joined `RELEASE` branches are renamed to `unmerged/<v>/RELEASE`
+     (local and origin), so the changelog refs and the `Squashes:` shas keep resolving; remove
+     them by hand when no longer needed. The new branch is pushed.
+
+  The output shows, per `RELEASE`, how many own commits were squashed and how many mainline
+  merges (merges whose second parent is in `develop`), release commits and commits already
+  combined were dropped. A combined `RELEASE` can be combined again with other trees: its
+  `Squashes:` lines lead to the originals, for the order, the copy detection and the changelog.
+  On a conflict between two `RELEASE` branches nothing changes either: join those by hand on one
+  `RELEASE` branch, or combine fewer.
 
 Then `git publicar --version <version>`.
 
