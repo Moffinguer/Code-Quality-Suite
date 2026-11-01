@@ -30,6 +30,17 @@ skills and in `knowledge/`.
    endpoints that train on prompts; only to local models or paid no-training endpoints.
 7. **Lessons.** When something surprised you (a failed approach, a hidden rule), record it with
    the `lessons-learned` skill so the next agent does not repeat it.
+8. **Requirement files.** At the start of every task read, if they exist, `Requirements.md`,
+   `Functional_Design.md`, `Technical_Design.md` and `Tests.md`: look in `dev_documents/` first,
+   then in the repo root. A missing file is not an error. They are local and git-ignored; you
+   may update them.
+9. **Language and doc comments.** The requirement files may be in English or Spanish; code,
+   identifiers and comments are always English. Every function, method or procedure has a doc
+   comment in its language's style (Javadoc, JSDoc, docstring, PL/SQL header, shell header)
+   stating purpose, parameters, return value and errors.
+10. **Co-authors.** Human co-authors are fine. Never add Claude or any AI model as co-author
+    (no `Co-Authored-By:` naming an AI) nor a "Generated with ..." line in commits or PRs.
+    `.claude/settings.json` sets `attribution` to empty (legacy key: `includeCoAuthoredBy: false`).
 
 ## Roles (Claude Code subagents in .claude/agents; OpenCode gets the same ones in .opencode/agents)
 
