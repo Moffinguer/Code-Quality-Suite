@@ -43,5 +43,8 @@ hooks managed through `core.hooksPath` unless `QS_FORCE_HOOKS=1`.
 
 ## `git actualizar-suite`
 
-After unzipping a new version of the suite: removes every suite image, builds the new base and
-re-points every installed repository and this global setup. See `INSTALL.md` (section 6).
+After unzipping a new version of the suite: removes the stopped suite containers and the images
+of every other version (running containers are never stopped and their image stays; tags that are
+not versions, such as `wt-textot`, are kept with a note), builds the new base and re-points every
+installed repository and this global setup. `--keep-old` removes nothing; `--status` shows what
+would be removed. See `INSTALL.md` (section 6).
