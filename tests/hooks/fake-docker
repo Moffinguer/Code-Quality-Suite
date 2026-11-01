@@ -126,7 +126,9 @@ if cmd == "image" and args[1] == "ls":  # image ids are the tags here
         labels = (load(t) or {}).get("labels", {})
         if label and labels.get(label.split("=", 1)[0]) != label.split("=", 1)[1]:
             continue
-        if repo and t.split(":")[0] != repo:
+        # like real Docker: also matches with the first path part (the domain) stripped
+        name = t.rsplit(":", 1)[0]
+        if repo and repo not in (name, name.split("/", 1)[-1]):
             continue
         print(t)
     sys.exit(0)
