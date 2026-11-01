@@ -31,8 +31,8 @@ comment with the format at the top of each file) are the reference: copy their s
 ## Requirements.md
 
 Sections `## Functional requirements` (items `RF-NNN`) and `## Non-functional requirements`
-(items `RNF-NNN`). Each item: a description paragraph, `- Priority: must | should | could`,
-`- Source: <who or what asked for it>`. RNF items add `- Category: performance | security |
+(items `RNF-NNN`). Each item: a description paragraph (required), then the optional fields
+`- Priority: must | should | could` and `- Source: <who or what asked for it>`. RNF items add `- Category: performance | security |
 accessibility | usability | availability | maintainability | other`.
 
 ## Functional_Design.md
