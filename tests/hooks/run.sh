@@ -582,6 +582,238 @@ grep -q 'code-quality-suite:9.9.9' <<<"$last" && grep -qw python <<<"${last##*:}
 grep -q "Tools for    : _global python" status.log &&
 	ok "qs-update --status" || fail "status: $(cat status.log)"
 rm -f moved.err update.log
+# cleanup of the images and containers of old suite versions (qs_clean_old_images). Own QS_HOME
+# and repositories; the fake docker keeps the images as JSON files and the containers in
+# containers.json. "Calls" are the lines of calls.log.
+QS_HOME_MAIN="$QS_HOME"
+export QS_HOME="$T/qs-clean-home"
+CUR="$(cat "$SUITE/VERSION")"
+CALLS="$FAKE_DOCKER_DIR/calls.log"
+CL="$T/clean"
+mkdir -p "$CL"
+LABELLED='{"labels": {"org.opencontainers.image.title": "code-quality-suite"}}'
+
+# Create a fake image. Arguments: <tag> <json of the image>. Returns 0.
+fx_image() {
+	local n="${1//\//_}"
+	n="${n//:/@}"
+	printf '%s' "$2" >"$FAKE_DOCKER_DIR/$n.json"
+}
+# Does the fake image exist? Arguments: <tag>. Returns 0 if it does, 1 if it does not.
+img_exists() {
+	local n="${1//\//_}"
+	n="${n//:/@}"
+	[ -f "$FAKE_DOCKER_DIR/$n.json" ]
+}
+# Reset the fake Docker to the fixture of the spec: the suite images of old and newer versions,
+# a non-version tag and two foreign images, no containers, an empty call log. Returns 0.
+fx_reset() {
+	local t
+	rm -rf "$FAKE_DOCKER_DIR"
+	mkdir -p "$FAKE_DOCKER_DIR"
+	for t in 2.6.0 3.0.0 4.0.2 wt-textot base-2.6.0 base-3.0.0 base-4.0.2 9.9.9; do
+		fx_image "code-quality-suite:$t" "$LABELLED"
+	done
+	for t in code-quality-suite-foo:1.0.0 my/code-quality-suite:1.0.0 host/code-quality-suite:1.0.0; do
+		fx_image "$t" "$LABELLED"
+	done
+	fx_image python:3.12-slim '{"labels": {}}'
+	fx_image zricethezav/gitleaks:latest '{"labels": {}}'
+	: >"$CALLS"
+}
+# Write the fake containers. Arguments: <json list of {id, image, state}>. Returns 0.
+fx_containers() { printf '%s' "$1" >"$FAKE_DOCKER_DIR/containers.json"; }
+# Is there a call matching an extended regular expression? Arguments: <regex>. Returns 0 if so.
+calls_match() { grep -qE -- "$1" "$CALLS"; }
+# Does the output file contain a fixed string? Arguments: <string> [file]. Returns 0 if so.
+out_has() { grep -qF -- "$1" "${2:-$CL/out}"; }
+# Install the suite into a repository, output in $CL/out. Arguments: <repo>. Returns the exit status.
+inst() { "$SUITE/install.sh" "$1" >"$CL/out" 2>&1; }
+# Run a cleanup check: description, then a condition (a command). Exits the test on failure.
+check() {
+	local d="$1"
+	shift
+	if "$@"; then ok "$d"; else
+		echo "--- output:" >&2
+		cat "$CL/out" >&2 2>/dev/null || true
+		echo "--- calls:" >&2
+		cat "$CALLS" >&2
+		fail "$d"
+	fi
+}
+# AC1-3, 4, 6, 7: install removes the older versions, their stopped containers, nothing else
+ac_install() {
+	local t
+	for t in 2.6.0 3.0.0 4.0.2 base-2.6.0 base-3.0.0 base-4.0.2; do
+		calls_match "^image rm code-quality-suite:$t\$" && ! img_exists "code-quality-suite:$t" || return 1
+	done
+	img_exists "code-quality-suite:$CUR" && img_exists "code-quality-suite:base-$CUR"
+}
+# No call names the foreign images and both still exist. Returns 0 when so.
+ac_foreign_safe() {
+	! calls_match 'python:3.12-slim|zricethezav/gitleaks' && img_exists python:3.12-slim && img_exists zricethezav/gitleaks:latest
+}
+# No look-alike repository (code-quality-suite-foo, my/..., host/...) was removed. Returns 0 when so.
+ac_lookalikes_safe() {
+	! calls_match '^image rm .*(code-quality-suite-foo|my/|host/)' &&
+		img_exists code-quality-suite-foo:1.0.0 && img_exists my/code-quality-suite:1.0.0 && img_exists host/code-quality-suite:1.0.0
+}
+# No cleanup removal passes -f. Returns 0 when none does.
+ac_no_force() { ! calls_match '^(image )?rm .*-f'; }
+
+git init -q -b main "$CL/r1"
+fx_reset
+fx_containers '[{"id":"c2","image":"code-quality-suite:3.0.0","state":"exited"},{"id":"c3","image":"code-quality-suite:'"$CUR"'","state":"created"}]'
+inst "$CL/r1" || fail "install for the cleanup checks: $(cat "$CL/out")"
+check "AC1 install removes the older versions and their bases" ac_install
+check "AC2 foreign images are never touched" ac_foreign_safe
+check "AC2 look-alike repositories never get an image rm" ac_lookalikes_safe
+check "AC3 a non-version tag is kept with a note" out_has "kept code-quality-suite:wt-textot (not a version tag"
+check "AC3 wt-textot is still there" img_exists code-quality-suite:wt-textot
+check "AC4 a newer version is kept on install, with a note" out_has "newer than $CUR"
+check "AC4 9.9.9 still there" img_exists code-quality-suite:9.9.9
+check "AC6 stopped containers go, current version included, without -f" bash -c "grep -qx 'rm c2' '$CALLS' && grep -qx 'rm c3' '$CALLS'"
+check "AC6 no -f in rm / image rm" ac_no_force
+check "AC7 prune only with the suite label" bash -c "grep -qx 'image prune -f --filter label=org.opencontainers.image.title=code-quality-suite' '$CALLS' && ! grep '^image prune' '$CALLS' | grep -vq 'label=org.opencontainers.image.title=code-quality-suite'"
+check "AC1 summary line" out_has "removed 6 old image(s) and 2 stopped container(s)"
+# AC8: a second install has nothing left to remove
+: >"$CALLS"
+inst "$CL/r1" || fail "second install"
+check "AC8 second install is idempotent: no rm, no image rm, no summary" bash -c "! grep -qE '^(rm|image rm)( |\$)' '$CALLS' && ! grep -q 'removed ' '$CL/out'"
+
+# AC5: a running container keeps its image; its base is untagged; the rest goes
+ac_running() {
+	! calls_match '^(rm|stop|kill)( .*)? c1( |$)' && ! calls_match '^image rm code-quality-suite:4.0.2$' &&
+		calls_match '^image rm code-quality-suite:base-4.0.2$' && calls_match '^image rm code-quality-suite:2.6.0$' &&
+		img_exists code-quality-suite:4.0.2 && grep -q '"c1"' "$FAKE_DOCKER_DIR/containers.json"
+}
+fx_reset
+fx_containers '[{"id":"c1","image":"code-quality-suite:4.0.2","state":"running"}]'
+inst "$CL/r1" || fail "install with a running container"
+check "AC5 install: the running container is not touched, its image is kept with a warning" ac_running
+check "AC5 install: warning text" out_has "WARN: kept code-quality-suite:4.0.2: container c1 is running"
+fx_reset
+fx_containers '[{"id":"c1","image":"code-quality-suite:4.0.2","state":"running"}]'
+"$SUITE/scripts/qs-update.sh" --yes --lazy >"$CL/out" 2>&1 || fail "update with a running container: $(cat "$CL/out")"
+check "AC5 update: the running container survives (it used to be killed)" ac_running
+check "AC5 update: warning text" out_has "WARN: kept code-quality-suite:4.0.2: container c1 is running"
+check "AC4 update removes the newer version" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@9.9.9.json'"
+check "AC3 update keeps wt-textot, with the note" out_has "kept code-quality-suite:wt-textot (not a version tag"
+check "AC3 wt-textot survives the update" img_exists code-quality-suite:wt-textot
+check "AC2 update does not touch foreign images" ac_foreign_safe
+check "AC6 update never uses -f" ac_no_force
+
+# AC9: the opt-outs
+fx_reset
+QS_KEEP_OLD_IMAGES=1 inst "$CL/r1" || fail "install with QS_KEEP_OLD_IMAGES"
+check "AC9 QS_KEEP_OLD_IMAGES=1: nothing removed" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC9 QS_KEEP_OLD_IMAGES=1: says so" out_has "old images kept"
+fx_reset
+"$SUITE/scripts/qs-update.sh" --yes --lazy --keep-old >"$CL/out" 2>&1 || fail "update --keep-old"
+check "AC9 --keep-old: nothing removed" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC9 --keep-old: says so" out_has "old images kept"
+check "AC2 foreign images after AC9" ac_foreign_safe
+
+# AC10: no docker, or Docker down: silent, and the hooks are still installed
+mkdir -p "$CL/nodocker"
+for c in tr uname; do ln -sf "$(command -v "$c")" "$CL/nodocker/$c"; done
+# shellcheck disable=SC2016 # why: the quoted script is expanded by the inner bash, not here
+out="$(PATH="$CL/nodocker" QUALITY_SUITE_DIR="$SUITE" "$BASH" -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_clean_old_images; echo "rc=$?"' 2>&1)"
+check "AC10 without docker on PATH: prints nothing and returns 0" test "$out" = "rc=0"
+fx_reset
+out="$(FAKE_DOCKER_DOWN=1 QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_clean_old_images; echo "rc=$?"' 2>&1)"
+check "AC10 Docker down: prints nothing and returns 0" test "$out" = "rc=0"
+git init -q -b main "$CL/r5"
+FAKE_DOCKER_DOWN=1 inst "$CL/r5" || fail "install with Docker down"
+check "AC10 Docker down: the hooks are still installed" test -x "$CL/r5/.git/hooks/pre-commit"
+
+# AC11: a hook that builds a new version lazily removes nothing
+echo 4.3.0 >"$T/suite2/VERSION"
+git init -q -b main "$CL/r3"
+QS_SKIP_IMAGE=1 "$T/suite2/install.sh" "$CL/r3" >/dev/null 2>&1 || fail "hooks of suite2 into r3"
+fx_reset
+(cd "$CL/r3" && git config user.email t@example.com && git config user.name tester && printf 'x = 1\n' >a.py &&
+	git add a.py && git commit -q -m "feat: a") >"$CL/out" 2>&1 || fail "commit that builds a new version lazily: $(cat "$CL/out")"
+check "AC11 a lazy build by a hook removes nothing" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC11 and prints the note about the other versions" out_has "Images of other suite versions are still on disk"
+check "AC11 the new version is built" img_exists code-quality-suite:4.3.0
+
+# AC12: a custom target builds and cleans nothing
+fx_reset
+bash "$SUITE/scripts/build-image.sh" "$SUITE" code-quality-suite:dev >"$CL/out" 2>&1 || fail "build-image dev"
+check "AC12 build-image with a custom tag makes no cleanup calls" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+
+# AC13: a version another registered repository uses is kept on install, removed by the update
+echo 4.0.2 >"$T/suite2/VERSION"
+QS_SKIP_IMAGE=1 "$T/suite2/install.sh" "$CL/r3" >/dev/null 2>&1 || fail "hooks of suite2 (4.0.2) into r3"
+fx_reset
+inst "$CL/r1" || fail "install with a used version"
+check "AC13 install keeps a version used by another repository (and its base)" bash -c "
+	grep -q 'used by .*r3' '$CL/out' && test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json' &&
+	test -f '$FAKE_DOCKER_DIR/code-quality-suite@base-4.0.2.json'"
+check "AC13 the used version is reported with its repository and the fix" out_has "git actualizar-suite moves every repository to $CUR"
+"$SUITE/scripts/qs-update.sh" --yes --lazy >"$CL/out" 2>&1 || fail "update with a used version: $(cat "$CL/out")"
+check "AC13 update removes it and re-points the repository" bash -c "
+	! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json' && ! test -f '$FAKE_DOCKER_DIR/code-quality-suite@base-4.0.2.json' &&
+	grep -q 'QUALITY_SUITE_DIR=\"$SUITE\"' '$CL/r3/.git/hooks/quality-suite.env'"
+
+# AC14: a version that is not semver: no cleanup, one note
+echo latest >"$T/suite2/VERSION"
+git init -q -b main "$CL/r4"
+fx_reset
+"$T/suite2/install.sh" "$CL/r4" >"$CL/out" 2>&1 || fail "install of a non-semver suite"
+check "AC14 non-semver version: no cleanup calls" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC14 non-semver version: exactly one note" test "$(grep -c 'not a release version' "$CL/out")" = 1
+
+# AC15: --status shows the plan and changes nothing
+fx_reset
+"$SUITE/scripts/qs-update.sh" --status >"$CL/out" 2>&1 || fail "status"
+check "AC15 --status lists what would be removed" out_has "would remove: code-quality-suite:4.0.2"
+check "AC15 --status lists what is kept" out_has "kept: code-quality-suite:wt-textot (not a version tag"
+check "AC15 --status changes nothing" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+
+# AC16: version helpers
+cmp_check() {
+	local out rc=0
+	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_semver_cmp "$@"' _ "$1" "$2")" || rc=$?
+	[ "$out" = "$3" ] && [ "$rc" = "${4:-0}" ]
+}
+tag_check() {
+	local out rc=0
+	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_tag_version "$1"' _ "$1")" || rc=$?
+	[ "$out" = "$2" ] && [ "$rc" = "$3" ]
+}
+check "AC16 4.0.10 > 4.0.9" cmp_check 4.0.10 4.0.9 1
+check "AC16 4.2.0 > 4.2.0-rc1" cmp_check 4.2.0 4.2.0-rc1 1
+check "AC16 3.0.0 < 4.0.0" cmp_check 3.0.0 4.0.0 -1
+check "AC16 4.2.0 = 4.2.0" cmp_check 4.2.0 4.2.0 0
+check "AC16 4.2.0-rc2 > 4.2.0-rc1" cmp_check 4.2.0-rc2 4.2.0-rc1 1
+check "AC16 4.1.0 > 4.1.0-rc.1" cmp_check 4.1.0 4.1.0-rc.1 1
+check "AC16 4.1.0-SNAPSHOT < 4.1.0" cmp_check 4.1.0-SNAPSHOT 4.1.0 -1
+check "AC16 4.1.0-SNAPSHOT > 4.0.9" cmp_check 4.1.0-SNAPSHOT 4.0.9 1
+check "AC16 wt-textot is not semver" cmp_check wt-textot 4.2.0 "" 2
+check "AC16 base-4.0.2 gives 4.0.2" tag_check base-4.0.2 4.0.2 0
+check "AC16 wt-textot is not a version tag" tag_check wt-textot "" 1
+
+# AC17: one removal fails: warning with the tag, the rest goes, the install succeeds
+fx_reset
+FAKE_DOCKER_RM_FAIL=code-quality-suite:3.0.0 inst "$CL/r1" || fail "install must succeed when one removal fails"
+check "AC17 warning names the tag" out_has "could not remove code-quality-suite:3.0.0"
+check "AC17 the other tags are still removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@2.6.0.json' && ! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json'"
+check "AC17 the failing tag stays" img_exists code-quality-suite:3.0.0
+# AC18: the current version is a prerelease: the release is newer and kept on install; SNAPSHOT is older
+echo 4.1.0-rc.1 >"$T/suite2/VERSION"
+git init -q -b main "$CL/r6"
+fx_reset
+fx_image code-quality-suite:4.1.0 "$LABELLED"
+fx_image code-quality-suite:4.1.0-SNAPSHOT "$LABELLED"
+"$T/suite2/install.sh" "$CL/r6" >"$CL/out" 2>&1 || fail "install of a prerelease suite"
+check "AC18 4.1.0 is newer than 4.1.0-rc.1: kept with a note" bash -c "grep -q 'newer than 4.1.0-rc.1' '$CL/out' && test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0.json'"
+check "AC18 4.1.0-SNAPSHOT is older: removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0-SNAPSHOT.json'"
+check "AC18 look-alikes untouched" ac_lookalikes_safe
+rm -rf "$CL"
+export QS_HOME="$QS_HOME_MAIN"
+
 # once per machine: setup-global, then everything is a git command
 bash "$SUITE/git-integration/setup-global.sh" >sg.out 2>&1 || {
 	cat sg.out
