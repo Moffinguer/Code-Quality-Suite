@@ -1,5 +1,15 @@
 # Changelog
 
+## 4.0.1 - 2026-11-01
+
+### Added
+
+- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
+
+### Fixed
+
+- Quote ignore globs, narrow disables (e473287; Fernando Mateos)
+
 ## 2.6.0 - 2026-10-27
 
 ### Changed
