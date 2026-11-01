@@ -183,7 +183,22 @@ git show HEAD:legacy/m.properties | od -An -tx1 | grep -q f1 && ok "legacy chars
 export GIT_EDITOR="sed -i.bak -e s/DESCRIPCION_BREVE/integrate/"
 git checkout -q -b develop && git push -q origin develop 2>/dev/null || fail "push develop"
 git np 6.22.6 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ORIGINAL ] && ok "git np: version branch" || fail "np version"
-if git nr abc >/dev/null 2>&1; then fail "non-numeric OT accepted"; else ok "OT segment follows branches.levels"; fi
+# text OT: ASCII letters and digits (branches.levels[1]); numeric OTs keep working below
+git np ABC123 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ABC123/ORIGINAL ] && git nr login >/dev/null &&
+	[ "$(git branch --show-current)" = 6.22.6/ABC123/login ] && ok "git np/nr: text OT ABC123" || fail "text OT refused"
+(
+	# shellcheck source=/dev/null
+	. "$SUITE/scripts/git-flow-lib.sh" && export QS_BR_TAG='{version}-{ot}' &&
+		[ "$(render_tag 6.22.6/ABC123/ORIGINAL)" = 6.22.6-ABC123 ]
+) && ok "tag {version}-{ot} with a text OT" || fail "render_tag text OT"
+git checkout -q 6.22.6/ORIGINAL
+for bad in "AB 12" "A$(printf '\303\221')O1" "" AB-12 AB_12 RELEASE ORIGINAL; do
+	if git np "$bad" >/dev/null 2>&1; then fail "OT '$bad' accepted"; else ok "OT '$bad' refused"; fi
+done
+if git nr RELEASE >/dev/null 2>&1; then fail "git nr RELEASE accepted"; else ok "git nr RELEASE refused"; fi
+[ -z "$(git branch --list '6.22.6/AB*' '6.22.6/RELEASE*')" ] && ok "refused OTs created nothing" || fail "refused OT created a branch"
+if (git checkout -q develop && git np ABC123 >/dev/null 2>&1); then fail "text name accepted as a version"; else ok "git np ABC123 from develop refused"; fi
+git checkout -q 6.22.6/ORIGINAL
 git np 188858 >/dev/null && git np RF001 >/dev/null || fail "np nested"
 git nr login >/dev/null
 printf 'L = 1\n' >login.py
