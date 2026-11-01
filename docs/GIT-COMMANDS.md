@@ -256,9 +256,23 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
 ### git combinar
 
 - **Syntax:** `git combinar [--incluir <v1,v2...>] [--version <v>] [--yes]`
-- **Does:** asks yes/no for each `<v>/RELEASE` and the version of the result; rebases the chosen
-  ones in creation order (oldest first) into `<version>/RELEASE`, drops their version and
-  changelog commits, writes them again for the new version, deletes the joined ones.
+- **Does:** asks yes/no for each `<v>/RELEASE` and the version of the result. A `RELEASE`
+  without `develop` gets a warning and a temporary merge of `develop` (no branch moves; conflicts
+  in the release files are solved for `develop`, any other conflict stops with "nothing was
+  changed" and the `git merge develop` steps). The result starts at `develop` and gets, oldest
+  tree first, one `chore(combine): <v> changes` squash per `RELEASE` with only its own changes
+  (no `develop` content, no release commits, nothing an earlier or copied-from tree brought; the
+  body lists the subjects and a `Squashes: <v>/RELEASE <sha>` line), then the version,
+  `CHANGELOG.md` and README badge commits of the new version. The changelog entry comes from the
+  original histories, each change once. Prints per `RELEASE` the commits squashed and the
+  mainline merges, release commits and already combined commits dropped. The joined branches
+  are kept as `unmerged/<v>/RELEASE` (local and origin; on origin the old name is deleted). The
+  plan lists every local and origin rename before the confirmation (`--yes` answers it). A
+  combined `RELEASE` can be combined again. Order: author date of each tree's version commit; a
+  combined `RELEASE` takes the earliest date of what it squashed. All or nothing: every commit
+  is made in a temporary worktree first, then the local branches move in one transaction, then
+  one `git push --atomic` to origin. On any conflict or failure nothing changes; if only the
+  push fails, the local result is kept and the push to run is printed.
 - **Use it when:** several prepared versions must reach `develop` as one.
 - **Who:** human.
 
