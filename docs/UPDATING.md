@@ -2,7 +2,7 @@
 
 ## How the pieces are shared
 
-```
+```text
                       ~/.config/code-quality-suite/hooks/*   (one copy per machine)
                           ^            ^            ^
        repo A .git/hooks -+   repo B --+   repo C --+          symbolic links (or one-line stubs)
@@ -66,13 +66,19 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 ## What an update keeps
 
 | Kept | Where |
-|---|---|
+| --- | --- |
 | each repository's rules and pinned versions | `<repo>/.quality-rules.json` (new rule keys of the new version are added, yours are never overwritten) |
 | answers to version questions, `QUALITY_HEAVY_CMD` | `<repo>/.git/hooks/quality-suite.env` |
 | branch aliases and branches | repository config (refreshed) |
 | list of repositories | `~/.config/code-quality-suite/repos.list` |
 
 Removed: the images and the tools inside them. Nothing in the working trees changes.
+
+## New skill in 4.0.0
+
+The `dev-documents` skill (format and IDs of the `dev_documents/` files) reaches a repository with
+`git ia --actualizar` (it adds the new skill folder), then `bash <suite>/scripts/ai-sync.sh`
+(copies it into `.claude/skills/` for Claude Code).
 
 ## Behind a proxy
 
@@ -83,7 +89,7 @@ builds. Checks never use the network.
 ## Troubleshooting
 
 | Message | Fix |
-|---|---|
+| --- | --- |
 | `the suite is not at '...' (moved or deleted)` | `git actualizar-suite` from the new folder, or `bash <suite>/install.sh <repo>` |
 | `Another repository is changing the image; waiting...` | another commit is installing tools; it continues by itself |
 | `Images of other suite versions are still on disk` | `git actualizar-suite` frees them |
