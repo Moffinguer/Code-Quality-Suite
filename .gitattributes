@@ -1,3 +1,8 @@
+# >>> code-quality-suite (managed) >>>
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+# <<< code-quality-suite <<<
 # Fuerza LF en todo lo ejecutable: si estos ficheros llegan con CRLF a un
 # contenedor Linux, fallan con "bad interpreter: /usr/bin/env bash^M".
 * text=auto eol=lf
