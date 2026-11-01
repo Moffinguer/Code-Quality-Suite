@@ -30,21 +30,34 @@ skills and in `knowledge/`.
    endpoints that train on prompts; only to local models or paid no-training endpoints.
 7. **Lessons.** When something surprised you (a failed approach, a hidden rule), record it with
    the `lessons-learned` skill so the next agent does not repeat it.
+8. **Requirement files.** At the start of every task read, if they exist, `Requirements.md`,
+   `Functional_Design.md`, `Technical_Design.md` and `Tests.md`: look in `dev_documents/` first,
+   then in the repo root. A missing file is not an error. They are local and git-ignored; you
+   may update them.
+9. **Language and doc comments.** The requirement files may be in English or Spanish; code,
+   identifiers and comments are always English. Every function, method or procedure has a doc
+   comment in its language's style (Javadoc, JSDoc, docstring, PL/SQL header, shell header)
+   stating purpose, parameters, return value and errors.
+10. **Co-authors.** Human co-authors are fine. Never add Claude or any AI model as co-author
+    (no `Co-Authored-By:` naming an AI) nor a "Generated with ..." line in commits or PRs.
+    `.claude/settings.json` sets `attribution` to empty (legacy key: `includeCoAuthoredBy: false`).
 
 ## Roles (Claude Code subagents in .claude/agents; OpenCode gets the same ones in .opencode/agents)
 
 | Role | Model | Does | Never |
 | --- | --- | --- | --- |
-| main session (project lead) | strongest available | plans, splits work, delegates, integrates, escalates to the human | writes large code itself |
-| analyst | opus | specs, acceptance criteria, norm mapping | edits source code |
-| developer | sonnet | implements one task on its own final branch | merges into ORIGINAL |
+| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | writes large code itself |
+| systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | edits source code, creates branches |
+| developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
 | reviewer | opus | reviews diffs against norms and quality rules | edits code |
-| qa | sonnet | tests, gate runs, regression checks | changes production code |
+| qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | changes production code |
 | docs-writer | haiku | documentation from recipes | invents requirements |
 | intern | haiku | boilerplate, renames, small mechanical edits | touches security code |
 | external-worker | haiku | hands cheap, non-regulated tasks to other models via the gateway | sends regulated data |
 
-Human checkpoints: approve the spec, approve the plan, approve the merge into `develop`.
+Flow: skill `team-flow`. Other models work as developers through OpenCode `role-dev` or
+`external-worker`, for non-regulated data only. Human checkpoints: approve the spec, approve the
+plan, approve each merge (bottom-up) and the merge into `develop`.
 
 ## Where things are
 

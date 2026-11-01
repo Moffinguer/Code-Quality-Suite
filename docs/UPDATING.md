@@ -2,7 +2,7 @@
 
 ## How the pieces are shared
 
-```
+```text
                       ~/.config/code-quality-suite/hooks/*   (one copy per machine)
                           ^            ^            ^
        repo A .git/hooks -+   repo B --+   repo C --+          symbolic links (or one-line stubs)
@@ -66,13 +66,33 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 ## What an update keeps
 
 | Kept | Where |
-|---|---|
+| --- | --- |
 | each repository's rules and pinned versions | `<repo>/.quality-rules.json` (new rule keys of the new version are added, yours are never overwritten) |
 | answers to version questions, `QUALITY_HEAVY_CMD` | `<repo>/.git/hooks/quality-suite.env` |
 | branch aliases and branches | repository config (refreshed) |
 | list of repositories | `~/.config/code-quality-suite/repos.list` |
 
 Removed: the images and the tools inside them. Nothing in the working trees changes.
+
+## Updating the AI files to 3.0.0
+
+`git ia --actualizar` rewrites the suite's own AI files (skills, `.claude/agents/*`,
+`.claude/settings.json`) and adds the new ones (the `team-flow` skill). It never deletes a file
+and never rewrites `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `opencode.json` or `knowledge/`.
+
+- **`analyst` is now `systems-analyst`.** Delete the stale copy, then regenerate the OpenCode
+  agents (it removes `.opencode/agents/analyst.md`):
+
+  ```bash
+  git ia --actualizar
+  rm -f .claude/agents/analyst.md
+  bash <suite>/scripts/ai-sync.sh
+  ```
+
+  Replace `analyst` with `systems-analyst` in your own prompts and notes.
+- **`AGENTS.md` is yours.** Update its roles table by hand: `analyst` -> `systems-analyst`, the
+  main session is also the business analyst, and the flow is the `team-flow` skill (compare with
+  `<suite>/ai-template/AGENTS.md`). The same for the delegation lines of `CLAUDE.md`.
 
 ## Behind a proxy
 
@@ -83,7 +103,7 @@ builds. Checks never use the network.
 ## Troubleshooting
 
 | Message | Fix |
-|---|---|
+| --- | --- |
 | `the suite is not at '...' (moved or deleted)` | `git actualizar-suite` from the new folder, or `bash <suite>/install.sh <repo>` |
 | `Another repository is changing the image; waiting...` | another commit is installing tools; it continues by itself |
 | `Images of other suite versions are still on disk` | `git actualizar-suite` frees them |

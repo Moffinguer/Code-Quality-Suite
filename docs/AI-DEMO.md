@@ -7,7 +7,7 @@ the roles to the paid configuration (last section).
 
 ```text
 OpenCode (free)  ──or──  Claude Code (Pro/Max/Team login)
-   │ primary agent + subagents analyst, developer, qa, reviewer, docs-writer, intern...
+   │ primary agent + subagents systems-analyst, developer, qa, reviewer, docs-writer, intern...
    │ (.opencode/agents is generated from .claude/agents: one definition for both)
    ▼
 LiteLLM gateway, LITELLM_CONFIG=demo.yaml  http://localhost:4000
@@ -107,10 +107,11 @@ opencode
 
 Prompts, one at a time (you approve between them):
 
-1. *"@analyst write the spec of OT 100001: a login page `login.html` with `login.css` and
-   client-side validation in `login.js`, plus a `README.md`. Stop for my approval."*
+1. *"@systems-analyst write the spec of OT 100001: a login page `login.html` with `login.css`
+   and client-side validation in `login.js`, plus a `README.md`. Stop for my approval."*
 2. *"Delegate to @developer: the page on branch 1.0.0/100001/login, the styles on
-   1.0.0/100001/styles (git switch to each). Then @qa and @reviewer on each branch."*
+   1.0.0/100001/styles (git switch to each). Then @qa and @reviewer on each branch."* The whole
+   loop (qa findings in a `bugfix` branch, bottom-up integration) is the `team-flow` skill.
 3. You integrate and close: `git checkout 1.0.0/100001/login && git integra`, the same for
    `styles`, then `git checkout 1.0.0/100001/ORIGINAL && git integra`,
    `git changelog` (preview), `git release` (RELEASE branch with CHANGELOG.md, review it),

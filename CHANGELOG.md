@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.0.0 - 2026-11-01
+
+### Changed
+
+- Rename analyst subagent (458ae0f; Fernando Mateos)
+
+### Added
+
+- Add team-flow skill (c226eb7; Fernando Mateos)
+- Add bugfix loop and gate to roles (71e2df8; Fernando Mateos)
+- Define the systems-analyst role (210e73b; Fernando Mateos)
+- Add requirement docs and rules (5201575, OT 100; Fernando Mateos)
+- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
+
+### Fixed
+
+- Limit convertir-padre, bugfix name (bdcfed1, OT 100; Fernando Mateos)
+- Quote ignore globs, narrow disables (e221b21, OT 100; Fernando Mateos)
+
 ## 2.6.0 - 2026-10-27
 
 ### Changed
