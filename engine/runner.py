@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 
 import builtin
+import generated
 import qslog
 import versions
 
@@ -334,7 +335,7 @@ def run_builtin(tool, settings, lang, ctx, files, version):  # noqa: C901, PLR09
                 qslog.log("WARN", "repo-files", w, f, tool["id"], "WARN")
         elif name == "large_file":
             kb = int((settings.get("rules") or {}).get("max_kb", 512))
-            big = os.path.getsize(p) > kb * 1024
+            big = os.path.getsize(p) > kb * 1024 and not generated.is_generated(ctx.root, f)
             probs = [f"file larger than {kb} KB (use Git LFS or exclude it)"] if big else []
         else:
             probs = [f"unknown builtin {name}"]
