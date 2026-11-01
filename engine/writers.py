@@ -5,7 +5,9 @@ Strategies per format:
   append   base text + rendered overlay (the tool applies the last definition)
   generate render rules only (no base file)
 """
+
 import copy
+import importlib
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -13,7 +15,7 @@ import xml.etree.ElementTree as ET
 try:
     import tomllib
 except ImportError:  # python < 3.11
-    tomllib = None
+    tomllib = None  # type: ignore[assignment]  # optional; callers test for None
 
 from builtin import strip_jsonc
 
@@ -29,6 +31,7 @@ def deep_merge(base, over):
 
 
 # ---------- renderers ----------
+
 
 def _toml_key(k):
     return k if re.match(r"^[A-Za-z0-9_-]+$", k) else json.dumps(k)
@@ -69,13 +72,15 @@ def render_toml(data, prefix=""):
 
 
 def render_yaml(data):
-    import yaml
+    yaml = importlib.import_module("yaml")
     return yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 def _ini_val(v, style):
     if isinstance(v, bool):
-        return {"num": "1" if v else "0", "py": "True" if v else "False"}.get(style, "true" if v else "false")
+        return {"num": "1" if v else "0", "py": "True" if v else "False"}.get(
+            style, "true" if v else "false"
+        )
     if isinstance(v, list):
         return ",".join(str(x) for x in v)
     return str(v)
@@ -116,10 +121,12 @@ def render_rc(data, sep="="):
     out = []
     for k, v in data.items():
         if isinstance(v, list):
-            v = ",".join(str(x) for x in v)
+            val = ",".join(str(x) for x in v)
         elif isinstance(v, bool):
-            v = "true" if v else "false"
-        out.append(f"{k}{sep}{v}")
+            val = "true" if v else "false"
+        else:
+            val = v
+        out.append(f"{k}{sep}{val}")
     return "\n".join(out) + "\n"
 
 
@@ -127,13 +134,24 @@ def parse_flags(text):
     """perltidyrc-style: one --flag[=value] per line; --noflag -> False; # comments."""
     data = {}
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip() if not raw.strip().startswith('--want') else raw.strip()
+        line = raw.split("#", 1)[0].strip() if not raw.strip().startswith("--want") else raw.strip()
         if not line.startswith("-"):
             continue
         k, eq, v = line.lstrip("-").partition("=")
         if eq:
-            data[k] = v.strip().strip('"') if v.strip().startswith('"') and v.strip().endswith('"') and " " not in v.strip()[1:-1] else v.strip()
-        elif k.startswith("no") and len(k) > 2 and k not in ("no-outdent-long-quotes",) and not k.startswith("no-"):
+            data[k] = (
+                v.strip().strip('"')
+                if v.strip().startswith('"')
+                and v.strip().endswith('"')
+                and " " not in v.strip()[1:-1]
+                else v.strip()
+            )
+        elif (
+            k.startswith("no")
+            and len(k) > 2
+            and k not in ("no-outdent-long-quotes",)
+            and not k.startswith("no-")
+        ):
             data[k[2:]] = False
         else:
             data[k] = True
@@ -143,14 +161,14 @@ def parse_flags(text):
 def render_flags(data, joiner="="):
     out = []
     for k, v in data.items():
-        k = k.lstrip("-")
+        name = k.lstrip("-")
         if v is True:
-            out.append(f"--{k}")
+            out.append(f"--{name}")
         elif v is False:
-            out.append(f"--no{k}" if joiner == "=" else f"--{k} false")
+            out.append(f"--no{name}" if joiner == "=" else f"--{name} false")
         else:
             val = ",".join(map(str, v)) if isinstance(v, list) else v
-            out.append(f"--{k}{joiner}{val}" if joiner == "=" else f"--{k} {val}")
+            out.append(f"--{name}{joiner}{val}" if joiner == "=" else f"--{name} {val}")
     return "\n".join(out) + "\n"
 
 
@@ -171,7 +189,7 @@ def render_edn(v):
 
 def _edn_key(k):
     k = str(k)
-    return k if k.startswith((":", "'")) or k[:1] in "{[(\"" else ":" + k
+    return k if k.startswith((":", "'")) or k[:1] in '{[("' else ":" + k
 
 
 def render_lua(data):
@@ -185,6 +203,7 @@ def render_lua(data):
         if isinstance(v, dict):
             return "{" + ", ".join(f"[{json.dumps(k)}] = {val(x)}" for k, x in v.items()) + "}"
         return json.dumps(str(v))
+
     return "\n".join(f"{k} = {val(v)}" for k, v in data.items()) + "\n"
 
 
@@ -195,7 +214,11 @@ def render_hocon(data, prefix=""):
         if isinstance(v, dict):
             out.append(render_hocon(v, key).rstrip("\n"))
         elif isinstance(v, list):
-            out.append(f"{key} = [" + ", ".join(json.dumps(x) if isinstance(x, str) else str(x).lower() for x in v) + "]")
+            out.append(
+                f"{key} = ["
+                + ", ".join(json.dumps(x) if isinstance(x, str) else str(x).lower() for x in v)
+                + "]"
+            )
         elif isinstance(v, bool):
             out.append(f"{key} = {'true' if v else 'false'}")
         elif isinstance(v, (int, float)):
@@ -214,14 +237,18 @@ def render_editorconfig(data, default_section):
     for sec, body in data.items():
         if isinstance(body, dict):
             out.append(f"\n[{sec.strip('[]')}]")
-            out += [f"{k} = {str(v).lower() if isinstance(v, bool) else v}" for k, v in body.items()]
+            out += [
+                f"{k} = {str(v).lower() if isinstance(v, bool) else v}" for k, v in body.items()
+            ]
     return "\n".join(out) + "\n"
 
 
 def render_psd1(v, indent=0):
     pad = "    " * indent
     if isinstance(v, dict):
-        inner = "\n".join(f"{pad}    {k} = {render_psd1(x, indent + 1).lstrip()}" for k, x in v.items())
+        inner = "\n".join(
+            f"{pad}    {k} = {render_psd1(x, indent + 1).lstrip()}" for k, x in v.items()
+        )
         return "@{\n" + inner + f"\n{pad}}}"
     if isinstance(v, list):
         return "@(" + ", ".join(render_psd1(x, indent).strip() for x in v) + ")"
@@ -244,6 +271,7 @@ def render_exs(data):
             return "[" + ", ".join(f"{k}: {val(x)}" for k, x in v.items()) + "]"
         s = str(v)
         return s if s.startswith(":") else json.dumps(s)
+
     return val(data) + "\n"
 
 
@@ -256,6 +284,7 @@ def render_hcl(data):
         if isinstance(v, list):
             return "[" + ", ".join(attr(x) for x in v) + "]"
         return json.dumps(str(v))
+
     out = []
     for k, v in data.items():
         if k in ("rule", "plugin") and isinstance(v, dict):
@@ -286,18 +315,34 @@ def render_verible(data):
 
 # ---------- XML (Checkstyle / PMD) ----------
 
+
 def merge_checkstyle(base_text, rules):
     """rules: {Module: false | true | {prop: value}}; Checker-level modules via '@checker' list."""
     doctype = re.search(r"<!DOCTYPE[^>]*>", base_text)
     root = ET.fromstring(re.sub(r"<!DOCTYPE[^>]*>", "", base_text))
     tw = root.find(".//module[@name='TreeWalker']")
-    checker_level = set(rules.get("@checker", ["LineLength", "FileLength", "FileTabCharacter",
-                                               "NewlineAtEndOfFile", "RegexpSingleline", "SuppressWarningsFilter"]))
+    checker_level = set(
+        rules.get(
+            "@checker",
+            [
+                "LineLength",
+                "FileLength",
+                "FileTabCharacter",
+                "NewlineAtEndOfFile",
+                "RegexpSingleline",
+                "SuppressWarningsFilter",
+            ],
+        )
+    )
     for name, spec in rules.items():
         if name.startswith("@"):
             continue
-        found = [(parent, m) for parent in root.iter("module") for m in parent.findall("module")
-                 if m.get("name") == name]
+        found = [
+            (parent, m)
+            for parent in root.iter("module")
+            for m in parent.findall("module")
+            if m.get("name") == name
+        ]
         if spec is False:
             for parent, m in found:
                 parent.remove(m)
@@ -310,7 +355,13 @@ def merge_checkstyle(base_text, rules):
             for _, m in found:
                 for prop, val in spec.items():
                     p = next((p for p in m.findall("property") if p.get("name") == prop), None)
-                    sval = ",".join(map(str, val)) if isinstance(val, list) else str(val).lower() if isinstance(val, bool) else str(val)
+                    sval = (
+                        ",".join(map(str, val))
+                        if isinstance(val, list)
+                        else str(val).lower()
+                        if isinstance(val, bool)
+                        else str(val)
+                    )
                     if p is None:
                         ET.SubElement(m, "property", {"name": prop, "value": sval})
                     else:
@@ -324,52 +375,73 @@ def merge_checkstyle(base_text, rules):
 PMD_NS = "http://pmd.sourceforge.net/ruleset/2.0.0"
 
 
+def _pmd_q(tag):
+    """Return the namespaced PMD tag name."""
+    return f"{{{PMD_NS}}}{tag}"
+
+
+def _pmd_category(root, refs, ref, spec):
+    """Apply a whole-category entry (ref ends with .xml): remove it when False, add when missing."""
+    if spec is False and ref in refs:
+        root.remove(refs.pop(ref))
+    elif spec is not False and ref not in refs:
+        refs[ref] = ET.SubElement(root, _pmd_q("rule"), {"ref": ref})
+
+
+def _pmd_properties(el, spec):
+    """Set the property overrides of a PMD rule element from a dict."""
+    props = el.find(_pmd_q("properties"))
+    if props is None:
+        props = ET.SubElement(el, _pmd_q("properties"))
+    for k, v in spec.items():
+        found = next((p for p in props.findall(_pmd_q("property")) if p.get("name") == k), None)
+        if found is None:
+            ET.SubElement(props, _pmd_q("property"), {"name": k, "value": str(v)})
+        else:
+            found.set("value", str(v))
+
+
+def _pmd_rule(root, refs, ref, spec):
+    """Apply a single-rule entry: exclude it from its category, drop it, or add and tune it."""
+    cat, name = ref.rsplit("/", 1)
+    if cat in refs and spec is not True:
+        excluded = refs[cat].findall(_pmd_q("exclude"))
+        if not any(e.get("name") == name for e in excluded):
+            ET.SubElement(refs[cat], _pmd_q("exclude"), {"name": name})
+    if spec is False:
+        if ref in refs:
+            root.remove(refs.pop(ref))
+        return
+    el = refs.get(ref)
+    if el is None:
+        el = ET.SubElement(root, _pmd_q("rule"), {"ref": ref})
+        refs[ref] = el
+    if isinstance(spec, dict):
+        _pmd_properties(el, spec)
+
+
 def merge_pmd(base_text, rules):
     """rules: {"category/java/x.xml": bool, "category/java/x.xml/Rule": bool | {prop: value}}."""
     ET.register_namespace("", PMD_NS)
     root = ET.fromstring(base_text)
-    q = lambda t: f"{{{PMD_NS}}}{t}"
-    refs = {r.get("ref"): r for r in root.findall(q("rule"))}
+    refs = {r.get("ref"): r for r in root.findall(_pmd_q("rule"))}
     for ref, spec in rules.items():
-        parts = ref.split("/")
-        is_rule = len(parts) >= 4 and not ref.endswith(".xml")
-        if not is_rule:
-            if spec is False and ref in refs:
-                root.remove(refs.pop(ref))
-            elif spec is not False and ref not in refs:
-                refs[ref] = ET.SubElement(root, q("rule"), {"ref": ref})
-            continue
-        cat, name = "/".join(parts[:-1]), parts[-1]
-        if cat in refs and spec is not True:
-            if not any(e.get("name") == name for e in refs[cat].findall(q("exclude"))):
-                ET.SubElement(refs[cat], q("exclude"), {"name": name})
-        if spec is False:
-            if ref in refs:
-                root.remove(refs.pop(ref))
-            continue
-        el = refs.get(ref)
-        if el is None:
-            el = ET.SubElement(root, q("rule"), {"ref": ref})
-            refs[ref] = el
-        if isinstance(spec, dict):
-            props = el.find(q("properties")) or ET.SubElement(el, q("properties"))
-            for k, v in spec.items():
-                p = next((p for p in props.findall(q("property")) if p.get("name") == k), None)
-                if p is None:
-                    ET.SubElement(props, q("property"), {"name": k, "value": str(v)})
-                else:
-                    p.set("value", str(v))
+        if len(ref.split("/")) >= 4 and not ref.endswith(".xml"):
+            _pmd_rule(root, refs, ref, spec)
+        else:
+            _pmd_category(root, refs, ref, spec)
     ET.indent(root)
     return '<?xml version="1.0"?>\n' + ET.tostring(root, encoding="unicode") + "\n"
 
 
 # ---------- dispatcher ----------
 
+
 def parse(fmt, text):
     if fmt in ("json", "jsonc"):
         return json.loads(strip_jsonc(text)) if text.strip() else {}
     if fmt in ("yaml", "neon"):
-        import yaml
+        yaml = importlib.import_module("yaml")
         return yaml.safe_load(text) or {}
     if fmt == "toml":
         if tomllib is None:
@@ -382,71 +454,89 @@ def parse(fmt, text):
     raise ValueError(f"cannot parse format {fmt}")
 
 
+_RENDERERS = {
+    "yaml": lambda d, spec: render_yaml(d),
+    "neon": lambda d, spec: render_yaml(d),
+    "toml": lambda d, spec: render_toml(d),
+    "ini": lambda d, spec: render_ini(d),
+    "ini-num": lambda d, spec: render_ini(d, "num"),
+    "ini-py": lambda d, spec: render_ini(d, "py"),
+    "rc": lambda d, spec: render_rc(d),
+    "rc-colon": lambda d, spec: render_rc(d, ": "),
+    "flags": lambda d, spec: render_flags(d),
+    "flags-space": lambda d, spec: render_flags(d, " "),
+    "edn": lambda d, spec: render_edn(d) + "\n",
+    "lua": lambda d, spec: render_lua(d),
+    "hocon": lambda d, spec: render_hocon(d),
+    "editorconfig": lambda d, spec: render_editorconfig(d, spec.get("section", "*")),
+    "psd1": lambda d, spec: render_psd1(d) + "\n",
+    "exs": lambda d, spec: render_exs(d),
+    "hcl": lambda d, spec: render_hcl(d),
+    "verible": lambda d, spec: render_verible(d),
+}
+
+
 def render(fmt, data, spec=None):
-    spec = spec or {}
+    """Render `data` in the native format `fmt`.
+
+    Args:
+        fmt: format id (json, jsonc or any key of _RENDERERS).
+        data: the structure to render.
+        spec: optional registry `config` spec (editorconfig uses its `section`).
+    Returns:
+        The config text.
+    Raises:
+        ValueError: when the format is unknown.
+    """
     if fmt in ("json", "jsonc"):
         return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    if fmt in ("yaml", "neon"):
-        return render_yaml(data)
-    if fmt == "toml":
-        return render_toml(data)
-    if fmt == "ini":
-        return render_ini(data)
-    if fmt == "ini-num":
-        return render_ini(data, "num")
-    if fmt == "ini-py":
-        return render_ini(data, "py")
-    if fmt == "rc":
-        return render_rc(data)
-    if fmt == "rc-colon":
-        return render_rc(data, ": ")
-    if fmt == "flags":
-        return render_flags(data)
-    if fmt == "flags-space":
-        return render_flags(data, " ")
-    if fmt == "edn":
-        return render_edn(data) + "\n"
-    if fmt == "lua":
-        return render_lua(data)
-    if fmt == "hocon":
-        return render_hocon(data)
-    if fmt == "editorconfig":
-        return render_editorconfig(data, spec.get("section", "*"))
-    if fmt == "psd1":
-        return render_psd1(data) + "\n"
-    if fmt == "exs":
-        return render_exs(data)
-    if fmt == "hcl":
-        return render_hcl(data)
-    if fmt == "verible":
-        return render_verible(data)
-    raise ValueError(f"unknown format {fmt}")
+    renderer = _RENDERERS.get(fmt)
+    if renderer is None:
+        raise ValueError(f"unknown format {fmt}")
+    return renderer(data, spec or {})
 
 
 MERGEABLE = {"json", "jsonc", "yaml", "neon", "toml", "ini", "ini-num", "ini-py", "flags"}
 
 
-def build(cfg, base_text, rules):
-    """Return the native config text for a tool given its registry `config` spec."""
+def _build_special(cfg, base_text, rules):
+    """Build the formats that wrap the base file instead of merging it.
+
+    Returns:
+        The config text, or None when the format is a regular one.
+    """
     fmt = cfg["format"]
-    rules = rules or {}
     if fmt == "checkstyle":
         return merge_checkstyle(base_text, rules) if rules else base_text
     if fmt == "pmd":
         return merge_pmd(base_text, rules) if rules else base_text
     if fmt == "eslint":
         rule_map = {k: v for k, v in rules.items() if not k.startswith("$")}
-        extra = rules.get("$config", {})
-        obj = dict(extra)
+        obj = dict(rules.get("$config", {}))
         if rule_map:
             obj["rules"] = rule_map
-        return (f'import base from "{cfg["base_abs"]}";\n'
-                f"export default [...base{', ' + json.dumps(obj, indent=2) if obj else ''}];\n")
+        return (
+            f'import base from "{cfg["base_abs"]}";\n'
+            f"export default [...base{', ' + json.dumps(obj, indent=2) if obj else ''}];\n"
+        )
     if fmt == "php-cs-fixer":
         payload = json.dumps(rules).replace("\\", "\\\\").replace("'", "\\'")
-        return ("<?php\n"
-                f"$config = require '{cfg['base_abs']}';\n"
-                f"return $config->setRules(array_merge($config->getRules(), json_decode('{payload}', true)));\n")
+        return (
+            "<?php\n"
+            f"$config = require '{cfg['base_abs']}';\n"
+            "return $config->setRules(array_merge($config->getRules(), "
+            f"json_decode('{payload}', true)));\n"
+        )
+    return None
+
+
+def build(cfg, base_text, rules):
+    """Return the native config text for a tool given its registry `config` spec."""
+    fmt = cfg["format"]
+    rules = rules or {}
+    special = _build_special(cfg, base_text, rules)
+    if special is not None:
+        return special
     if base_text is not None and fmt in MERGEABLE:
         return render(fmt, deep_merge(parse(fmt, base_text), rules), cfg)
     if base_text is not None:
