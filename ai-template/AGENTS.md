@@ -46,16 +46,18 @@ skills and in `knowledge/`.
 
 | Role | Model | Does | Never |
 | --- | --- | --- | --- |
-| main session (project lead) | strongest available | plans, splits work, delegates, integrates, escalates to the human | writes large code itself |
-| analyst | opus | specs, acceptance criteria, norm mapping | edits source code |
-| developer | sonnet | implements one task on its own final branch | merges into ORIGINAL |
+| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | writes large code itself |
+| systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | edits source code, creates branches |
+| developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
 | reviewer | opus | reviews diffs against norms and quality rules | edits code |
-| qa | sonnet | tests, gate runs, regression checks | changes production code |
+| qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | changes production code |
 | docs-writer | haiku | documentation from recipes | invents requirements |
 | intern | haiku | boilerplate, renames, small mechanical edits | touches security code |
 | external-worker | haiku | hands cheap, non-regulated tasks to other models via the gateway | sends regulated data |
 
-Human checkpoints: approve the spec, approve the plan, approve the merge into `develop`.
+Flow: skill `team-flow`. Other models work as developers through OpenCode `role-dev` or
+`external-worker`, for non-regulated data only. Human checkpoints: approve the spec, approve the
+plan, approve each merge (bottom-up) and the merge into `develop`.
 
 ## Where things are
 
