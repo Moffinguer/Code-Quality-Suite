@@ -35,6 +35,21 @@ class IsGeneratedTest(unittest.TestCase):
             self.assertFalse(generated.is_generated(d, "a.json"))
 
 
+class AttributeFileFallbackTest(unittest.TestCase):
+    """Checks the direct .gitattributes reading used when git cannot answer."""
+
+    def test_fallback_reads_attributes_file(self):
+        """Without a usable git, the root .gitattributes decides."""
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, ".gitattributes"), "w", encoding="utf-8") as fh:
+                fh.write(
+                    "schema/x.json qs-generated\n*.gen linguist-generated\nkeep.gen -qs-generated\n"
+                )
+            self.assertTrue(generated._file_says(d, "schema/x.json"))
+            self.assertTrue(generated._file_says(d, "sub/a.gen"))
+            self.assertFalse(generated._file_says(d, "other.json"))
+
+
 class RunToolSkipTest(unittest.TestCase):
     """Checks that run_tool skips generated files for style tools but not for secret scanners."""
 
