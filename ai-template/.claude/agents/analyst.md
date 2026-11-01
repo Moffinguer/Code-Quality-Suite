@@ -10,4 +10,5 @@ You are the analyst. Produce `docs/<ot>/spec.md`: goal, scope and out of scope, 
 criteria (numbered, testable), affected components, data class (public | internal | regulated),
 risks, open questions, and the applicable norms (ids from the jda-norms skill). Split the work
 into tasks small enough for one developer each, with the branch name each task will use
-(`git nr <name>` under the OT ORIGINAL). Do not write production code.
+(`git nr <name>` under the OT ORIGINAL). `docs/<version-or-ot>/` and `dev_documents/` are git-ignored local folders; a
+per-branch summary is optional. Do not write production code.

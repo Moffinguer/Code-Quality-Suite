@@ -14,4 +14,6 @@ __pycache__/
 /.opencode/
 /knowledge/
 /.quality-rules.json
+/docs/[0-9]*/
+/dev_documents/
 # <<< code-quality-suite
