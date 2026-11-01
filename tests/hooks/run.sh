@@ -652,4 +652,19 @@ git init -q -b develop "$T/ai"
 	grep -q '^  edit: deny$' "$T/ai/.opencode/agents/reviewer.md" &&
 	! grep -q 'edit: deny' "$T/ai/.opencode/agents/developer.md" && [ -f "$T/ai/.claude/skills/quality-gate/SKILL.md" ] &&
 	ok "ai-init: OpenCode agents on gateway roles, permissions from the tools, skills synced" || fail "ai-init opencode"
+# dev_documents templates: created when missing, never overwritten, not even by --actualizar
+D="$SUITE/ai-template/dev_documents"
+[ "$(find "$D" -maxdepth 1 -type f -name "*.md" | wc -l | tr -d " ")" = 4 ] && [ -z "$(find "$D" -maxdepth 1 -type f ! -name "*.md")" ] &&
+	grep -q '^# Requirements$' "$D/Requirements.md" && grep -q '^### RF-001: ' "$D/Requirements.md" && grep -q '^### RNF-001: ' "$D/Requirements.md" &&
+	grep -q '^# Functional design$' "$D/Functional_Design.md" && grep -q '^### CU-001: ' "$D/Functional_Design.md" && grep -q '^## Traceability matrix$' "$D/Functional_Design.md" &&
+	grep -q '^# Technical design$' "$D/Technical_Design.md" && grep -q '^## Module: ' "$D/Technical_Design.md" && grep -q '^- Use cases: CU-001$' "$D/Technical_Design.md" &&
+	grep -q '^# Tests$' "$D/Tests.md" && grep -q '^## CP-001: ' "$D/Tests.md" &&
+	[ "$(grep -l '^<!--$' "$D"/*.md | wc -l | tr -d ' ')" = 4 ] &&
+	ok "dev_documents templates: four files with title, format comment and one placeholder per type" || fail "dev_documents templates"
+git init -q -b develop "$T/dd"
+(cd "$T/dd" && bash "$SUITE/scripts/ai-init.sh" . >/dev/null && cmp -s dev_documents/Tests.md "$D/Tests.md" &&
+	echo "# Tests filled" >dev_documents/Tests.md && bash "$SUITE/scripts/ai-init.sh" . >/dev/null &&
+	bash "$SUITE/scripts/ai-init.sh" --actualizar . >/dev/null && [ "$(cat dev_documents/Tests.md)" = "# Tests filled" ] &&
+	cmp -s dev_documents/Requirements.md "$D/Requirements.md" && git check-ignore -q dev_documents/Tests.md) &&
+	ok "git ia: dev_documents created when missing, filled ones kept by ia and --actualizar" || fail "git ia dev_documents"
 echo "all hook checks passed"

@@ -7,7 +7,7 @@
 # .quality-rules.json), and any of them already committed is taken out of the index (the files
 # stay on disk; commit afterwards). Existing files are kept; --actualizar rewrites the suite's own
 # files (skills, subagents, settings) but never AGENTS.md, CLAUDE.md, GEMINI.md, opencode.json or
-# knowledge/, which are yours.
+# knowledge/ or dev_documents/, which are yours (the dev_documents/ templates are added only when missing).
 set -euo pipefail
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 update=0 target=""
@@ -28,8 +28,10 @@ done
 repo="$(cd "${target:-.}" && git rev-parse --show-toplevel)"
 tpl="$SUITE/ai-template"
 added=0 kept=0 updated=0
+# yours - tell whether a template file belongs to the project (never rewritten by --actualizar).
+# Arguments: $1 path relative to the template root. Returns 0 when it is the project's own file.
 yours() {
-	case "$1" in AGENTS.md | CLAUDE.md | GEMINI.md | opencode.json | knowledge/*) return 0 ;; esac
+	case "$1" in AGENTS.md | CLAUDE.md | GEMINI.md | opencode.json | knowledge/* | dev_documents/*) return 0 ;; esac
 	return 1
 }
 while IFS= read -r -d '' f; do
@@ -101,5 +103,5 @@ if [ "$tracked" -gt 0 ]; then
 	echo '     Commit it: git commit -m "chore: keep AI agent files out of the repo"'
 fi
 if [ "$update" = 1 ]; then
-	echo "[ia] $updated file(s) updated, $added added; AGENTS.md, CLAUDE.md, opencode.json and knowledge/ untouched."
+	echo "[ia] $updated file(s) updated, $added added; AGENTS.md, CLAUDE.md, opencode.json, knowledge/ and dev_documents/ untouched."
 else echo "[ia] $added file(s) added, $kept kept. Next: fill the Project section of AGENTS.md (git ayuda ia)."; fi
