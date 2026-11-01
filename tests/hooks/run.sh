@@ -450,7 +450,10 @@ cl="$(git show 8.1.0/RELEASE:CHANGELOG.md)"
 	[ "$(grep -c '^- Module b' <<<"$cl")" = 1 ] && grep -q '^- Snapshot tweak' <<<"$cl" && grep -q '^## 8.1.0 - ' <<<"$cl" &&
 	! grep -q '^## 8.0.0' <<<"$cl" && [ "$(git log --format=%s develop..8.1.0/RELEASE | grep -c '^docs(changelog)')" = 1 ] &&
 	git ls-remote --heads origin | grep -q 'refs/heads/8.1.0/RELEASE$' &&
-	ok "git combinar: oldest first into 8.1.0/RELEASE, combined ones deleted, one changelog entry" ||
+	git rev-parse -q --verify unmerged/8.0.0/RELEASE >/dev/null && git rev-parse -q --verify unmerged/8.0.0-SNAPSHOT/RELEASE >/dev/null &&
+	git ls-remote --heads origin | grep -q 'refs/heads/unmerged/8.0.0-SNAPSHOT/RELEASE$' &&
+	[ "$(git log --format=%s develop..8.1.0/RELEASE | grep -c '^chore(combine): ')" = 2 ] &&
+	ok "git combinar: one squash per tree into 8.1.0/RELEASE, combined ones kept as unmerged/, one changelog entry" ||
 	{
 		cat rel.out
 		echo "$cl"
@@ -463,6 +466,175 @@ git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s 
 	fail "publicar 8.1.0"
 }
 rm -f rel.out
+
+# git combinar when develop moved after the trees were prepared: one squash per version on develop
+# combine_tree <version> <ot> <source|-> <file> <subject> [<file> <subject>]...: a version tree
+# (copied from <source> with git nv, or new from develop) with one integrated final branch per
+# file, each writing its subject to it, released as <version>/RELEASE. Exit status: that of git.
+combine_tree() {
+	local v="$1" ot="$2" from="$3"
+	shift 3
+	git checkout -q develop
+	if [ "$from" = - ]; then git np "$v" >/dev/null 2>&1; else git nv "$v" --from "$from" >/dev/null 2>&1 && git checkout -q "$v/ORIGINAL"; fi
+	git np "$ot" >/dev/null 2>&1 || return 1
+	while [ "$#" -ge 2 ]; do
+		git nr "${1%.py}" >/dev/null 2>&1 && printf 'X = "%s"\n' "$2" >"$1" && git add "$1" && git commit -q -m "$2" &&
+			git integra -m "$2" >/dev/null 2>&1 || return 1
+		shift 2
+	done
+	git integra -m "feat($ot): OT $ot" >/dev/null 2>&1 && git checkout -q develop &&
+		git release --version "$v" --yes >/dev/null 2>&1
+}
+# develop_moves <version> <file>: develop gets a change and a published-like CHANGELOG.md entry
+# and README.md badge, as git publicar of another release would leave them. Exit status: that of git.
+develop_moves() {
+	git checkout -q develop && printf 'D = 1\n' >"$2" && git add "$2" && git commit -q -m "fix(${2%.py}): hotfix on develop" &&
+		sed -i "0,/^## /s//## $1 - 2026-01-01\n\n### Fixed\n\n- Hotfix on develop\n\n## /" CHANGELOG.md &&
+		sed -i -E "s/(qs:version.*version )[0-9][0-9.]*/\1$1/" README.md && git add CHANGELOG.md README.md &&
+		git commit -q -m "docs: published $1" && git push -q origin develop 2>/dev/null
+}
+# combine_checks <target> <A> <B> <file>...: ACs 2-6 of a combination of A and B into the target,
+# whose changes are in the files given. Output: ok lines. Exit status: 0, or the test fails.
+combine_checks() {
+	local c="$1" a="$2" b="$3" f sq cl sqs=()
+	shift 3
+	sq="$(git log --format=%s "develop..$c/RELEASE" | tac | tr '\n' '|')"
+	case "$sq" in "chore(combine): $a changes|chore(combine): $b changes|chore(version): $c|docs(changelog): $c|"*) ;;
+	*) fail "combinar $c subjects: $sq" ;; esac
+	[ "$(git rev-parse "$(git rev-list --reverse develop.."$c/RELEASE" | sed -n 1p)^")" = "$(git rev-parse develop)" ] &&
+		[ -z "$(git rev-list --merges develop.."$c/RELEASE")" ] &&
+		ok "git combinar $c: on develop, one squash per RELEASE, then the release commits, no merges" || fail "combinar $c shape"
+	mapfile -t sqs < <(git log --format=%H --grep='^chore(combine)' "develop..$c/RELEASE")
+	! git diff-tree --no-commit-id --name-only -r "${sqs[@]}" | grep -q '^d' &&
+		[ "$(git diff-tree --no-commit-id --name-only -r "${sqs[0]}" | tr '\n' ' ')" = "${*: -1} " ] &&
+		ok "git combinar $c: the later squash holds only its own change, nothing of develop" || {
+		git show --stat "${sqs[@]}"
+		fail "combinar $c squash content"
+	}
+	cl="$(git show "$c/RELEASE:CHANGELOG.md")"
+	[ "$(grep -c "^## $c - " <<<"$cl")" = 1 ] && ! grep -qE "^## ($a|$b) " <<<"$cl" &&
+		[ "$(git show develop:CHANGELOG.md | sed -n '/^## /,$p')" = "$(awk -v h="## $c " '/^## /{ skip = index($0, h) == 1 } !skip' <<<"$cl" | sed -n '/^## /,$p')" ] &&
+		ok "git combinar $c: one $c entry, develop's entries unchanged" || {
+		echo "$cl"
+		fail "combinar $c changelog"
+	}
+	for f in "$@"; do
+		[ "$(grep -c "^- .*${f%.py} (.*OT " <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
+			echo "$cl"
+			fail "combinar $c: $f once in the changelog with its OT, and in the tree"
+		}
+	done
+	[ "$(git show "$c/RELEASE:VERSION")" = "$c" ] && git show "$c/RELEASE:pom.xml" | grep -q "<version>$c</version>" &&
+		git show "$c/RELEASE:README.md" | grep -q "qs:version.*version $c" &&
+		git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | grep -q "^Squashes: $b/RELEASE [0-9a-f]\{40\}$" &&
+		git cat-file -e "$(git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | sed -n "s|^Squashes: $a/RELEASE ||p" | sed -n 1p)" &&
+		git log -1 --format=%B "${sqs[0]}" | grep -q '^- ' &&
+		git rev-parse -q --verify "unmerged/$a/RELEASE" >/dev/null && git rev-parse -q --verify "unmerged/$b/RELEASE" >/dev/null &&
+		git ls-remote --heads origin | grep -q "refs/heads/unmerged/$b/RELEASE$" &&
+		[ -z "$(git for-each-ref "refs/heads/$a/" "refs/heads/$b/" "refs/remotes/origin/$a/" "refs/remotes/origin/$b/")" ] &&
+		ok "git combinar $c: version, pom and badge, Squashes lines that resolve, originals kept as unmerged/" ||
+		fail "combinar $c version files or archive"
+}
+git checkout -q develop
+combine_tree 9.0.0 500001 - a9.py "feat(a9): module a9" g9.py "feat(g9): module g9" || fail "tree 9.0.0"
+combine_tree 9.0.1 500002 9.0.0/RELEASE b9.py "fix(b9): fix b9" || fail "tree 9.0.1"
+combine_tree 9.0.2 500003 9.0.1/RELEASE e9.py "feat(e9): module e9" || fail "tree 9.0.2"
+develop_moves 8.9.9 d9.py || fail "develop moves 8.9.9"
+# V1: no merge of develop into the RELEASE branches
+git combinar --incluir 9.0.0,9.0.1 --version 9.1.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 9.1.0"
+}
+[ "$(grep -c 'WARN: 9.0.[01]/RELEASE lacks .* temporary commit' rel.out)" = 2 ] &&
+	grep -q '9.0.0/RELEASE: 3 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), 0 already combined' rel.out &&
+	grep -q '9.0.1/RELEASE: 2 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), [1-9][0-9]* already combined' rel.out &&
+	ok "git combinar: a warning per RELEASE without develop, counts per RELEASE" || {
+	cat rel.out
+	fail "combinar 9.1.0 output"
+}
+combine_checks 9.1.0 9.0.0 9.0.1 a9.py g9.py b9.py
+# re-combination: 9.1.0 with 9.0.2, copied from 9.0.1/RELEASE before the first combination
+git combinar --incluir 9.1.0,9.0.2 --version 9.2.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 9.2.0"
+}
+combine_checks 9.2.0 9.1.0 9.0.2 a9.py g9.py b9.py e9.py
+git log -1 --format=%B --grep='^chore(combine): 9.1.0' develop..9.2.0/RELEASE | grep -q '^Squashes: 9.0.0/RELEASE ' &&
+	git log -1 --format=%B --grep='^chore(combine): 9.1.0' develop..9.2.0/RELEASE | grep -q '^Squashes: 9.0.1/RELEASE ' &&
+	ok "git combinar again: the combined squash carries the Squashes lines of its originals" || fail "combinar 9.2.0 trailers"
+git publicar --version 9.2.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 9.2.0" ] &&
+	ok "git publicar: a re-combined release reaches develop" || {
+	cat rel.out
+	fail "publicar 9.2.0"
+}
+# V2: develop merged by hand into both RELEASE branches first (CHANGELOG.md and badge for develop)
+combine_tree 10.0.0 600001 - a10.py "feat(a10): module a10" g10.py "feat(g10): module g10" || fail "tree 10.0.0"
+combine_tree 10.0.1 600002 10.0.0/RELEASE b10.py "fix(b10): fix b10" || fail "tree 10.0.1"
+develop_moves 9.2.1 d10.py || fail "develop moves 9.2.1"
+for v in 10.0.0 10.0.1; do
+	git checkout -q "$v/RELEASE"
+	if ! git merge -q --no-edit develop >m.out 2>&1; then
+		git diff --name-only --diff-filter=U | xargs git checkout --theirs -- && git add -A && git commit -q --no-edit ||
+			{
+				cat m.out
+				fail "merge develop into $v/RELEASE"
+			}
+	fi
+	git push -q origin HEAD 2>/dev/null || fail "push $v/RELEASE"
+done
+git checkout -q develop
+git combinar --incluir 10.0.0,10.0.1 --version 10.1.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 10.1.0"
+}
+! grep -q 'WARN: .* lacks' rel.out && grep -q '10.0.1/RELEASE: 2 own commit(s) squashed; dropped 1 mainline merge(s)' rel.out &&
+	ok "git combinar after a merge of develop: no warning, the mainline merge dropped" || {
+	cat rel.out
+	fail "combinar 10.1.0 output"
+}
+combine_checks 10.1.0 10.0.0 10.0.1 a10.py g10.py b10.py
+git publicar --version 10.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 10.1.0" ] &&
+	ok "git publicar: the combined release reaches develop" || {
+	cat rel.out
+	fail "publicar 10.1.0"
+}
+# conflicts: with develop (a file that is not a release file), and between two RELEASE branches
+git checkout -q develop && printf 'C = 0\n' >c11.py && git add c11.py && git commit -q -m "feat(c11): add c11" &&
+	git push -q origin develop 2>/dev/null || fail "c11 on develop"
+combine_tree 11.0.0 700001 - c11.py "feat(c11): change c11" || fail "tree 11.0.0"
+combine_tree 11.0.1 700002 - z11.py "feat(z11): add z11" || fail "tree 11.0.1"
+combine_tree 11.0.2 700003 - z11.py "feat(z11): other z11" || fail "tree 11.0.2"
+git checkout -q develop && printf 'C = 2\n' >c11.py && git commit -q -am "fix(c11): c11 on develop" &&
+	git push -q origin develop 2>/dev/null || fail "c11 moves"
+refs="$(
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+)"
+if git combinar --incluir 11.0.0,11.0.1 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict with develop"; fi
+grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep -q 'git checkout 11.0.0/RELEASE && git merge develop' rel.out &&
+	[ "$(
+		git for-each-ref --format='%(refname) %(objectname)'
+		git ls-remote origin
+	)" = "$refs" ] &&
+	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	ok "git combinar: a conflict with develop changes nothing and prints the steps" || {
+	cat rel.out
+	fail "combinar conflict with develop"
+}
+if git combinar --incluir 11.0.1,11.0.2 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict between trees"; fi
+grep -q 'nothing was changed' rel.out && grep -q '^    z11.py$' rel.out &&
+	[ "$(
+		git for-each-ref --format='%(refname) %(objectname)'
+		git ls-remote origin
+	)" = "$refs" ] &&
+	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	ok "git combinar: a conflict between RELEASE branches changes nothing" || {
+	cat rel.out
+	fail "combinar conflict between trees"
+}
+git push -q origin --delete 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE 2>/dev/null &&
+	git branch -q -D 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE || fail "clean 11.x"
+rm -f rel.out m.out
 
 tree="$(git arbol)"
 grep -q '^~  unmerged/7.1.0/300100/RF1/pay-2' <<<"$tree" && ok "git arbol shows branches set aside" || fail "arbol archived: $tree"
