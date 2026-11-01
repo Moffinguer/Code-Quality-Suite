@@ -2,7 +2,7 @@
 
 ## How the pieces are shared
 
-```
+```text
                       ~/.config/code-quality-suite/hooks/*   (one copy per machine)
                           ^            ^            ^
        repo A .git/hooks -+   repo B --+   repo C --+          symbolic links (or one-line stubs)
@@ -63,10 +63,24 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 # 3. commit: the base image and the tools are rebuilt on demand
 ```
 
+## Alphanumeric OT (4.0.1)
+
+The default of `branches.levels[1]` (the OT, segment 2 of `<version>/<ot>/...`) changed from
+`^[0-9]+$` to `^[A-Za-z0-9]+$`, so `ABC123` is an OT as well as `188858`. The suite never rewrites
+an existing `.quality-rules.json`, and that file already stores the old value. To accept text
+OTs in a repository, set the second item of `branches.levels` by hand:
+
+```json
+"branches": { "levels": ["<keep the first item, the semver regex>", "^[A-Za-z0-9]+$"] }
+```
+
+Numeric OTs keep working. `ABC1` and `abc1` are different branches (case is not checked).
+`RELEASE` and `ORIGINAL` cannot be used as an OT name.
+
 ## What an update keeps
 
 | Kept | Where |
-|---|---|
+| --- | --- |
 | each repository's rules and pinned versions | `<repo>/.quality-rules.json` (new rule keys of the new version are added, yours are never overwritten) |
 | answers to version questions, `QUALITY_HEAVY_CMD` | `<repo>/.git/hooks/quality-suite.env` |
 | branch aliases and branches | repository config (refreshed) |
@@ -83,7 +97,7 @@ builds. Checks never use the network.
 ## Troubleshooting
 
 | Message | Fix |
-|---|---|
+| --- | --- |
 | `the suite is not at '...' (moved or deleted)` | `git actualizar-suite` from the new folder, or `bash <suite>/install.sh <repo>` |
 | `Another repository is changing the image; waiting...` | another commit is installing tools; it continues by itself |
 | `Images of other suite versions are still on disk` | `git actualizar-suite` frees them |
