@@ -161,6 +161,10 @@ a tracked, repo-wide mark: set the git attribute `qs-generated` (or `linguist-ge
 it with `git check-attr`; if git cannot answer, the file is not exempt. Every other file stays
 subject to the limit. Do not raise `max_kb` in the personal `.quality-rules.json` for this.
 
+The same mark also skips the marker, format, lint and deep steps for that file, so formatters
+never rewrite generator output (which would make `tools/gen.py --check` fail). Syntax checks
+and secret scanning (`gitleaks`, `qs-private-key`) still cover generated files.
+
 ## Levels
 
 | Level | Runs | Typical use |

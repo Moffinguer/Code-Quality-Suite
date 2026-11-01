@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "engine"))
 
 import generated  # noqa: E402
+import runner  # noqa: E402
 
 
 class IsGeneratedTest(unittest.TestCase):
@@ -32,6 +33,33 @@ class IsGeneratedTest(unittest.TestCase):
         """Outside a repository the lookup fails closed (the check stays strict)."""
         with tempfile.TemporaryDirectory() as d:
             self.assertFalse(generated.is_generated(d, "a.json"))
+
+
+class RunToolSkipTest(unittest.TestCase):
+    """Checks that run_tool skips generated files for style tools but not for secret scanners."""
+
+    def _run(self, tool_id, role):
+        """Run a failing external tool on a generated and a normal file; return the result."""
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init", "-q", d], check=True)
+            with open(os.path.join(d, ".gitattributes"), "w", encoding="utf-8") as fh:
+                fh.write("gen.json qs-generated\n")
+            tool = {"id": tool_id, "role": role, "cmd": {"builtin": "private_key"}}
+            ctx = runner.Ctx(d, "check", d, {}, set())
+            for name in ("gen.json", "plain.json"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as fh:
+                    fh.write("-----BEGIN " + "PRIVATE KEY-----\n")
+            return runner.run_tool(tool, {}, None, ctx, ["gen.json", "plain.json"], None, "t")
+
+    def test_lint_skips_generated(self):
+        """A lint tool only sees the file that is not generated."""
+        self.assertEqual(set(self._run("some-lint", "lint").status), {"plain.json"})
+
+    def test_secret_scanner_sees_generated(self):
+        """Secret scanners still scan generated files."""
+        self.assertEqual(
+            set(self._run("qs-private-key", "lint").status), {"gen.json", "plain.json"}
+        )
 
 
 if __name__ == "__main__":

@@ -19,6 +19,11 @@ import versions
 
 from registry import ROLE_LEVEL, level_rank
 
+# why: generated files (git attribute qs-generated) are rewritten by their generator, so
+# marking, formatting and linting them would only make the output unstable; secrets still count.
+GENERATED_SKIP_ROLES = ("marker", "format", "lint", "deep")
+SECRET_SCANNERS = ("gitleaks", "qs-private-key")
+
 ROLE_ORDER = {"syntax": 0, "marker": 1, "format": 2, "lint": 3, "deep": 4}
 
 
@@ -443,6 +448,10 @@ def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args,
 # why: central step runner; splitting it is a separate refactor
 def run_tool(tool, settings, lang, ctx, files, version, lid=None):  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915, PLR0917
     tool = dict(tool, _lang=lid)
+    if tool["role"] in GENERATED_SKIP_ROLES and tool["id"] not in SECRET_SCANNERS:
+        files = [f for f in files if not generated.is_generated(ctx.root, f)]
+        if not files:
+            return StepResult(tool["id"], tool["role"])
     if "builtin" in tool.get("cmd", {}):
         return run_builtin(tool, settings, lang, ctx, files, version)
     res = StepResult(tool["id"], tool["role"])
