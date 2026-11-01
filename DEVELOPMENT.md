@@ -68,6 +68,12 @@ QS_REBUILD=1 bash scripts/build-image.sh "$PWD" code-quality-suite:dev   # after
 QUALITY_SUITE_IMAGE=code-quality-suite:dev git commit ...            # use it in a repository
 ```
 
+`install.sh` removes the images of older versions after it builds the current one. If you switch
+between branches with different `VERSION` files and run `install.sh` on each, set
+`QS_KEEP_OLD_IMAGES=1` so the image of the other branch is not deleted (the hooks never clean, and
+a newer version is never removed automatically). Builds with a custom tag, like the lines above,
+clean nothing.
+
 ## 5. Adding a language or a tool
 
 1. Describe it in `registry/src/*.py` (`lang(...)`, `tool(...)`, install source pinned to a
