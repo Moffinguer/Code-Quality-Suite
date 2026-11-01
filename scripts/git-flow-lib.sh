@@ -30,7 +30,8 @@ qs_policy_defaults() {
 	QS_BR_TAG_URL='' QS_BR_COMMIT_URL=''
 	# level 1: Semantic Versioning without build metadata (https://semver.org)
 	QS_BR_LEVEL_1='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
-	QS_BR_LEVEL_2='^[0-9]+$'
+	# level 2 (the OT): ASCII letters and digits, no '-' or '_'; numeric OTs match too
+	QS_BR_LEVEL_2='^[A-Za-z0-9]+$'
 }
 
 # Load the commit/branch policy into QS_* variables. The engine writes <state>/policy.env on
@@ -199,6 +200,8 @@ render_tag() {
 	printf '%s' "$t"
 }
 
+# Check that the working tree and the index have no uncommitted changes.
+# Arguments: none. Returns: 0 when clean; 1 (with a message on stderr) when not.
 require_clean() {
 	if ! git diff --quiet || ! git diff --cached --quiet; then
 		echo "[git-flow] Working tree not clean; commit or stash first." >&2

@@ -192,10 +192,17 @@ version_commit() {
 	rm -rf "$tmp" "$tmp.index" "$gd/version.list" "$gd/version.err"
 }
 
-cmd_nueva() { # $1 = padre|final, $2 = name
+# Create a new branch under the current node (git np / git nr).
+#
+# Args:
+#   $1  kind: padre (parent, ends in the ORIGINAL leaf) or final
+#   $2  name: one segment; the version from develop, the OT or a detail below it
+# Returns: 0 on success; exits through die when the name is empty, has a '/', is reserved
+#   (the ORIGINAL or RELEASE leaf) or the resulting branch name breaks the policy.
+cmd_nueva() {
 	local kind="$1" seg="${2:-}" cur node new base
 	[ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
-	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF") die "'$QS_BR_LEAF' is reserved" ;; esac
+	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF" | "$QS_BR_RELEASE_LEAF") die "'$seg' is reserved" ;; esac
 	if [ -n "$FROM" ]; then
 		fetch_origin
 		cur="$FROM"
