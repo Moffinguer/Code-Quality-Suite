@@ -158,12 +158,19 @@ file still has `qs:fill` markers. Details: `docs/REPO-FILES.md`.
 `qs-large-file` rejects files over `max_kb` (default 512 KB). Generated files are exempt through
 a tracked, repo-wide mark: set the git attribute `qs-generated` (or `linguist-generated`) in
 `.gitattributes`, for example `schema/quality-rules.schema.json qs-generated`. The check reads
-it with `git check-attr`; if git cannot answer, the file is not exempt. Every other file stays
-subject to the limit. Do not raise `max_kb` in the personal `.quality-rules.json` for this.
+it with `git check-attr`; if git cannot answer (for example inside a container), the root
+`.gitattributes` is parsed directly (a pattern without `/` matches the basename at any depth,
+a pattern with `/` is anchored to the root, `*` does not cross `/`, `**` does). Macros, quoted
+patterns and subdirectory `.gitattributes` files are not supported there and fail closed: the
+file is not exempt. An explicit `-qs-generated` wins over `linguist-generated`. Every other
+file stays subject to the limit. Do not raise `max_kb` in the personal `.quality-rules.json` for this.
 
 The same mark also skips the marker, format, lint and deep steps for that file, so formatters
 never rewrite generator output (which would make `tools/gen.py --check` fail). Syntax checks
 and secret scanning (`gitleaks`, `qs-private-key`) still cover generated files.
+
+The mark is a trust decision: it switches off format and lint for that file, so a change
+to `.gitattributes` is reviewed like code (`/.gitattributes` has a CODEOWNERS entry).
 
 ## Levels
 
