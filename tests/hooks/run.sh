@@ -614,6 +614,9 @@ fx_reset() {
 	for t in 2.6.0 3.0.0 4.0.2 wt-textot base-2.6.0 base-3.0.0 base-4.0.2 9.9.9; do
 		fx_image "code-quality-suite:$t" "$LABELLED"
 	done
+	for t in code-quality-suite-foo:1.0.0 my/code-quality-suite:1.0.0 host/code-quality-suite:1.0.0; do
+		fx_image "$t" "$LABELLED"
+	done
 	fx_image python:3.12-slim '{"labels": {}}'
 	fx_image zricethezav/gitleaks:latest '{"labels": {}}'
 	: >"$CALLS"
@@ -650,6 +653,11 @@ ac_install() {
 ac_foreign_safe() {
 	! calls_match 'python:3.12-slim|zricethezav/gitleaks' && img_exists python:3.12-slim && img_exists zricethezav/gitleaks:latest
 }
+# No look-alike repository (code-quality-suite-foo, my/..., host/...) was removed. Returns 0 when so.
+ac_lookalikes_safe() {
+	! calls_match '^image rm .*(code-quality-suite-foo|my/|host/)' &&
+		img_exists code-quality-suite-foo:1.0.0 && img_exists my/code-quality-suite:1.0.0 && img_exists host/code-quality-suite:1.0.0
+}
 # No cleanup removal passes -f. Returns 0 when none does.
 ac_no_force() { ! calls_match '^(image )?rm .*-f'; }
 
@@ -659,6 +667,7 @@ fx_containers '[{"id":"c2","image":"code-quality-suite:3.0.0","state":"exited"},
 inst "$CL/r1" || fail "install for the cleanup checks: $(cat "$CL/out")"
 check "AC1 install removes the older versions and their bases" ac_install
 check "AC2 foreign images are never touched" ac_foreign_safe
+check "AC2 look-alike repositories never get an image rm" ac_lookalikes_safe
 check "AC3 a non-version tag is kept with a note" out_has "kept code-quality-suite:wt-textot (not a version tag"
 check "AC3 wt-textot is still there" img_exists code-quality-suite:wt-textot
 check "AC4 a newer version is kept on install, with a note" out_has "newer than $CUR"
@@ -779,6 +788,9 @@ check "AC16 4.2.0 > 4.2.0-rc1" cmp_check 4.2.0 4.2.0-rc1 1
 check "AC16 3.0.0 < 4.0.0" cmp_check 3.0.0 4.0.0 -1
 check "AC16 4.2.0 = 4.2.0" cmp_check 4.2.0 4.2.0 0
 check "AC16 4.2.0-rc2 > 4.2.0-rc1" cmp_check 4.2.0-rc2 4.2.0-rc1 1
+check "AC16 4.1.0 > 4.1.0-rc.1" cmp_check 4.1.0 4.1.0-rc.1 1
+check "AC16 4.1.0-SNAPSHOT < 4.1.0" cmp_check 4.1.0-SNAPSHOT 4.1.0 -1
+check "AC16 4.1.0-SNAPSHOT > 4.0.9" cmp_check 4.1.0-SNAPSHOT 4.0.9 1
 check "AC16 wt-textot is not semver" cmp_check wt-textot 4.2.0 "" 2
 check "AC16 base-4.0.2 gives 4.0.2" tag_check base-4.0.2 4.0.2 0
 check "AC16 wt-textot is not a version tag" tag_check wt-textot "" 1
@@ -789,6 +801,16 @@ FAKE_DOCKER_RM_FAIL=code-quality-suite:3.0.0 inst "$CL/r1" || fail "install must
 check "AC17 warning names the tag" out_has "could not remove code-quality-suite:3.0.0"
 check "AC17 the other tags are still removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@2.6.0.json' && ! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json'"
 check "AC17 the failing tag stays" img_exists code-quality-suite:3.0.0
+# AC18: the current version is a prerelease: the release is newer and kept on install; SNAPSHOT is older
+echo 4.1.0-rc.1 >"$T/suite2/VERSION"
+git init -q -b main "$CL/r6"
+fx_reset
+fx_image code-quality-suite:4.1.0 "$LABELLED"
+fx_image code-quality-suite:4.1.0-SNAPSHOT "$LABELLED"
+"$T/suite2/install.sh" "$CL/r6" >"$CL/out" 2>&1 || fail "install of a prerelease suite"
+check "AC18 4.1.0 is newer than 4.1.0-rc.1: kept with a note" bash -c "grep -q 'newer than 4.1.0-rc.1' '$CL/out' && test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0.json'"
+check "AC18 4.1.0-SNAPSHOT is older: removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0-SNAPSHOT.json'"
+check "AC18 look-alikes untouched" ac_lookalikes_safe
 rm -rf "$CL"
 export QS_HOME="$QS_HOME_MAIN"
 

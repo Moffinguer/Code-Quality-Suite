@@ -205,11 +205,15 @@ qs_clean_run() {
 	local all="$1" dry="$2" repo="${QUALITY_SUITE_IMAGE%:*}"
 	local tags ctrs tag name ver cmp cid cimg cstate user lvl text
 	local running="" stopped="" kept="" rm_tags="" n_img=0 n_ct=0 repos_ver
-	tags="$(docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -v ':<none>$' || true)"
+	# why: Docker's reference filter also matches look-alikes (host/<repo>); keep the exact repository
+	tags="$(docker image ls "$repo" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | tr -d '\r' | grep -v ':<none>$' |
+		awk -v r="$repo" '{ i = match($0, /:[^:\/]*$/); if (i > 0 && substr($0, 1, i - 1) == r) print }' || true)"
 	ctrs="$(docker ps -a --filter "label=$QS_IMAGE_LABEL" --format '{{.ID}}\t{{.Image}}\t{{.State}}' 2>/dev/null | tr -d '\r' || true)"
 	repos_ver="$(qs_repo_versions)"
 	while IFS=$'\t' read -r cid cimg cstate; do
 		[ -n "$cid" ] || continue
+		# why: only containers of the exact suite repository are ever removed
+		case "$cimg" in "${repo}":*) ;; *) continue ;; esac
 		case "$cstate" in
 		running | restarting | paused) running="${running}${cimg} ${cid}"$'\n' ;;
 		exited | created | dead) stopped="${stopped}${cid}"$'\n' ;;
