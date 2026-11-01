@@ -20,6 +20,7 @@ reads. `scripts/ai-init.sh <repo>` creates them from `ai-template/`; existing fi
 | `branch-workflow` | the branch model in short: tree, ORIGINAL / final / siblings, rebase or merge, `git es`, versions, the two-step release, hooks; points to `git-commands` and `docs/GIT-WORKFLOW.md` |
 | `git-commands` | the manual of every git command; not in `ai-template/`: `scripts/ai-init.sh` generates it from `docs/GIT-COMMANDS.md` |
 | `team-flow` | the orchestrated team: business analyst (main session) -> `systems-analyst` -> developers in worktrees -> gate -> `qa` bugfix loop (`<req>/bugfix`) -> bottom-up `git integra` with human approval |
+| `dev-documents` | reading or writing the four `dev_documents/` files (RF, RNF, CU, CP ids): format, ID rules, who writes what |
 | `norms-review` | review a diff against the norms, the gate and the spec |
 | `lessons-learned` | record what went wrong so the next agent does not repeat it |
 | `recipe-template` | copy it to create a recipe of your own (not loaded automatically) |

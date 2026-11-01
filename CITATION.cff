@@ -12,5 +12,5 @@ keywords:
   - git hooks
   - linting
   - docker
-version: "3.0.0"
+version: "4.0.0"
 date-released: '2026-11-01'

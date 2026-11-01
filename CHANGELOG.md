@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.0.0 - 2026-11-01
+
+### Added
+
+- Add dev-documents skill (58feea0; Fernando Mateos)
+- Keep filled dev_documents (f9628bf; Fernando Mateos)
+- Add dev_documents templates (c1b5803; Fernando Mateos)
+
+### Fixed
+
+- Mark requirement fields optional (f623dbf, OT 100; Fernando Mateos)
+- Cover AC5-AC6 and AC9 (b8582db, OT 100; Fernando Mateos)
+
 ## 3.0.0 - 2026-11-01
 
 ### Changed

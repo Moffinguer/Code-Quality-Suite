@@ -74,6 +74,12 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 
 Removed: the images and the tools inside them. Nothing in the working trees changes.
 
+## New skill in 4.0.0
+
+The `dev-documents` skill (format and IDs of the `dev_documents/` files) reaches a repository with
+`git ia --actualizar` (it adds the new skill folder), then `bash <suite>/scripts/ai-sync.sh`
+(copies it into `.claude/skills/` for Claude Code).
+
 ## Updating the AI files to 3.0.0
 
 `git ia --actualizar` rewrites the suite's own AI files (skills, `.claude/agents/*`,
