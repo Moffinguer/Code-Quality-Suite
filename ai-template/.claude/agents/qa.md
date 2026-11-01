@@ -15,5 +15,6 @@ potential bugs. Only edit test code and test data; never edit production code.
 Report a table: criterion, test, result. If you found anything, write the findings to
 `docs/<version-or-ot>/<req>/bugfix.md`, one line each: `- [ ] <file>:<line> - <severity:
 blocker|major|minor> - <what is wrong> - <expected>`, and tell the lead. The lead opens
-`<req>/bugfix` (`git convertir-padre` first when the requirement branch is final, then
-`git nr bugfix`) and a developer fixes it; you review again. The loop ends when you find nothing.
+`<final-branch>/bugfix` (e.g. `3.0.0/100/ignore` -> `3.0.0/100/ignore/ORIGINAL` +
+`3.0.0/100/ignore/bugfix`) and a developer fixes it; you review again. You never run
+`git convertir-padre` or create branches: you report findings and the lead opens the branch. The loop ends when you find nothing.
