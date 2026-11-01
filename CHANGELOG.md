@@ -7,13 +7,30 @@
 - Add dev-documents skill (58feea0; Fernando Mateos)
 - Keep filled dev_documents (f9628bf; Fernando Mateos)
 - Add dev_documents templates (c1b5803; Fernando Mateos)
-- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
 
 ### Fixed
 
 - Mark requirement fields optional (f623dbf, OT 100; Fernando Mateos)
 - Cover AC5-AC6 and AC9 (b8582db, OT 100; Fernando Mateos)
-- Quote ignore globs, narrow disables (e473287; Fernando Mateos)
+
+## 3.0.0 - 2026-11-01
+
+### Changed
+
+- Rename analyst subagent (458ae0f; Fernando Mateos)
+
+### Added
+
+- Add team-flow skill (c226eb7; Fernando Mateos)
+- Add bugfix loop and gate to roles (71e2df8; Fernando Mateos)
+- Define the systems-analyst role (210e73b; Fernando Mateos)
+- Add requirement docs and rules (5201575, OT 100; Fernando Mateos)
+- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
+
+### Fixed
+
+- Limit convertir-padre, bugfix name (bdcfed1, OT 100; Fernando Mateos)
+- Quote ignore globs, narrow disables (e221b21, OT 100; Fernando Mateos)
 
 ## 2.6.0 - 2026-10-27
 
