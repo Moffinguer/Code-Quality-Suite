@@ -76,7 +76,7 @@ awk '
   { print }' "$gi" >"$gi.tmp"
 # why: these files are personal tooling (agents, prompts, local rules), not part of the product
 IGNORED=(/AGENTS.md /CLAUDE.md /GEMINI.md /opencode.json /.agents/ /.claude/ /.gemini/ /.opencode/ /knowledge/ /.quality-rules.json
-	/docs/[0-9]*/ /dev_documents/)
+	'/docs/[0-9]*/' /dev_documents/)
 {
 	cat "$gi.tmp"
 	[ -s "$gi.tmp" ] && [ -n "$(tail -c1 "$gi.tmp")" ] && echo
@@ -87,7 +87,8 @@ IGNORED=(/AGENTS.md /CLAUDE.md /GEMINI.md /opencode.json /.agents/ /.claude/ /.g
 rm -f "$gi.tmp"
 
 # files of that list committed before: out of the index, kept on disk
-# why: a glob entry needs a trailing "*" to work as a pathspec ("*" also crosses "/")
+# why: IGNORED holds literal gitignore patterns (the shell never expands them); the loop turns each
+# into a git pathspec, and a glob entry needs a trailing "*" there ("*" also crosses "/")
 SPECS=()
 for e in "${IGNORED[@]}"; do
 	case "$e" in *"["*) SPECS+=(":$e*") ;; *) SPECS+=(":$e") ;; esac

@@ -3,7 +3,7 @@
 # commit formats and stages, marks scripts, creates/ignores the rules file, logs, applies
 # rule changes, blocks broken code; push verifies in check mode.
 # why: every check is written `cond && ok "..." || fail "..."`, and ok never fails
-# shellcheck disable=SC2015,SC2016,SC2143,SC2010,SC2059
+# shellcheck disable=SC2015
 set -euo pipefail
 [ "${QS_TEST_DEBUG:-0}" = 1 ] && set -x
 SUITE="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -69,11 +69,14 @@ rm bad.py
 
 # partial staging: the unstaged edit must neither be committed nor lost
 body='def g():\n    return 1\n\n\ndef h():\n    return 3\n\n\ndef i():\n    return 4\n\n\ndef j():\n    return 5\n'
+# shellcheck disable=SC2059
 printf "$body" >part.py
 git add part.py
 git commit -q -m "feat: part" || fail "part commit"
+# shellcheck disable=SC2059
 printf "${body/return 1/return  2}" >part.py
 git add part.py
+# shellcheck disable=SC2059
 printf "${body/return 1/return  2}SECRET_DEBUG = True\n" >part.py
 git commit -q -m "fix: partial" || fail "partial commit"
 git show HEAD:part.py | grep -q SECRET_DEBUG && fail "unstaged edit was committed" || ok "unstaged edit not committed"
@@ -301,6 +304,7 @@ grep -q '^- Login page (.*OT 300100, JDA-SEG-010' cl.out && ok "git changelog: C
 	}
 # git release (step 1): the push of RELEASE fails: the tree stays; a second run resumes
 mkdir -p "$T/remote.git/hooks"
+# shellcheck disable=SC2016
 printf '#!/bin/sh\nwhile read o n r; do case "$r" in */RELEASE) exit 1 ;; esac; done; exit 0\n' \
 	>"$T/remote.git/hooks/pre-receive"
 chmod +x "$T/remote.git/hooks/pre-receive"
@@ -338,6 +342,7 @@ git release --version 7.1.0 >rel.out 2>&1 && grep -q 'already prepared' rel.out 
 	fail "release twice"
 }
 # git publicar (step 2): refused push of develop -> resumes; then merged, tagged, pushed, RELEASE deleted
+# shellcheck disable=SC2016
 printf '#!/bin/sh\nwhile read o n r; do [ "$r" = refs/heads/develop ] && exit 1; done; exit 0\n' >"$T/remote.git/hooks/pre-receive"
 chmod +x "$T/remote.git/hooks/pre-receive"
 if git publicar --yes >rel.out 2>&1; then fail "publicar passed a refused push"; fi
@@ -522,6 +527,7 @@ rc=0
 rm -rf agent.py agent.err sub
 
 # one image per suite version for every repository: a second repo reuses the tools of the first
+# shellcheck disable=SC2016
 [ "$(readlink .git/hooks/pre-commit)" = "$QS_HOME/hooks/pre-commit" ] && grep -q 'exec bash "$SUITE/hooks/pre-commit"' "$QS_HOME/hooks/pre-commit" &&
 	! grep -q '^QUALITY_SUITE_IMAGE=' .git/hooks/quality-suite.env &&
 	ok "repo hooks are symbolic links to one common folder; the image is not frozen per repository" || fail "common hooks / image key"
@@ -561,6 +567,7 @@ sed -i.bak 's|^QUALITY_SUITE_DIR=.*|QUALITY_SUITE_DIR="/nonexistent"|' "$T/repo2
 cp -r "$SUITE" "$T/suite2"
 echo 9.9.9 >"$T/suite2/VERSION"
 "$T/suite2/scripts/qs-update.sh" --yes --lazy >update.log 2>&1 || fail "qs-update: $(cat update.log)"
+# shellcheck disable=SC2143,SC2010
 grep -q "re-pointed $(grep -c . "$QS_HOME/repos.list") repositories" update.log && [ -z "$(ls "$FAKE_DOCKER_DIR" | grep -F '@')" ] &&
 	grep -q "QUALITY_SUITE_DIR=\"$T/suite2\"" "$T/repo2/.git/hooks/quality-suite.env" &&
 	ok "git actualizar-suite: images removed, repositories re-pointed" || fail "update: $(
@@ -591,6 +598,7 @@ mkdir "$T/nuevo"
 	cat "$T/iniciar.out"
 	fail "git iniciar"
 }
+# shellcheck disable=SC2143
 (cd "$T/nuevo" && [ "$(git branch --show-current)" = develop ] && grep -q 'code-quality-suite' .git/hooks/pre-commit &&
 	[ -f AGENTS.md ] && [ -f README.md ] && [ -f VERSION ] && grep -qx '/AGENTS.md' .gitignore && grep -qx '/.claude/' .gitignore &&
 	grep -qx '/.quality-rules.json' .gitignore && [ -f .claude/skills/git-commands/SKILL.md ] &&
