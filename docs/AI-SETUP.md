@@ -176,7 +176,8 @@ git init --bare /c/dev/demo.git                          # optional remote to tr
 git iniciar --remoto /c/dev/demo.git                     # git init (develop), hooks, files, AI files (git ia)
 ```
 
-The AI files (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`, `knowledge/`...) are git-ignored:
+The AI files (`AGENTS.md`, `CLAUDE.md`, `.claude/`, `.agents/`, `knowledge/`..., and the local folders `docs/<version-or-ot>/` and `dev_documents/`) are
+git-ignored:
 they stay on your machine. The agents get the manual of every git command as the `git-commands`
 skill (`git ayuda` shows the same to you).
 
