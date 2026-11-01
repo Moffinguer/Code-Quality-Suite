@@ -104,6 +104,18 @@ def populate(data):
 
 
 def get(data, sec):
+    """Effective policy section: the defaults overridden by the keys set in data.
+
+    Args:
+        data: the parsed rules file (dict), or None.
+        sec: name of the section, a key of DEFAULTS.
+
+    Returns:
+        dict: a new dict; the defaults are never modified.
+
+    Raises:
+        KeyError: sec is not a known section.
+    """
     out = copy.deepcopy(DEFAULTS[sec])
     cur = (data or {}).get(sec)
     if isinstance(cur, dict):
@@ -112,6 +124,14 @@ def get(data, sec):
 
 
 def _charset_ok(name):
+    """Whether Python knows a charset name.
+
+    Args:
+        name: the charset name as written in the rules file.
+
+    Returns:
+        bool: True when codecs.lookup accepts the name (or it is 'ascii' in any case).
+    """
     try:
         codecs.lookup(name)
         return True
@@ -277,6 +297,14 @@ def _validate_branch_patterns(br):
 
 
 def _sh(v):
+    """Quote a value as one POSIX shell word (single quotes, embedded quotes escaped).
+
+    Args:
+        v: the value; converted with str().
+
+    Returns:
+        str: the quoted word, safe to assign in KEY='value' lines.
+    """
     return "'" + str(v).replace("'", "'\\''") + "'"
 
 
@@ -319,6 +347,14 @@ def shell_env(data):
 
 
 def _norm(cs):
+    """Canonical lower-case name of a charset (aliases such as cp1252 or latin1 mapped).
+
+    Args:
+        cs: the charset name from the rules file; empty means utf-8.
+
+    Returns:
+        str: the canonical name, e.g. 'windows-1252' for 'cp1252'.
+    """
     cs = (cs or "utf-8").lower().replace("_", "-")
     return {
         "utf8": "utf-8",
@@ -358,6 +394,15 @@ def glob_match(rel, pat):
 
 
 def _line_col(raw, pos):
+    """Line and column of a byte offset in a file.
+
+    Args:
+        raw: the file bytes.
+        pos: byte offset into raw.
+
+    Returns:
+        tuple: (line, column), both 1-based; the column counts bytes.
+    """
     line = raw.count(b"\n", 0, pos) + 1
     col = pos - (raw.rfind(b"\n", 0, pos) + 1) + 1
     return line, col
@@ -561,6 +606,15 @@ BYTE_OF = _cp1252_bytes()
 
 
 def _cls(lo, hi):
+    """Body of a regex character class with the Windows-1252 characters of a byte range.
+
+    Args:
+        lo: first byte value, inclusive.
+        hi: last byte value, inclusive.
+
+    Returns:
+        str: the regex-escaped characters whose cp1252 byte is in [lo, hi], no brackets.
+    """
     return "".join(re.escape(ch) for ch, b in sorted(BYTE_OF.items()) if lo <= b <= hi)
 
 
@@ -655,6 +709,15 @@ def decode_mixed(body):
     spots = []
 
     def handler(e):
+        """Error handler for one undecodable UTF-8 byte: decode it as Windows-1252.
+
+        Args:
+            e: the UnicodeDecodeError raised by the decoder.
+
+        Returns:
+            tuple: (replacement text, next byte offset). The offset is also recorded in
+            the enclosing 'spots' list. Bytes Windows-1252 leaves undefined become chr(byte).
+        """
         b = e.object[e.start]
         spots.append(e.start)
         try:

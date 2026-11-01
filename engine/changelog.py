@@ -110,6 +110,14 @@ def _log(gitcmd, tip, excludes, first_parent=True, merges=None):
 
 
 def _refs_src(body):
+    """Source branch named by the 'Refs: <branch> -> ' trailer of a commit body.
+
+    Args:
+        body: the commit message body.
+
+    Returns:
+        str: the branch name, or None when the body has no such trailer.
+    """
     m = re.search(r"^Refs: (\S+) -> ", body, re.M)
     return m.group(1) if m else None
 
@@ -221,6 +229,17 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
     out, omitted, seq = [], [], [0]
 
     def add(c, authors, src=None, inner=()):
+        """Record one change in out, or in omitted when its subject is not classified.
+
+        Skips release commits and duplicates of an entry already in out. Updates the
+        closure lists out, omitted and seq; returns nothing.
+
+        Args:
+            c: the commit (dict with subject, body, author, parents).
+            authors: author names of the change (a list of str).
+            src: source branch of the change, or None.
+            inner: commits brought by the merge, used for the references.
+        """
         if RELEASE_SUBJECT.match(c["subject"]):
             return
         group, breaking, text = classify(c["subject"], c["body"])
@@ -245,6 +264,19 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
         )
 
     def walk(tip_, excludes):
+        """Visit the commits from tip_ not reachable from excludes, calling add for each change.
+
+        A merge that brings nothing new is skipped. A merge of an integrated branch is
+        one change; a container merge or a non-conventional merge is descended into.
+        Returns nothing; results go to the closure list out.
+
+        Args:
+            tip_: the revision to start from.
+            excludes: revisions whose history is already counted (list of str).
+
+        Raises:
+            RuntimeError: git failed.
+        """
         for c in _log(gitcmd, tip_, excludes):
             if len(c["parents"]) < 2:
                 add(c, [c["author"]])
@@ -384,6 +416,14 @@ def validate(text):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machin
     group_order, group_items, intro_warned, notice_last = [], 0, False, 0
 
     def close_release(ln_no):
+        """Check the release that ends before line ln_no, appending errors to the closure list.
+
+        Reports a release with neither groups nor notice, and a last group left empty.
+        Does nothing when no release is open. Returns nothing.
+
+        Args:
+            ln_no: line number used in the error messages.
+        """
         if rel is None:
             return
         if not rel["groups"] and not rel["notice"]:
@@ -533,6 +573,15 @@ def badge(version, link="CHANGELOG.md"):
 
 
 def badge_version(text):
+    """Version shown by the README version badge.
+
+    Args:
+        text: README text; None or '' is accepted.
+
+    Returns:
+        str: the version, '' when a badge exists without a readable version, or None
+        when there is no badge.
+    """
     m = BADGE_RX.search(text or "")
     if not m:
         return None

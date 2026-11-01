@@ -1259,6 +1259,18 @@ def _tool_version_align(ap, argv, where):
     """
 
     def rd(p):
+        """Read a UTF-8 file without newline translation (CRLF kept).
+
+        Args:
+            p: path of the file.
+
+        Returns:
+            str: the file content.
+
+        Raises:
+            OSError: the file cannot be opened or read.
+            UnicodeDecodeError: the file is not valid UTF-8.
+        """
         with open(p, encoding="utf-8", newline="") as fh:
             return fh.read()
 
