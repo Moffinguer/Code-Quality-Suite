@@ -200,7 +200,7 @@ git push -u origin develop
 
 ```bash
 git np 1.0.0          # 1.0.0/ORIGINAL           (version)
-git np 100001         # 1.0.0/100001/ORIGINAL    (OT number)
+git np 100001         # 1.0.0/100001/ORIGINAL    (OT: letters and digits, e.g. ABC123)
 # or the whole planned tree at once:  printf '1.0.0\n  100001\n    login\n    styles\n' | git es
 claude
 ```

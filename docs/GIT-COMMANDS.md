@@ -48,7 +48,7 @@ again after moving the suite; `git actualizar-suite` runs it for you after an up
 ```text
 develop
 └─ 6.22.6/ORIGINAL                   version (Semantic Versioning), always a parent
-   └─ 6.22.6/188858/ORIGINAL         work order (OT, a number)
+   └─ 6.22.6/188858/ORIGINAL         work order (OT: letters and digits, e.g. 188858 or ABC123)
       ├─ 6.22.6/188858/login         final branch: one task
       └─ 6.22.6/188858/bank/ORIGINAL a branch with children
          └─ 6.22.6/188858/bank/bugfix
@@ -133,8 +133,9 @@ git add -A && git commit -m "chore: initial project skeleton"
 - **Does:** a new **parent** branch. From `develop`: `<version>/ORIGINAL`, where `<version>` is a
   semver version or `patch` / `minor` / `major` (the next one after the highest tag, version tree
   or `VERSION`), with a first commit `chore(version): <version>` that writes `VERSION`, the
-  `pom.xml` files and `package.json`. From `<F>/ORIGINAL`: `<F>/<name>/ORIGINAL` (an OT is a
-  number). Checks the new branch out.
+  `pom.xml` files and `package.json`. From `<F>/ORIGINAL`: `<F>/<name>/ORIGINAL` (an OT is ASCII
+  letters and digits: `git np 188858` or `git np ABC123`; `ORIGINAL` and `RELEASE` are reserved).
+  Checks the new branch out.
 - **Use it when:** starting a version (from `develop`), an OT, or a group of tasks that will have
   several final branches.
 - **Who:** lead (a version: human).

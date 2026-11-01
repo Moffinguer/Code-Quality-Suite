@@ -63,6 +63,20 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 # 3. commit: the base image and the tools are rebuilt on demand
 ```
 
+## Alphanumeric OT (4.0.1)
+
+The default of `branches.levels[1]` (the OT, segment 2 of `<version>/<ot>/...`) changed from
+`^[0-9]+$` to `^[A-Za-z0-9]+$`, so `ABC123` is an OT as well as `188858`. The suite never rewrites
+an existing `.quality-rules.json`, and that file already stores the old value. To accept text
+OTs in a repository, set the second item of `branches.levels` by hand:
+
+```json
+"branches": { "levels": ["<keep the first item, the semver regex>", "^[A-Za-z0-9]+$"] }
+```
+
+Numeric OTs keep working. `ABC1` and `abc1` are different branches (case is not checked).
+`RELEASE` and `ORIGINAL` cannot be used as an OT name.
+
 ## What an update keeps
 
 | Kept | Where |

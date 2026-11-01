@@ -321,7 +321,7 @@ Then `git publicar --version <version>`.
 | `parent_leaf` | `ORIGINAL` | last segment of parent branches |
 | `mainline` | `develop` | where versions are merged |
 | `protected` | `main`, `master`, `develop` | branches outside the model |
-| `levels` | semver (no build metadata), `^[0-9]+$` | regex per segment: version, OT, ... (an OT like `RC1` needs e.g. `^([0-9]+\|RC[0-9]+)$`) |
+| `levels` | semver (no build metadata), `^[A-Za-z0-9]+$` | regex per segment: version, OT (ASCII letters and digits), ... (an OT like `PROJ-123` needs e.g. `^[A-Za-z0-9][A-Za-z0-9_-]*$`) |
 | `segment` | `^[A-Za-z0-9][A-Za-z0-9_-]*$` | regex for deeper segments (ASCII only) |
 | `allow` | `[]` | extra branch-name regexes (e.g. `^release/`) |
 | `leaf_merge` | `merge` | final -> ORIGINAL with `merge` (`--no-ff`) or `squash` |
@@ -347,4 +347,4 @@ merge driver.
 
 Old branches are off-model: integrate or rename them (`git branch -m`), or allow them for a
 while with `"branches": {"allow": ["^feature/"]}`. Version trees whose name is not semver
-(`6.22`) keep working only with the old rule: `"levels": ["^[0-9]+(\\.[0-9]+)*$", "^[0-9]+$"]`.
+(`6.22`) keep working only with the old rule: `"levels": ["^[0-9]+(\\.[0-9]+)*$", "^[0-9]+$"]` (numeric OTs only).
