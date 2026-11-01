@@ -18,6 +18,7 @@ reads. `scripts/ai-init.sh <repo>` creates them from `ai-template/`; existing fi
 | `jda-ingest` | a new Junta notification or guideline arrives: split it into norm notes, update the map, propose gate rules |
 | `quality-gate` | run `scripts/qs-run.sh` on edited files and fix the findings |
 | `branch-workflow` | branch names, `git np / nr / subir / integra`, ASCII commits |
+| `dev-documents` | reading or writing the four `dev_documents/` files (RF, RNF, CU, CP ids): format, ID rules, who writes what |
 | `norms-review` | review a diff against the norms, the gate and the spec |
 | `lessons-learned` | record what went wrong so the next agent does not repeat it |
 | `recipe-template` | copy it to create a recipe of your own (not loaded automatically) |
