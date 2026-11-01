@@ -104,7 +104,9 @@ git add -A && git commit -m "chore: initial project skeleton"
   of them **out of the repository** (also `.quality-rules.json`), and takes out of the index any
   of them already committed (they stay on disk; then commit). Existing files are kept;
   `--actualizar` rewrites the suite's own files (skills, subagents, settings, this manual) and
-  never `AGENTS.md`, `CLAUDE.md`, `opencode.json` or `knowledge/`.
+  never `AGENTS.md`, `CLAUDE.md`, `opencode.json`, `knowledge/` or `dev_documents/`. It also adds
+  the four `dev_documents/` templates (Requirements, Functional_Design, Technical_Design, Tests)
+  when missing; filled documents are never overwritten, not even by `--actualizar`.
 - **Use it when:** after `git iniciar`/`git clonar` on a machine with agents, after a suite
   update (`git actualizar-suite` runs `--actualizar` itself), or when agent files were committed.
 - **Who:** human.

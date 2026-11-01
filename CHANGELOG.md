@@ -1,38 +1,36 @@
 # Changelog
 
-## 4.0.2 - 2026-11-01
+## 4.0.0 - 2026-11-01
+
+### Added
+
+- Add dev-documents skill (58feea0; Fernando Mateos)
+- Keep filled dev_documents (f9628bf; Fernando Mateos)
+- Add dev_documents templates (c1b5803; Fernando Mateos)
+
+### Fixed
+
+- Mark requirement fields optional (f623dbf, OT 100; Fernando Mateos)
+- Cover AC5-AC6 and AC9 (b8582db, OT 100; Fernando Mateos)
+
+## 3.0.0 - 2026-11-01
 
 ### Changed
 
-- Fix lint baseline (38b35cb; Fernando Mateos)
-- Fix runner lint baseline (d3a0497; Fernando Mateos)
+- Rename analyst subagent (458ae0f; Fernando Mateos)
 
 ### Added
 
-- Allow alphanumeric OT (c1ee8c0; Fernando Mateos)
-- Allow alphanumeric OT in scripts (3b6f5f0, OT 100; Fernando Mateos)
-- Skip style tools on generated files (1494ee0; Fernando Mateos)
-- Skip size check for generated (47d76c6; Fernando Mateos)
-- Document generated-file exemption (25a116f; Fernando Mateos)
+- Add team-flow skill (c226eb7; Fernando Mateos)
+- Add bugfix loop and gate to roles (71e2df8; Fernando Mateos)
+- Define the systems-analyst role (210e73b; Fernando Mateos)
+- Add requirement docs and rules (5201575, OT 100; Fernando Mateos)
 - Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
 
 ### Fixed
 
-- Restore gen.py output layout (831f838, OT 100; Fernando Mateos)
-- Tighten generated-file matching (421994d, OT 100; Fernando Mateos)
-- Read generated mark without git (dd50c18; Fernando Mateos)
-- Keep gen.py import order (0837be7; Fernando Mateos)
-- Quote ignore globs, narrow disables (e473287; Fernando Mateos)
-
-## 4.0.1 - 2026-11-01
-
-### Added
-
-- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
-
-### Fixed
-
-- Quote ignore globs, narrow disables (e473287; Fernando Mateos)
+- Limit convertir-padre, bugfix name (bdcfed1, OT 100; Fernando Mateos)
+- Quote ignore globs, narrow disables (e221b21, OT 100; Fernando Mateos)
 
 ## 2.6.0 - 2026-10-27
 

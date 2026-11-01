@@ -88,6 +88,32 @@ Numeric OTs keep working. `ABC1` and `abc1` are different branches (case is not 
 
 Removed: the images and the tools inside them. Nothing in the working trees changes.
 
+## New skill in 4.0.0
+
+The `dev-documents` skill (format and IDs of the `dev_documents/` files) reaches a repository with
+`git ia --actualizar` (it adds the new skill folder), then `bash <suite>/scripts/ai-sync.sh`
+(copies it into `.claude/skills/` for Claude Code).
+
+## Updating the AI files to 3.0.0
+
+`git ia --actualizar` rewrites the suite's own AI files (skills, `.claude/agents/*`,
+`.claude/settings.json`) and adds the new ones (the `team-flow` skill). It never deletes a file
+and never rewrites `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `opencode.json` or `knowledge/`.
+
+- **`analyst` is now `systems-analyst`.** Delete the stale copy, then regenerate the OpenCode
+  agents (it removes `.opencode/agents/analyst.md`):
+
+  ```bash
+  git ia --actualizar
+  rm -f .claude/agents/analyst.md
+  bash <suite>/scripts/ai-sync.sh
+  ```
+
+  Replace `analyst` with `systems-analyst` in your own prompts and notes.
+- **`AGENTS.md` is yours.** Update its roles table by hand: `analyst` -> `systems-analyst`, the
+  main session is also the business analyst, and the flow is the `team-flow` skill (compare with
+  `<suite>/ai-template/AGENTS.md`). The same for the delegation lines of `CLAUDE.md`.
+
 ## Behind a proxy
 
 Tool downloads happen in `docker build`. Set the proxy once in Docker Desktop (Settings >
