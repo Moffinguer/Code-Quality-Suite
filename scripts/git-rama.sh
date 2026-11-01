@@ -1497,7 +1497,7 @@ combine_subject() {
 
 # combine_message <version> <tip> <squashes> <exclude>...: the message of the squash of one
 # RELEASE. The body lists, oldest first, the subjects of its own first-parent commits that are not
-# release commits or mainline merges (with the OT of their 'Refs:' trailer); an earlier squash
+# release commits or mainline merges (with the OT of their 'Refs:' line); an earlier squash
 # (a combined RELEASE) contributes its own list. Then the 'Squashes:' lines.
 # Arguments: $1 the version; $2 its tip; $3 the 'Squashes: ...' lines; $4... the tips already
 # combined. Output: the message. Exit status: 0.
@@ -1512,7 +1512,7 @@ combine_message() {
 			lines="$lines$(git log -1 --format=%B "$h" | grep '^- ' || true)"$'\n'
 			continue
 		fi
-		src="$(git log -1 --format='%(trailers:key=Refs,valueonly)' "$h" | sed -n '1s/ .*//p')"
+		src="$(git log -1 --format=%B "$h" | sed -n 's/^Refs: \([^ ]*\) -> .*/\1/p' | sed -n 1p)"
 		ot=""
 		case "$src" in */*/*) ot="$(branch_ot "$src")" ;; esac
 		lines="$lines- $s${ot:+ (OT $ot)}"$'\n'

@@ -528,7 +528,7 @@ combine_checks() {
 		git show "$c/RELEASE:README.md" | grep -q "qs:version.*version $c" &&
 		git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | grep -q "^Squashes: $b/RELEASE [0-9a-f]\{40\}$" &&
 		git cat-file -e "$(git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | sed -n "s|^Squashes: $a/RELEASE ||p" | sed -n 1p)" &&
-		git log -1 --format=%B "${sqs[0]}" | grep -q '^- ' &&
+		git log -1 --format=%B "${sqs[0]}" | grep -q '^- .* (OT [0-9]*)$' &&
 		git rev-parse -q --verify "unmerged/$a/RELEASE" >/dev/null && git rev-parse -q --verify "unmerged/$b/RELEASE" >/dev/null &&
 		git ls-remote --heads origin | grep -q "refs/heads/unmerged/$b/RELEASE$" &&
 		[ -z "$(git for-each-ref "refs/heads/$a/" "refs/heads/$b/" "refs/remotes/origin/$a/" "refs/remotes/origin/$b/")" ] &&
@@ -546,8 +546,8 @@ git combinar --incluir 9.0.0,9.0.1 --version 9.1.0 --yes >rel.out 2>&1 || {
 	fail "combinar 9.1.0"
 }
 [ "$(grep -c 'WARN: 9.0.[01]/RELEASE lacks .* temporary commit' rel.out)" = 2 ] &&
-	grep -q '9.0.0/RELEASE: 3 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), 0 already combined' rel.out &&
-	grep -q '9.0.1/RELEASE: 2 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), [1-9][0-9]* already combined' rel.out &&
+	grep -q '9.0.0/RELEASE: 5 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), 0 already combined' rel.out &&
+	grep -q '9.0.1/RELEASE: 3 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), [1-9][0-9]* already combined' rel.out &&
 	ok "git combinar: a warning per RELEASE without develop, counts per RELEASE" || {
 	cat rel.out
 	fail "combinar 9.1.0 output"
@@ -574,7 +574,7 @@ develop_moves 9.2.1 d10.py || fail "develop moves 9.2.1"
 for v in 10.0.0 10.0.1; do
 	git checkout -q "$v/RELEASE"
 	if ! git merge -q --no-edit develop >m.out 2>&1; then
-		git diff --name-only --diff-filter=U | xargs git checkout --theirs -- && git add -A && git commit -q --no-edit ||
+		git diff --name-only --diff-filter=U | xargs git checkout --theirs -- && git add -u && git commit -q --no-edit ||
 			{
 				cat m.out
 				fail "merge develop into $v/RELEASE"
@@ -587,7 +587,7 @@ git combinar --incluir 10.0.0,10.0.1 --version 10.1.0 --yes >rel.out 2>&1 || {
 	cat rel.out
 	fail "combinar 10.1.0"
 }
-! grep -q 'WARN: .* lacks' rel.out && grep -q '10.0.1/RELEASE: 2 own commit(s) squashed; dropped 1 mainline merge(s)' rel.out &&
+! grep -q 'WARN: .* lacks' rel.out && grep -q '10.0.1/RELEASE: 3 own commit(s) squashed; dropped 1 mainline merge(s)' rel.out &&
 	ok "git combinar after a merge of develop: no warning, the mainline merge dropped" || {
 	cat rel.out
 	fail "combinar 10.1.0 output"
