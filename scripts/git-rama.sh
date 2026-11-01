@@ -37,9 +37,11 @@
 #                         branches below that branch are copied under '<v>/' keeping their path below
 #                         the version, each with its work and merged with its new parent;
 #                         --arbol-completo: every branch of that version tree. -n: only the plan
-#   git combinar          several '<v>/RELEASE' into one: asks yes/no for each and the version, rebases
-#                         them in creation order (oldest first) into '<version>/RELEASE', deletes the
-#                         ones combined, writes the version, CHANGELOG.md and README badge again.
+#   git combinar          several '<v>/RELEASE' into one: asks yes/no for each and the version; on
+#                         develop, one squash commit per RELEASE (creation order, oldest first) with
+#                         only its own changes (develop merged in first, as a temporary commit, when
+#                         a RELEASE lacks it), then the version, CHANGELOG.md and README badge of
+#                         '<version>/RELEASE'; the ones combined are kept as 'unmerged/<v>/RELEASE'.
 #                         --version <v>, --incluir <v1,v2...>, --yes
 #   git repo-files [NAME] the standard repository files that are missing (README, CHANGELOG, VERSION,
 #                         CONTRIBUTING, ... DEVELOPMENT), filled from git history and pom.xml; never
@@ -99,6 +101,13 @@ confirm() {
 	return 1
 }
 exists_ref() { git rev-parse -q --verify "$1" >/dev/null 2>&1; }
+# git_idx <index file> <git arguments>...: run git on a temporary index instead of the real one.
+# Arguments: $1 the index file; $2... the git command. Exit status: the one of git.
+git_idx() {
+	local idx="$1"
+	shift
+	GIT_INDEX_FILE="$idx" git "$@"
+}
 # any local or remote branch named exactly <b>, or under the folder <b>/
 taken() {
 	exists_ref "refs/heads/$1" || exists_ref "refs/remotes/origin/$1" ||
@@ -175,18 +184,15 @@ version_commit() {
 	fi
 	changed="$(printf '%s\n' "$changed" | tr -d '\r' | grep -v '^$' || true)"
 	if [ -n "$changed" ]; then
-		(
-			export GIT_INDEX_FILE="$tmp.index"
-			git read-tree "$parent"
-			while IFS= read -r f; do
-				blob="$(git hash-object -w --path="$f" "$tmp/$f")"
-				mode="$(git ls-tree "$parent" -- "$f" | awk '{print $1}')"
-				git update-index --add --cacheinfo "${mode:-100644},$blob,$f"
-			done <<<"$changed"
-			tree="$(git write-tree)"
-			commit="$(git commit-tree "$tree" -p "$parent" -m "$(version_subject "$v")")"
-			git update-ref "refs/heads/$b" "$commit" "$parent"
-		)
+		git_idx "$tmp.index" read-tree "$parent"
+		while IFS= read -r f; do
+			blob="$(git hash-object -w --path="$f" "$tmp/$f")"
+			mode="$(git ls-tree --full-tree "$parent" -- "$f" | awk '{print $1}')"
+			git_idx "$tmp.index" update-index --add --cacheinfo "${mode:-100644},$blob,$f"
+		done <<<"$changed"
+		tree="$(git_idx "$tmp.index" write-tree)"
+		commit="$(git commit-tree "$tree" -p "$parent" -m "$(version_subject "$v")")"
+		git update-ref "refs/heads/$b" "$commit" "$parent"
 		say "$b: version $v in $(printf '%s' "$changed" | tr '\n' ' ')"
 	fi
 	rm -rf "$tmp" "$tmp.index" "$gd/version.list" "$gd/version.err"
@@ -1265,8 +1271,301 @@ release_commits() {
 	[ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
 }
 
+# --- git combinar --------------------------------------------------------------------------------
+# State of one run, set by cmd_combinar: CB_BASE the develop commit, CB_GD the state folder, CB_WT
+# the temporary worktree. Helpers return through CB_* variables when a subshell would lose them.
+CB_BASE="" CB_GD="" CB_WT="" CB_REL="" CB_ONLY="" CB_OUT="" CB_CONFLICTS=""
+CB_N=0 CB_M=0 CB_K=0 CB_J=0
+
+# Remove what a git combinar run leaves behind: the temporary worktree and its scratch files.
+# Arguments: none. Exit status: 0 always (it runs from the EXIT trap).
+combine_cleanup() {
+	if [ -n "$CB_WT" ] && [ -e "$CB_WT" ]; then
+		git worktree remove --force "$CB_WT" >/dev/null 2>&1 || rm -rf "$CB_WT"
+	fi
+	git worktree prune 2>/dev/null || true
+	if [ -n "$CB_GD" ]; then rm -f "$CB_GD"/combine.*; fi
+	return 0
+}
+
+# combine_mainline_merge <commit>: whether the commit is a merge whose second parent is in
+# develop (the mainline brought into a tree: never replayed).
+# Arguments: $1 a commit. Exit status: 0 when it is such a merge, 1 otherwise.
+combine_mainline_merge() {
+	local p2
+	p2="$(git rev-parse -q --verify "$1^2" 2>/dev/null)" || return 1
+	git merge-base --is-ancestor "$p2" "$CB_BASE"
+}
+
+# combine_paths <tip>: the release files of a tree (its commits not in develop). Sets CB_REL to
+# the paths its release commits (RELEASE_COMMITS_RX) changed, and CB_ONLY to those of them that
+# no other commit of the tree changed. Both are newline-framed lists ("\npath\n...\n").
+# Arguments: $1 the tip. Exit status: 0; a git error ends the script.
+combine_paths() {
+	local line rel=0 own=$'\n' f
+	CB_REL=$'\n' CB_ONLY=$'\n'
+	while IFS= read -r line; do
+		case "$line" in
+		$'\x01'*) if [[ ${line#$'\x01'} =~ $RELEASE_COMMITS_RX ]]; then rel=1; else rel=0; fi ;;
+		'') ;;
+		*) if [ "$rel" = 1 ]; then CB_REL="$CB_REL$line"$'\n'; else own="$own$line"$'\n'; fi ;;
+		esac
+	done < <(git -c core.quotePath=false log --no-merges --no-renames --format='%x01%s' --name-only "$1" "^$CB_BASE" --)
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		case "$own$CB_ONLY" in *$'\n'"$f"$'\n'*) ;; *) CB_ONLY="$CB_ONLY$f"$'\n' ;; esac
+	done <<<"$CB_REL"
+	return 0
+}
+
+# combine_normalize <commit> <paths>: the tree of the commit with each of the paths set to
+# develop's version, or removed when develop lacks it (N() of the design: release files only
+# release commits touched carry nothing worth replaying).
+# Arguments: $1 a commit or tree; $2 a newline-framed list of paths.
+# Output: the tree id. Exit status: 0; non-zero when git fails.
+combine_normalize() {
+	local f entry idx="$CB_GD/combine.idx"
+	rm -f "$idx"
+	git_idx "$idx" read-tree "$1"
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		entry="$(git ls-tree --full-tree "$CB_BASE" -- "$f")"
+		if [ -n "$entry" ]; then # "<mode> <type> <id><TAB><path>"
+			git_idx "$idx" update-index --add --cacheinfo "$(awk '{ print $1 "," $3; exit }' <<<"$entry"),$f"
+		else git_idx "$idx" update-index --force-remove -- "$f"; fi
+	done <<<"$2"
+	git_idx "$idx" write-tree
+	rm -f "$idx"
+}
+
+# combine_take_mainline <tree> <ours> <merge base> <path>...: the merged tree with each conflicted
+# path solved for develop: a three-way file merge that keeps develop's side of the conflicting
+# hunks (git merge-file --theirs) and the other edits of <ours>; develop's file as it is when a
+# side lacks it, and no file when develop has none.
+# Arguments: $1 the merged tree (with conflict markers); $2 the tree side; $3 their merge base
+#   (may be empty); $4... the conflicted release files.
+# Output: the new tree id. Exit status: 0; non-zero when git fails.
+combine_take_mainline() {
+	local tree="$1" ours="$2" mb="$3" t="$CB_GD/combine" f mode blob
+	shift 3
+	rm -f "$t.idx"
+	git_idx "$t.idx" read-tree "$tree"
+	for f in "$@"; do
+		mode="$(git ls-tree --full-tree "$CB_BASE" -- "$f" | awk '{ print $1; exit }')"
+		if [ -z "$mode" ]; then
+			git_idx "$t.idx" update-index --force-remove -- "$f"
+			continue
+		fi
+		if [ -n "$mb" ] && git cat-file -e "$ours:$f" 2>/dev/null && git cat-file -e "$mb:$f" 2>/dev/null; then
+			git cat-file blob "$ours:$f" >"$t.ours"
+			git cat-file blob "$mb:$f" >"$t.base"
+			git cat-file blob "$CB_BASE:$f" >"$t.theirs"
+			# why: the exit status is the number of conflicts left; --theirs leaves none
+			git merge-file -q -p --theirs "$t.ours" "$t.base" "$t.theirs" >"$t.out" || true
+			blob="$(git hash-object -w "$t.out")"
+		else blob="$(git rev-parse "$CB_BASE:$f")"; fi
+		git_idx "$t.idx" update-index --add --cacheinfo "$mode,$blob,$f"
+	done
+	git_idx "$t.idx" write-tree
+	rm -f "$t.idx" "$t.ours" "$t.base" "$t.theirs" "$t.out"
+}
+
+# combine_up_to_date <commit>: the commit with develop in it, without moving any branch. Sets
+# CB_OUT to the commit itself when it contains develop, else to a temporary merge commit whose
+# conflicts in release files (CB_REL of the commit) are solved for develop's side. Any other
+# conflicted path goes to CB_CONFLICTS (one per line) and CB_OUT stays empty.
+# Arguments: $1 a commit. Exit status: 0 on success; 1 when files other than release files
+# conflict; a git error ends the script.
+combine_up_to_date() {
+	local c="$1" out tree f mb fixed=() rc=0
+	CB_OUT="" CB_CONFLICTS=""
+	if git merge-base --is-ancestor "$CB_BASE" "$c"; then
+		CB_OUT="$c"
+		return 0
+	fi
+	combine_paths "$c"
+	out="$(git -c core.quotePath=false merge-tree --write-tree --name-only --no-messages "$c" "$CB_BASE")" || rc=$?
+	[ "$rc" -le 1 ] || die "git merge-tree failed on $(git rev-parse --short "$c") (Git 2.38 or newer is needed): $out"
+	tree="$(sed -n 1p <<<"$out")"
+	while IFS= read -r f; do
+		[ -n "$f" ] || continue
+		case "$CB_REL" in *$'\n'"$f"$'\n'*) fixed+=("$f") ;; *) CB_CONFLICTS="$CB_CONFLICTS$f"$'\n' ;; esac
+	done < <(sed 1d <<<"$out" | LC_ALL=C sort -u)
+	[ -z "$CB_CONFLICTS" ] || return 1
+	if [ "${#fixed[@]}" -gt 0 ]; then
+		mb="$(git merge-base "$c" "$CB_BASE" | sed -n 1p)"
+		tree="$(combine_take_mainline "$tree" "$c" "$mb" "${fixed[@]}")"
+	fi
+	CB_OUT="$(git commit-tree "$tree" -p "$c" -p "$CB_BASE" -m "Merge branch '$QS_BR_MAINLINE' (git combinar, temporary)")"
+}
+
+# combine_originals <tip>: the original RELEASE tips a combined RELEASE squashed, read from the
+# 'Squashes: <branch> <sha>' lines of its chore(combine) commits that are not in develop.
+# Arguments: $1 the tip. Output: "<branch> <sha>" lines, oldest first, each sha once; shas that no
+# longer exist are left out with a warning. Exit status: 0.
+combine_originals() {
+	local b s seen=$'\n'
+	while read -r b s; do
+		case "$seen" in *$'\n'"$s"$'\n'*) continue ;; esac
+		seen="$seen$s"$'\n'
+		if git cat-file -e "$s^{commit}" 2>/dev/null; then
+			printf '%s %s\n' "$b" "$s"
+		else echo "[rama] WARN: $b $s, named by a squash of $(git rev-parse --short "$1"), is gone: left out" >&2; fi
+	done < <(git log --reverse --grep='^chore(combine)' --format=%B "$1" "^$CB_BASE" -- |
+		sed -n 's/^Squashes: \([^ ]*\) \([0-9a-f]\{40\}\)[[:space:]]*$/\1 \2/p')
+	return 0
+}
+
+# combine_order_key <commit>...: the creation order key of a tree: the commit time of its oldest
+# commit not in develop (its version commit when made by git np), then how many such commits the
+# tips have together. A copy (git nueva-version) shares its oldest commit with its source and has
+# more commits, so it sorts after it.
+# Arguments: $1... the tips of the tree. Output: "<seconds since the epoch><TAB><count>".
+# Exit status: 0.
+combine_order_key() {
+	local c first t=""
+	for c in "$@"; do
+		# why: sed reads everything; head would end git with SIGPIPE, an error under pipefail
+		first="$(git rev-list --reverse "$c" "^$CB_BASE" -- | sed -n 1p)"
+		[ -n "$first" ] || continue
+		first="$(git log -1 --format=%ct "$first")"
+		if [ -z "$t" ] || [ "$first" -lt "$t" ]; then t="$first"; fi
+	done
+	printf '%s\t%s\n' "${t:-0}" "$(git rev-list --count "$@" "^$CB_BASE" --)"
+}
+
+# combine_copy_point <tip> <earlier>...: where a tree was copied from one combined before it (git
+# nueva-version): the newest commit of its first-parent line, not in develop, that an earlier tip
+# contains.
+# Arguments: $1 the tip; $2... the tips (and originals) already combined.
+# Output: "<copy point> <earlier tip that contains it>", or nothing. Exit status: 0.
+combine_copy_point() {
+	local tip="$1" c d
+	shift
+	[ "$#" -gt 0 ] || return 0
+	while IFS= read -r c; do
+		for d in "$@"; do
+			if git merge-base --is-ancestor "$c" "$d"; then
+				printf '%s %s\n' "$c" "$d"
+				return 0
+			fi
+		done
+	done < <(git rev-list --first-parent "$tip" "^$CB_BASE" --)
+	return 0
+}
+
+# combine_only_release_after <source> <copy point>: whether all the source tree got after the copy
+# point (and develop lacks) is release commits and mainline merges.
+# Arguments: $1 the source tip; $2 the copy point. Exit status: 0 when so, 1 otherwise.
+combine_only_release_after() {
+	local h s
+	while IFS=$'\x1f' read -r h s; do
+		[[ $s =~ $RELEASE_COMMITS_RX ]] && continue
+		combine_mainline_merge "$h" || return 1
+	done < <(git log --format='%H%x1f%s' "$1" "^$2" "^$CB_BASE" --)
+	return 0
+}
+
+# combine_counts <tip> <exclude>...: what the squash of one RELEASE takes and drops. Sets CB_N (own
+# commits squashed), CB_M (mainline merges), CB_K (release commits) and CB_J (commits an earlier
+# tree already brought).
+# Arguments: $1 the tip; $2... the tips already combined. Exit status: 0.
+combine_counts() {
+	local tip="$1" h s e all ex=()
+	shift
+	for e in "$@"; do ex+=("^$e"); done
+	CB_N=0 CB_M=0 CB_K=0
+	all="$(git rev-list --count "$tip" "^$CB_BASE" --)"
+	while IFS=$'\x1f' read -r h s; do
+		if combine_mainline_merge "$h"; then
+			CB_M=$((CB_M + 1))
+		elif [[ $s =~ $RELEASE_COMMITS_RX ]]; then
+			CB_K=$((CB_K + 1))
+		else CB_N=$((CB_N + 1)); fi
+	done < <(git log --format='%H%x1f%s' "$tip" "^$CB_BASE" ${ex[@]+"${ex[@]}"} --)
+	CB_J=$((all - CB_N - CB_M - CB_K))
+}
+
+# combine_subject <version>: the subject of the squash of one version, within the subject limit.
+# Arguments: $1 the version. Output: the subject. Exit status: 0.
+combine_subject() {
+	local s="chore(combine): $1 changes"
+	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore(combine): $1"
+	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: combine $1"
+	printf '%s' "$s"
+}
+
+# combine_message <version> <tip> <squashes> <exclude>...: the message of the squash of one
+# RELEASE. The body lists, oldest first, the subjects of its own first-parent commits that are not
+# release commits or mainline merges (with the OT of their 'Refs:' trailer); an earlier squash
+# (a combined RELEASE) contributes its own list. Then the 'Squashes:' lines.
+# Arguments: $1 the version; $2 its tip; $3 the 'Squashes: ...' lines; $4... the tips already
+# combined. Output: the message. Exit status: 0.
+combine_message() {
+	local v="$1" tip="$2" sq="$3" h s e src ot lines="" ex=()
+	shift 3
+	for e in "$@"; do ex+=("^$e"); done
+	while IFS=$'\x1f' read -r h s; do
+		[[ $s =~ $RELEASE_COMMITS_RX ]] && continue
+		combine_mainline_merge "$h" && continue
+		if [[ $s =~ ^chore\(combine\) ]]; then
+			lines="$lines$(git log -1 --format=%B "$h" | grep '^- ' || true)"$'\n'
+			continue
+		fi
+		src="$(git log -1 --format='%(trailers:key=Refs,valueonly)' "$h" | sed -n '1s/ .*//p')"
+		ot=""
+		case "$src" in */*/*) ot="$(branch_ot "$src")" ;; esac
+		lines="$lines- $s${ot:+ (OT $ot)}"$'\n'
+	done < <(git log --first-parent --reverse --format='%H%x1f%s' "$tip" "^$CB_BASE" ${ex[@]+"${ex[@]}"} --)
+	combine_subject "$v"
+	printf '\n\n'
+	lines="$(grep -v '^$' <<<"$lines" || true)"
+	[ -z "$lines" ] || printf '%s\n\n' "$lines"
+	printf '%s\n' "$sq"
+}
+
+# combine_archive <branch> <tip>: keep a combined RELEASE as 'unmerged/<branch>' (local and on
+# origin) instead of deleting it, so the changelog refs and the 'Squashes:' shas still resolve.
+# Arguments: $1 the RELEASE branch; $2 its tip. Output: a line naming the archive.
+# Exit status: 0; ends the script when no free name is left.
+combine_archive() {
+	local b="$1" tip="$2" new
+	REL_PLANNED=$'\n'
+	new="$(archive_name "$b")" || die "no free name to set '$b' aside; it is kept"
+	git branch -q -f --no-track "$new" "$tip"
+	if [ "$(current_branch || true)" = "$b" ]; then git checkout -q --detach; fi
+	if exists_ref "refs/heads/$b"; then git branch -q -D "$b"; fi
+	if has_origin && exists_ref "refs/remotes/origin/$b"; then
+		git push -q origin "$tip:refs/heads/$new" ":refs/heads/$b" ||
+			echo "[rama] WARN: could not move $b to $new on origin: git push origin $new :$b" >&2
+	fi
+	git config --unset "qs.release.$(branch_version "$b").tag" 2>/dev/null || true
+	say "$b kept as $new"
+}
+
+# combine_stale_help: how to bring develop into a RELEASE by hand when combinar cannot do it.
+# Arguments: none. Output: the suggested resolution, on stderr. Exit status: 0.
+combine_stale_help() {
+	cat >&2 <<EOF
+  Then resolve: $QS_BR_CHANGELOG keeps the entries of both sides in semver order; $QS_BR_VERSION_FILE and
+  the pom version keep the RELEASE version (the qs-version merge driver does it); the README badge
+  and CITATION.cff keep the RELEASE version; other files are real conflicts: fix them by hand.
+  Commit the merge and run git combinar again.
+EOF
+}
+
+# git combinar: join several '<v>/RELEASE' branches into '<target>/RELEASE'. The result starts at
+# develop and gets, oldest tree first, one squash commit per RELEASE with only its own changes
+# (no develop content, no release commits, nothing an earlier tree brought), then the version,
+# changelog and readme commits of the target. The CHANGELOG.md entry is built from the original
+# histories. The joined RELEASE branches are kept as 'unmerged/<v>/RELEASE'.
+# Arguments: --version <v>, --incluir <v1,v2...>, and --yes (global). Output: plan and progress.
+# Exit status: 0 on success; 1 (through die) on a bad argument, a conflict or a failed step;
+# nothing is changed when it stops before the result is written.
 cmd_combinar() {
-	local target="" incl="" a rels=() chosen=() r t key base wt gd ordered=() mb rx old=() n
+	local target="" incl="" rels=() chosen=() ordered=() done_tips=() links=() r t c d cp src bad=0
+	local btree ntree p s h tree sq made here wt b m only
+	local -A tip=() up=() orig=()
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 		--version)
@@ -1284,22 +1583,24 @@ cmd_combinar() {
 		shift
 	done
 	require_clean || die "working tree not clean: commit or stash first"
+	# why: the index and tree paths below are relative to the top of the work tree
+	cd "$(git rev-parse --show-toplevel)"
 	fetch_origin
-	base="$(best_ref "$QS_BR_MAINLINE" || true)"
-	[ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
+	CB_BASE="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$CB_BASE" ] || die "'$QS_BR_MAINLINE' does not exist"
+	CB_BASE="$(git rev-parse "$CB_BASE^{commit}")"
 	mapfile -t rels < <(release_branches)
 	[ "${#rels[@]}" -ge 2 ] || die "combinar needs two or more RELEASE branches (now: ${rels[*]:-none}); prepare them with git release --version <v>"
 	for r in "${rels[@]}"; do
 		t="$(branch_tip "$r")"
 		[ "$t" = diverged ] && die "$r: local and origin diverged; pull it first"
-		git merge-base --is-ancestor "$base" "$t" ||
-			die "$r lacks commits of $QS_BR_MAINLINE: git checkout $r && git merge $QS_BR_MAINLINE, then combinar again"
+		tip[$r]="$t"
 	done
 	# which ones: --incluir, or a yes/no question for each
 	for r in "${rels[@]}"; do
 		if [ -n "$incl" ]; then
 			case ",$incl," in *",$(branch_version "$r"),"* | *",$r,"*) chosen+=("$r") ;; esac
-		elif confirm "Combine $r ($(git rev-list --count --no-merges "$(branch_tip "$r")" "^$base") commit(s))?"; then
+		elif confirm "Combine $r ($(git rev-list --count --no-merges "${tip[$r]}" "^$CB_BASE") commit(s))?"; then
 			chosen+=("$r")
 		fi
 	done
@@ -1315,73 +1616,135 @@ cmd_combinar() {
 		case " ${chosen[*]} " in *" $REL_RELEASE "*) ;; *) die "'$REL_RELEASE' exists and is not among the chosen ones" ;; esac
 	fi
 	taken "$target/$QS_BR_LEAF" && die "'$target/$QS_BR_LEAF' exists: that tree is not released yet"
-	# creation order: the oldest commit of each tree (its version commit when made by git np)
+	# the joined branches are renamed at the end: none may be checked out in another worktree
+	here="$(git rev-parse --show-toplevel)"
+	while IFS=$'\t' read -r wt b; do
+		case " ${chosen[*]} " in *" ${b#refs/heads/} "*) die "'${b#refs/heads/}' is checked out in another worktree ($wt): switch it or remove that worktree; nothing was changed" ;; esac
+	done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
+	CB_GD="$(git rev-parse --absolute-git-dir)/quality-suite"
+	mkdir -p "$CB_GD"
+	trap combine_cleanup EXIT
+
+	# 1. every RELEASE up to date with develop: a temporary merge commit when it is not
+	for r in "${chosen[@]}"; do
+		t="${tip[$r]}"
+		orig[$r]="$(combine_originals "$t")"
+		git merge-base --is-ancestor "$CB_BASE" "$t" ||
+			echo "[rama] WARN: $r lacks $(git rev-list --count "$t..$CB_BASE") commit(s) of $QS_BR_MAINLINE: merging $QS_BR_MAINLINE into a temporary commit (no branch moves)" >&2
+		if combine_up_to_date "$t"; then
+			up[$r]="$CB_OUT"
+		else
+			bad=1
+			echo "[rama] $r: merging $QS_BR_MAINLINE conflicts in files that are not release files:" >&2
+			sed '/^$/d; s/^/    /' <<<"$CB_CONFLICTS" >&2
+			echo "  Bring $QS_BR_MAINLINE in by hand: git checkout $r && git merge $QS_BR_MAINLINE" >&2
+		fi
+	done
+	if [ "$bad" = 1 ]; then
+		combine_stale_help
+		die "nothing was changed"
+	fi
+	# 2. creation order: the oldest own commit of each tree (of its originals when it was combined;
+	# its squashes are newer than anything it holds)
 	mapfile -t ordered < <(for r in "${chosen[@]}"; do
-		# why: sed reads everything; head would end git with SIGPIPE, an error under pipefail
-		key="$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"
-		printf '%s\t%s\n' "$(git log -1 --format=%ct "${key:-$(branch_tip "$r")}")" "$r"
-	done | sort -n -k1,1 | cut -f2-)
-	echo "Combine into $REL_RELEASE (oldest first; their version/changelog/readme commits are left out and written again for $target):"
+		if [ -n "${orig[$r]}" ]; then
+			# shellcheck disable=SC2046 # why: one sha per word
+			c="$(combine_order_key $(cut -d' ' -f2 <<<"${orig[$r]}"))"
+		else c="$(combine_order_key "${tip[$r]}")"; fi
+		printf '%s\t%s\n' "$c" "$r"
+	done | sort -t $'\t' -k1,1n -k2,2n -k3,3 | cut -f3-)
 	[ "${#ordered[@]}" -eq "${#chosen[@]}" ] || die "could not order the RELEASE branches by creation"
+	echo "Combine into $REL_RELEASE, on $QS_BR_MAINLINE ($(git rev-parse --short "$CB_BASE")), oldest first; one squash commit"
+	echo "per RELEASE with its own changes; their version/changelog/readme commits are written again for $target:"
 	for r in "${ordered[@]}"; do
-		echo "  $r  (since $(git log -1 --date=short --format=%ad "$(git rev-list --reverse "$(branch_tip "$r")" "^$base" | sed -n 1p)"))"
+		echo "  $r$([ -n "${orig[$r]}" ] && echo "  (combined from: $(cut -d' ' -f1 <<<"${orig[$r]}" | tr '\n' ' '))")"
 	done
 	confirm "Go on?" || die "cancelled; nothing was changed"
 
-	gd="$(git rev-parse --absolute-git-dir)/quality-suite"
-	wt="$gd/combine-wt"
-	rm -rf "$wt"
+	# 3.-6. one squash per RELEASE, in a temporary worktree detached at develop
+	CB_WT="$CB_GD/combine-wt"
+	rm -rf "$CB_WT"
 	git worktree prune
-	git worktree add -q --detach "$wt" "$base" || die "could not create a temporary worktree"
-	rx="$RELEASE_COMMITS_RX"
-	local done_tips=() d m depth best bestd
+	git worktree add -q --detach "$CB_WT" "$CB_BASE" >/dev/null 2>&1 || die "could not create a temporary worktree; nothing was changed"
 	for r in "${ordered[@]}"; do
-		t="$(branch_tip "$r")"
-		# why: a tree copied from another (git nueva-version) shares its first commits with it: replay
-		# only what it added since they split (the deepest common point with the trees already combined)
-		best="$base"
-		bestd=0
-		for d in ${done_tips[@]+"${done_tips[@]}"}; do
-			m="$(git merge-base "$t" "$d" || true)"
-			[ -n "$m" ] || continue
-			depth="$(git rev-list --count "$m" "^$base")"
-			[ "$depth" -gt "$bestd" ] && {
-				best="$m"
-				bestd="$depth"
-			}
-		done
-		done_tips+=("$t")
-		mb="$best"
-		# why: the integrations of each tree keep their merges (--rebase-merges): the changelog reads them
-		if ! QUALITY_ALLOW_REBASE=1 GIT_SEQUENCE_EDITOR="sed -i -E '/^pick [0-9a-f]+ ${rx#^}/d'" \
-			git -C "$wt" rebase -q -i --rebase-merges --empty=drop --onto HEAD "$mb" "$t" >"$gd/combine.log" 2>&1; then
-			git -C "$wt" rebase --abort >/dev/null 2>&1 || true
-			git worktree remove --force "$wt"
-			sed 's/^/  /' "$gd/combine.log" | tail -n 15 >&2
-			die "$r conflicts with the ones before it; nothing was changed. Merge them by hand on one RELEASE branch, or combine fewer"
+		t="${tip[$r]}"
+		combine_paths "$t"
+		only="$CB_ONLY"
+		btree="$(git rev-parse "$CB_BASE^{tree}")"
+		cp="$(combine_copy_point "$t" ${done_tips[@]+"${done_tips[@]}"})"
+		if [ -n "$cp" ]; then
+			read -r c d <<<"$cp"
+			# why: the source's own develop merge holds the resolution when it only added release commits
+			if combine_only_release_after "$d" "$c"; then src="$d"; else src="$c"; fi
+			if ! combine_up_to_date "$src"; then
+				echo "[rama] $r is a copy of an earlier tree ($(git rev-parse --short "$c")) that conflicts with $QS_BR_MAINLINE in:" >&2
+				sed '/^$/d; s/^/    /' <<<"$CB_CONFLICTS" >&2
+				die "nothing was changed. Merge $QS_BR_MAINLINE into the RELEASE it was copied from, or combine fewer"
+			fi
+			btree="$(combine_normalize "$CB_OUT" "$only")"
+			say "$r: copied from an earlier tree at $(git rev-parse --short "$c"); only what it added since is squashed"
 		fi
+		ntree="$(combine_normalize "${up[$r]}" "$only")"
+		combine_counts "$t" ${done_tips[@]+"${done_tips[@]}"}
+		if [ -n "${orig[$r]}" ]; then
+			sq="Squashes: ${orig[$r]//$'\n'/$'\n'Squashes: }"$'\n'"Squashes: $r $t"
+		else sq="Squashes: $r $t"; fi
+		made=0
+		if [ "$ntree" != "$btree" ]; then
+			p="$(git commit-tree "$btree" -m "git combinar: base of $r (temporary)")"
+			s="$(git commit-tree "$ntree" -p "$p" -m "git combinar: $r (temporary)")"
+			if ! git -C "$CB_WT" cherry-pick --no-commit "$s" >"$CB_GD/combine.log" 2>&1; then
+				tree="$(git -C "$CB_WT" diff --name-only --diff-filter=U)"
+				if [ -n "$tree" ] || ! git -C "$CB_WT" diff --cached --quiet; then
+					echo "[rama] $r conflicts with the RELEASE branches before it in:" >&2
+					sed '/^$/d; s/^/    /' <<<"${tree:-$(cat "$CB_GD/combine.log")}" >&2
+					die "nothing was changed. Merge them by hand on one RELEASE branch, or combine fewer"
+				fi
+			fi
+			tree="$(git -C "$CB_WT" write-tree)"
+			h="$(git -C "$CB_WT" rev-parse HEAD)"
+			if [ "$tree" != "$(git rev-parse "$h^{tree}")" ]; then
+				combine_message "$(branch_version "$r")" "$t" "$sq" ${done_tips[@]+"${done_tips[@]}"} >"$CB_GD/combine.msg"
+				h="$(git commit-tree "$tree" -p "$h" -F "$CB_GD/combine.msg")"
+				made=1
+			fi
+			git -C "$CB_WT" reset -q --hard "$h"
+		fi
+		say "$r: $CB_N own commit(s) squashed; dropped $CB_M mainline merge(s), $CB_K release commit(s), $CB_J already combined$([ "$made" = 1 ] || echo "; nothing new, no squash commit")"
+		done_tips+=("$t")
+		if [ -n "${orig[$r]}" ]; then
+			while read -r b c; do
+				done_tips+=("$c")
+				links+=("$c")
+			done <<<"${orig[$r]}"
+		fi
+		links+=("$t")
 	done
-	t="$(git -C "$wt" rev-parse HEAD)"
-	git worktree remove --force "$wt"
-	# the combined branch, then the release commits of the new version on it
-	for r in "${chosen[@]}"; do [ "$r" = "$REL_RELEASE" ] || old+=("$r"); done
+	t="$(git -C "$CB_WT" rev-parse HEAD)"
+	git worktree remove --force "$CB_WT"
+	CB_WT=""
+	# 7. the changelog reads the original histories: a chain of temporary merges on develop
+	m="$CB_BASE"
+	for c in "${links[@]}"; do
+		m="$(git commit-tree "$c^{tree}" -p "$m" -p "$c" -m "Combine $(git rev-parse --short "$c") (git combinar, temporary)")"
+	done
+	# 8. the combined branch, then the release commits of the new version on it
+	case " ${chosen[*]} " in *" $REL_RELEASE "*) combine_archive "$REL_RELEASE" "${tip[$REL_RELEASE]}" ;; esac
 	if [ "$(current_branch || true)" = "$REL_RELEASE" ]; then git checkout -q --detach; fi
 	git branch -q -f --no-track "$REL_RELEASE" "$t"
 	git checkout -q "$REL_RELEASE"
-	REL_VERSION="$target" REL_TIP="$t" REL_CL_BASE="$base" REL_PUSH=1
+	REL_VERSION="$target" REL_TIP="$m" REL_CL_BASE="$CB_BASE" REL_PUSH=1
 	REL_TAG="$(render_tag "$target/$QS_BR_LEAF")"
 	git config "qs.release.$target.tag" "$REL_TAG"
 	release_commits
 	if has_origin; then
-		git push -q -u --force-with-lease origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the RELEASE branches combined are kept"
+		git push -q -u origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the RELEASE branches combined are kept"
 	fi
-	for r in ${old[@]+"${old[@]}"}; do
-		exists_ref "refs/remotes/origin/$r" && has_origin && git push -q origin --delete "$r"
-		exists_ref "refs/heads/$r" && git branch -q -D "$r"
-		git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
+	# 9. the joined RELEASE branches are kept, renamed, so their history stays reachable
+	for r in "${chosen[@]}"; do
+		[ "$r" = "$REL_RELEASE" ] || combine_archive "$r" "${tip[$r]}"
 	done
-	n="$(release_branches | tr '\n' ' ')"
-	say "combined ${#chosen[@]} release(s) into $REL_RELEASE; ${#old[@]} deleted. RELEASE branches now: $n"
+	say "combined ${#chosen[@]} release(s) into $REL_RELEASE; RELEASE branches now: $(release_branches | tr '\n' ' ')"
 	echo "Review $QS_BR_CHANGELOG on $REL_RELEASE, then: git publicar --version $target"
 }
 
