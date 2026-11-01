@@ -9,7 +9,7 @@ PowerShell. Replace `/c/dev` with wherever you keep things.
 
 ```text
 you ──> Claude Code (your Claude subscription; official CLI)
-          ├─ subagents by role (.claude/agents): analyst, developer, qa, reviewer, docs-writer...
+          ├─ subagents by role (.claude/agents): systems-analyst, developer, qa, reviewer, docs-writer...
           ├─ after every edit: hook -> scripts/qs-run.sh -> quality gate (Docker, offline)
           └─ external-worker -> scripts/ai-ask.sh -> LiteLLM gateway  http://localhost:4000
                                                     ├─ Anthropic / OpenAI / Gemini API keys (paid)
@@ -202,7 +202,7 @@ claude
 
 Prompts for the session (one at a time; you approve at each stop):
 
-1. *"Use the analyst subagent to write the spec of OT 100001: a login page `login.jsp` posting
+1. *"Use the systems-analyst subagent to write the spec of OT 100001: a login page `login.jsp` posting
    to a `LoginServlet` (Java 17), a `login.css`, client-side validation in `login.js`, and a
    `README.md`. Apply the Junta norms that exist. Stop for my approval."*
 2. *"Plan it as tasks with one final branch each under 1.0.0/100001/ORIGINAL and stop."*
@@ -211,6 +211,9 @@ Prompts for the session (one at a time; you approve at each stop):
    `git nr <task> --from 1.0.0/100001/ORIGINAL`, and the gate runs after every edit.
 4. *"Integrate the approved branches into 1.0.0/100001/ORIGINAL."* The lead runs
    `git integra -m "<subject>"` per branch (Claude Code asks you before running it).
+
+The whole flow (the lead as business analyst, `systems-analyst`, developers, the qa bugfix loop,
+bottom-up integration) is the `team-flow` skill; the branch model is the `branch-workflow` skill.
 
 Then you close the OT and the version yourself:
 
