@@ -1338,9 +1338,8 @@ def _tool_release_notes(ap, argv, where):
         origin, br.get("tag_url", ""), br.get("commit_url", "")
     )
     levels = br.get("levels") or []
-    items, omitted = changelog.entries(
-        git, a.tip, a.base, commit_t, levels[1] if len(levels) > 1 else r"^[0-9]+$"
-    )
+    ot_rx = levels[1] if len(levels) > 1 else policy.OT_RX
+    items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx)
     link = tag_t.replace("{tag}", a.tag or a.version) if tag_t else ""
     block = changelog.render(a.version, a.date, items, link)
     sys.stdout.write(block)

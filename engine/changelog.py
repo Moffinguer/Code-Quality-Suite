@@ -18,6 +18,7 @@ import datetime
 import re
 import subprocess
 
+import policy
 import semver
 
 GROUPS = ("Changed", "Added", "Removed", "Fixed")
@@ -198,11 +199,24 @@ def _entry_refs(c, src, inner, commit_url, ot_rx):
     return refs
 
 
-def entries(gitcmd, tip, base, commit_url="", ot_rx=r"^[0-9]+$"):
+def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
     """Changes between base and tip, one per integrated final branch (the 'git integra' merge
-    subject) and one per direct commit. Returns (entries, omitted subjects).
+    subject) and one per direct commit.
 
-    An entry: {group, breaking, text, refs [str], authors [str], order}.
+    Args:
+        gitcmd: the git command line prefix (list of str).
+        tip: the newest revision of the release.
+        base: the revision the release starts after ('' = the whole history).
+        commit_url: URL template with '{commit}' for the commit references, or ''.
+        ot_rx: regular expression of the OT, the second segment of the integrated branch;
+            by default the policy default of branches.levels[1] (letters and digits).
+
+    Returns:
+        tuple: (entries, omitted subjects). An entry is
+        {group, breaking, text, refs [str], authors [str], order}.
+
+    Raises:
+        RuntimeError: git failed.
     """
     out, omitted, seq = [], [], [0]
 

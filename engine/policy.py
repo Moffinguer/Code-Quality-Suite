@@ -15,6 +15,10 @@ import fnmatch
 import os
 import re
 
+# level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
+# no '-' or '_', so it never collides with the leaf names of the branch model
+OT_RX = r"^[A-Za-z0-9]+$"
+
 DEFAULTS = {
     "encoding": {
         "enabled": True,
@@ -48,11 +52,12 @@ DEFAULTS = {
         "parent_leaf": "ORIGINAL",
         "mainline": "develop",
         "protected": ["main", "master", "develop"],
-        # level 1: the version, Semantic Versioning without build metadata (https://semver.org)
+        # level 1: the version, Semantic Versioning without build metadata (https://semver.org);
+        # level 2: the OT (OT_RX)
         "levels": [
             r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
             r"(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$",
-            r"^[0-9]+$",
+            OT_RX,
         ],
         "segment": r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
         "allow": [],

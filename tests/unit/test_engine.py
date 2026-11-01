@@ -456,7 +456,7 @@ class Policy(unittest.TestCase):
             {"branches": {"parent_leaf": "ORIGINAL", "allow": ["^release/it's$"]}}
         )
         self.assertIn("QS_BR_LEAF='ORIGINAL'", env)
-        self.assertIn("QS_BR_LEVEL_2='^[0-9]+$'", env)
+        self.assertIn("QS_BR_LEVEL_2='^[A-Za-z0-9]+$'", env)
         self.assertIn("QS_BR_ALLOW_1='^release/it'\\''s$'", env)
 
 
@@ -611,6 +611,57 @@ class RepoFiles(unittest.TestCase):
             "https://gitlab.x.es/g/r/-/tags/{tag}",
         )
         self.assertEqual(repofiles.link_templates("/tmp/remote.git"), ("", ""))
+
+
+class AlphanumericOt(unittest.TestCase):
+    """The OT (level 2 of a branch name) is ASCII letters and digits; numeric OTs keep working."""
+
+    GOOD = ("188858", "ABC123", "abc", "RF001", "7")
+    BAD = ("AB-12", "AB_12", "AB 12", " ABC", "ABC ", "AÑO1", "café", "", "AB/12")
+
+    def test_default_level_is_the_ot_rule(self):
+        self.assertEqual(policy.OT_RX, "^[A-Za-z0-9]+$")
+        self.assertEqual(policy.DEFAULTS["branches"]["levels"][1], policy.OT_RX)
+        self.assertEqual(policy.get({}, "branches")["levels"][1], policy.OT_RX)
+        self.assertEqual(policy.validate({}), [])
+
+    def test_accepted(self):
+        for ot in self.GOOD:
+            with self.subTest(ot=ot):
+                self.assertTrue(re.match(policy.OT_RX, ot))
+
+    def test_refused(self):
+        for ot in self.BAD:
+            with self.subTest(ot=ot):
+                self.assertFalse(re.match(policy.OT_RX, ot))
+
+    def test_exported_to_the_hooks(self):
+        self.assertIn("QS_BR_LEVEL_2='^[A-Za-z0-9]+$'\n", policy.shell_env({}))
+
+    def test_rules_file_level_kept(self):
+        data = {"branches": {"levels": [policy.DEFAULTS["branches"]["levels"][0], "^[0-9]+$"]}}
+        self.assertEqual(policy.get(data, "branches")["levels"][1], "^[0-9]+$")
+        # why: existing rules files are never rewritten; a numeric-only OT rule stays
+        self.assertNotIn("branches.levels", policy.populate(data))
+        self.assertEqual(data["branches"]["levels"][1], "^[0-9]+$")
+
+    def test_changelog_default_is_the_policy(self):
+        default = changelog.entries.__defaults__[-1]
+        self.assertEqual(default, policy.OT_RX)
+
+    def test_changelog_ot_reference(self):
+        self.assertEqual(changelog._ot_of("4.0.2/188858/login", policy.OT_RX), "188858")
+        self.assertEqual(changelog._ot_of("4.0.2/ABC123/login", policy.OT_RX), "ABC123")
+        self.assertEqual(changelog._ot_of("4.0.2/ABC123/ORIGINAL", policy.OT_RX), "ABC123")
+        for src in ("4.0.2/AB-12/login", "4.0.2/AB 12/login", "4.0.2//login", "4.0.2/ABC123"):
+            with self.subTest(src=src):
+                self.assertIsNone(changelog._ot_of(src, policy.OT_RX))
+        self.assertIsNone(changelog._ot_of("4.0.2/ABC123/login", "^[0-9]+$"))
+
+    def test_changelog_entry_refs(self):
+        c = {"hash": "a" * 40, "body": "feat: x\n\nNorms: N1\n"}
+        refs = changelog._entry_refs(c, "4.0.2/ABC123/login", (), "", policy.OT_RX)
+        self.assertEqual(refs, ["aaaaaaa", "OT ABC123", "N1"])
 
 
 class RegistryIntegrity(unittest.TestCase):
