@@ -48,7 +48,7 @@ again after moving the suite; `git actualizar-suite` runs it for you after an up
 ```text
 develop
 └─ 6.22.6/ORIGINAL                   version (Semantic Versioning), always a parent
-   └─ 6.22.6/188858/ORIGINAL         work order (OT, a number)
+   └─ 6.22.6/188858/ORIGINAL         work order (OT: letters and digits, e.g. 188858 or ABC123)
       ├─ 6.22.6/188858/login         final branch: one task
       └─ 6.22.6/188858/bank/ORIGINAL a branch with children
          └─ 6.22.6/188858/bank/bugfix
@@ -133,8 +133,9 @@ git add -A && git commit -m "chore: initial project skeleton"
 - **Does:** a new **parent** branch. From `develop`: `<version>/ORIGINAL`, where `<version>` is a
   semver version or `patch` / `minor` / `major` (the next one after the highest tag, version tree
   or `VERSION`), with a first commit `chore(version): <version>` that writes `VERSION`, the
-  `pom.xml` files and `package.json`. From `<F>/ORIGINAL`: `<F>/<name>/ORIGINAL` (an OT is a
-  number). Checks the new branch out.
+  `pom.xml` files and `package.json`. From `<F>/ORIGINAL`: `<F>/<name>/ORIGINAL` (an OT is ASCII
+  letters and digits: `git np 188858` or `git np ABC123`; `ORIGINAL` and `RELEASE` are reserved).
+  Checks the new branch out.
 - **Use it when:** starting a version (from `develop`), an OT, or a group of tasks that will have
   several final branches.
 - **Who:** lead (a version: human).
@@ -255,9 +256,23 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
 ### git combinar
 
 - **Syntax:** `git combinar [--incluir <v1,v2...>] [--version <v>] [--yes]`
-- **Does:** asks yes/no for each `<v>/RELEASE` and the version of the result; rebases the chosen
-  ones in creation order (oldest first) into `<version>/RELEASE`, drops their version and
-  changelog commits, writes them again for the new version, deletes the joined ones.
+- **Does:** asks yes/no for each `<v>/RELEASE` and the version of the result. A `RELEASE`
+  without `develop` gets a warning and a temporary merge of `develop` (no branch moves; conflicts
+  in the release files are solved for `develop`, any other conflict stops with "nothing was
+  changed" and the `git merge develop` steps). The result starts at `develop` and gets, oldest
+  tree first, one `chore(combine): <v> changes` squash per `RELEASE` with only its own changes
+  (no `develop` content, no release commits, nothing an earlier or copied-from tree brought; the
+  body lists the subjects and a `Squashes: <v>/RELEASE <sha>` line), then the version,
+  `CHANGELOG.md` and README badge commits of the new version. The changelog entry comes from the
+  original histories, each change once. Prints per `RELEASE` the commits squashed and the
+  mainline merges, release commits and already combined commits dropped. The joined branches
+  are kept as `unmerged/<v>/RELEASE` (local and origin; on origin the old name is deleted). The
+  plan lists every local and origin rename before the confirmation (`--yes` answers it). A
+  combined `RELEASE` can be combined again. Order: author date of each tree's version commit; a
+  combined `RELEASE` takes the earliest date of what it squashed. All or nothing: every commit
+  is made in a temporary worktree first, then the local branches move in one transaction, then
+  one `git push --atomic` to origin. On any conflict or failure nothing changes; if only the
+  push fails, the local result is kept and the push to run is printed.
 - **Use it when:** several prepared versions must reach `develop` as one.
 - **Who:** human.
 

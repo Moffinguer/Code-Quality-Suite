@@ -7,14 +7,19 @@ basic_format: whitespace-only, never changes semantics: strips trailing whitespa
               backslash), ensures one final newline, preserves line endings.
 Plus structured checks: properties, ini, csv/tsv, jsonl, json/jsonc, yaml, jsp.
 """
+
+import ast
 import configparser
 import csv
 import io
 import json
 import re
+import sys
 
 CONFLICT = re.compile(r"^(<{7}|={7}|>{7}|\|{7})( |$)", re.M)
-PRIVATE_KEY = re.compile(r"-----BEGIN ((RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY( BLOCK)?-----")
+PRIVATE_KEY = re.compile(
+    r"-----BEGIN ((RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY( BLOCK)?-----"
+)
 _PAIRS = {")": "(", "]": "[", "}": "{"}
 
 
@@ -23,7 +28,8 @@ def slurp(path):
         return fh.read()
 
 
-CHARSET_OF = {}  # abs path -> declared non-UTF-8 charset (set by the engine from the encoding policy)
+# abs path -> declared non-UTF-8 charset (set by the engine from the encoding policy)
+CHARSET_OF: dict[str, str] = {}
 
 
 def read_text(path):
@@ -37,7 +43,8 @@ def read_text(path):
         return None, f"not valid {(cs or 'UTF-8').upper()} at byte {getattr(e, 'start', 0)}"
 
 
-def _lex(text, spec):
+# why: single-pass lexer state machine; splitting it would risk behaviour
+def _lex(text, spec):  # noqa: C901, PLR0912, PLR0915
     """Yield (kind, start, end) spans for strings/comments; brackets reported separately.
 
     spec keys: line_comment [..], block_comment [[open, close]..], strings [delims],
@@ -130,10 +137,12 @@ def basic_syntax(path, spec):
     opens = set(brackets[0::2])
     closes = {brackets[k + 1]: brackets[k] for k in range(0, len(brackets), 2)}
     stack = []
-    for kind, s, e, unterminated in _lex(text, spec):
+    for kind, s, _e, unterminated in _lex(text, spec):
         if kind != "code":
             if unterminated:
-                problems.append(f"unterminated {kind} starting at line {text.count(chr(10), 0, s) + 1}")
+                problems.append(
+                    f"unterminated {kind} starting at line {text.count(chr(10), 0, s) + 1}"
+                )
                 return problems
             continue
         ch = text[s]
@@ -153,7 +162,8 @@ def basic_syntax(path, spec):
 _HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
 
-def basic_format(path, spec, write=True):
+# why: single-pass whitespace normaliser; splitting it would risk behaviour
+def basic_format(path, spec, write=True):  # noqa: C901, PLR0912
     """Return True if the file is (or would be) unchanged."""
     raw = slurp(path)
     try:
@@ -172,7 +182,9 @@ def basic_format(path, spec, write=True):
         keep = set(range(len(lines)))
     else:
         joined = "\n".join(lines)
-        for kind, s, e, _ in _lex(joined, spec) if spec.get("strings") or spec.get("raw_strings") else ():
+        for kind, s, e, _ in (
+            _lex(joined, spec) if spec.get("strings") or spec.get("raw_strings") else ()
+        ):
             if kind == "string" and "\n" in joined[s:e]:
                 a = joined.count("\n", 0, s)
                 b = joined.count("\n", 0, e)
@@ -213,8 +225,6 @@ def basic_format(path, spec, write=True):
 
 def python_ast(path, version=None):
     """Native Python parse check, honouring the target version when the checker supports it."""
-    import ast
-    import sys
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -230,9 +240,11 @@ def python_ast(path, version=None):
             ast.parse(text, filename=path)
     except SyntaxError as e:
         if target and target > run:
-            return []  # why: newer syntax than this checker knows; the linter (ruff) still parses it
+            return []  # why: newer syntax than this checker knows; ruff still parses it
         where = f"line {e.lineno}" + (f" col {e.offset}" if e.offset else "")
-        return [f"{where}: {e.msg}" + (f" (target Python {target[0]}.{target[1]})" if target else "")]
+        return [
+            f"{where}: {e.msg}" + (f" (target Python {target[0]}.{target[1]})" if target else "")
+        ]
     return []
 
 
@@ -264,10 +276,17 @@ def check_ini(path):
     text, err = read_text(path)
     if text is None:
         return [err]
-    cp = configparser.RawConfigParser(strict=True, allow_no_value=True, interpolation=None,
-                                      comment_prefixes=("#", ";"), inline_comment_prefixes=None)
+    cp = configparser.RawConfigParser(
+        strict=True,
+        allow_no_value=True,
+        interpolation=None,
+        comment_prefixes=("#", ";"),
+        inline_comment_prefixes=None,
+    )
     try:
-        cp.read_string(text if re.match(r"\s*[\[#;]", text) or not text.strip() else "[__root__]\n" + text)
+        cp.read_string(
+            text if re.match(r"\s*[\[#;]", text) or not text.strip() else "[__root__]\n" + text
+        )
     except configparser.Error as e:
         return [str(e).splitlines()[0]]
     return []
@@ -295,7 +314,8 @@ def check_toml(path):
     if text is None:
         return [err]
     try:
-        import tomllib
+        # why: absent before Python 3.11, the check is skipped there
+        import tomllib  # noqa: PLC0415
     except ImportError:
         return []
     try:
@@ -380,7 +400,8 @@ def check_yaml(path):
     if text is None:
         return [err]
     try:
-        import yaml  # python3-yaml in the base image
+        # why: optional dependency (python3-yaml in the base image)
+        import yaml  # noqa: PLC0415
     except ImportError:
         return []
     try:
