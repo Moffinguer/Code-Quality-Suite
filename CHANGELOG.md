@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.0.0 - 2026-11-01
+
+### Added
+
+- Add dev-documents skill (58feea0; Fernando Mateos)
+- Keep filled dev_documents (f9628bf; Fernando Mateos)
+- Add dev_documents templates (c1b5803; Fernando Mateos)
+- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
+
+### Fixed
+
+- Mark requirement fields optional (f623dbf, OT 100; Fernando Mateos)
+- Cover AC5-AC6 and AC9 (b8582db, OT 100; Fernando Mateos)
+- Quote ignore globs, narrow disables (e473287; Fernando Mateos)
+
 ## 2.6.0 - 2026-10-27
 
 ### Changed
