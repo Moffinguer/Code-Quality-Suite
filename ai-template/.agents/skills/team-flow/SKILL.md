@@ -36,9 +36,13 @@ paths** in the main worktree.
 5. **QA** (`qa`) looks for failing criteria, odd code, malformed code and potential bugs. It
    writes findings to `docs/<version-or-ot>/<req>/bugfix.md` and never edits production code.
    Bugfix loop, run by the lead:
-   - the requirement branch is final: `git convertir-padre` on it, then `git nr bugfix`;
-   - it is already an ORIGINAL: `git nr bugfix` creates the sibling `<req>/bugfix`;
-   - a developer fixes the findings on `<req>/bugfix`; qa reviews again;
+   - the requirement branch `<final-branch>` is final: `git convertir-padre` renames it to
+     `<final-branch>/ORIGINAL`, then `git nr bugfix` creates `<final-branch>/bugfix`. Example:
+     `3.0.0/100/ignore` -> `3.0.0/100/ignore/ORIGINAL` + `3.0.0/100/ignore/bugfix`.
+     The lead runs `git convertir-padre` only when the branch is NOT on origin (local rename);
+     if it is on origin, ask the human to run it. qa never runs it;
+   - it is already an ORIGINAL: `git nr bugfix` creates the child `<folder>/bugfix`;
+   - a developer fixes the findings on `<final-branch>/bugfix`; qa reviews again;
    - repeat until qa finds nothing. Then the `reviewer` (opus) gives its verdict.
 6. **Integration**, bottom-up: from the deepest branches up to `<version>/ORIGINAL`, one level
    at a time with `git integra -m "<subject>" -m "<why>"`. **Human checkpoint: approve each

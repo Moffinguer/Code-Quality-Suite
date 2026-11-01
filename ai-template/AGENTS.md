@@ -39,7 +39,7 @@ skills and in `knowledge/`.
 | systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | edits source code, creates branches |
 | developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
 | reviewer | opus | reviews diffs against norms and quality rules | edits code |
-| qa | sonnet | tests, gate runs, regression checks; findings open the `<req>/bugfix` loop | changes production code |
+| qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | changes production code |
 | docs-writer | haiku | documentation from recipes | invents requirements |
 | intern | haiku | boilerplate, renames, small mechanical edits | touches security code |
 | external-worker | haiku | hands cheap, non-regulated tasks to other models via the gateway | sends regulated data |
