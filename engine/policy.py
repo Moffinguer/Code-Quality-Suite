@@ -7,7 +7,9 @@
 The engine enforces `encoding`; `commit` and `branches` are enforced by the host hooks,
 which read them from <state>/policy.env (written here; Git Bash has no JSON parser).
 """
+
 import codecs
+import contextlib
 import copy
 import fnmatch
 import os
@@ -17,41 +19,55 @@ DEFAULTS = {
     "encoding": {
         "enabled": True,
         "charset": "utf-8",
-        "bom": "forbid",                       # forbid | allow | require
+        "bom": "forbid",  # forbid | allow | require
         "by_language": {"powershell": {"bom": "allow"}},
-        "by_glob": {},                         # {"legacy/**/*.properties": "iso-8859-1"}
-        "mojibake": "block",                   # block | warn | off: text damaged by a wrong-encoding save
-        "mojibake_ignore": [],                 # globs never checked for mojibake (encoding test fixtures)
+        "by_glob": {},  # {"legacy/**/*.properties": "iso-8859-1"}
+        "mojibake": "block",  # block | warn | off: text damaged by a wrong-encoding save
+        "mojibake_ignore": [],  # globs never checked for mojibake (encoding test fixtures)
     },
     "commit": {
-        "charset": "ascii",                    # ascii | utf-8 | any
-        "types": ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"],
+        "charset": "ascii",  # ascii | utf-8 | any
+        "types": [
+            "feat",
+            "fix",
+            "docs",
+            "style",
+            "refactor",
+            "perf",
+            "test",
+            "build",
+            "ci",
+            "chore",
+            "revert",
+        ],
         "subject_max": 50,
         "conventional": True,
     },
     "branches": {
-        "enforce": "block",                    # block | warn | off
+        "enforce": "block",  # block | warn | off
         "parent_leaf": "ORIGINAL",
         "mainline": "develop",
         "protected": ["main", "master", "develop"],
         # level 1: the version, Semantic Versioning without build metadata (https://semver.org)
-        "levels": [r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-                   r"(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$",
-                   r"^[0-9]+$"],
+        "levels": [
+            r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+            r"(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$",
+            r"^[0-9]+$",
+        ],
         "segment": r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
         "allow": [],
-        "leaf_merge": "merge",                 # merge (--no-ff) | squash
+        "leaf_merge": "merge",  # merge (--no-ff) | squash
         "require_children_merged": True,
         "tag": "{version}",
-        "tag_level": 1,                        # tag when a level-N ORIGINAL is integrated (0 = never)
-        "release_leaf": "RELEASE",             # git release: '<version>/ORIGINAL' becomes '<version>/RELEASE'
-        "archive_prefix": "unmerged",          # git release: branches not integrated -> 'unmerged/<name>'
-        "version_file": "VERSION",             # committed on '<version>/ORIGINAL' when the tree is created
-        "changelog_file": "CHANGELOG.md",      # git changelog --write: Common Changelog release notes
-        "readme_file": "README.md",            # git release: version badge
-        "pom_version": "update",               # update | snapshot | check | off: pom.xml follows the version
-        "tag_url": "",                         # changelog links: '' = from origin, '-' = none, or '...{tag}'
-        "commit_url": "",                      # changelog references: '' = from origin, '-' = none, '...{commit}'
+        "tag_level": 1,  # tag when a level-N ORIGINAL is integrated (0 = never)
+        "release_leaf": "RELEASE",  # git release: '<version>/ORIGINAL' becomes '<version>/RELEASE'
+        "archive_prefix": "unmerged",  # git release: branches not integrated -> 'unmerged/<name>'
+        "version_file": "VERSION",  # committed on '<version>/ORIGINAL' when the tree is created
+        "changelog_file": "CHANGELOG.md",  # git changelog --write: Common Changelog release notes
+        "readme_file": "README.md",  # git release: version badge
+        "pom_version": "update",  # update | snapshot | check | off: pom.xml follows the version
+        "tag_url": "",  # changelog links: '' = from origin, '-' = none, or '...{tag}'
+        "commit_url": "",  # changelog references: '' = from origin, '-' = none, '...{commit}'
     },
 }
 SECTIONS = tuple(DEFAULTS)
@@ -59,7 +75,14 @@ BOM_UTF8 = codecs.BOM_UTF8
 
 
 def populate(data):
-    """Add missing policy sections/keys with defaults. Never overwrites a value. Returns added paths."""
+    """Add missing policy sections/keys with defaults. Never overwrites a value.
+
+    Args:
+        data: the parsed rules file (dict), changed in place.
+
+    Returns:
+        list[str]: the paths added ('section' or 'section.key').
+    """
     added = []
     for sec, defaults in DEFAULTS.items():
         cur = data.get(sec)
@@ -92,12 +115,35 @@ def _charset_ok(name):
 
 
 def validate(data):
+    """Check the policy sections of a rules file.
+
+    Args:
+        data: the parsed rules file (dict).
+
+    Returns:
+        list[str]: one message per problem, empty when the policy is valid.
+    """
     errors = []
     for sec in SECTIONS:
         cur = data.get(sec)
         if cur is not None and not isinstance(cur, dict):
             errors.append(f"{sec}: must be an object")
-    enc = get(data, "encoding")
+    errors += _validate_encoding(get(data, "encoding"))
+    errors += _validate_commit(get(data, "commit"))
+    errors += _validate_branches(get(data, "branches"))
+    return errors
+
+
+def _validate_encoding(enc):
+    """Check the 'encoding' section.
+
+    Args:
+        enc: the section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
     if not _charset_ok(str(enc.get("charset"))):
         errors.append(f"encoding.charset: unknown charset '{enc.get('charset')}'")
     if enc.get("bom") not in ("forbid", "allow", "require"):
@@ -108,24 +154,59 @@ def validate(data):
             errors.append(f"encoding.{key}: must be an object")
             continue
         for k, v in val.items():
-            cs = v if isinstance(v, str) else (v or {}).get("charset") if isinstance(v, dict) else None
+            cs = (
+                v
+                if isinstance(v, str)
+                else (v or {}).get("charset")
+                if isinstance(v, dict)
+                else None
+            )
             if not isinstance(v, (str, dict)):
                 errors.append(f"encoding.{key}.{k}: must be a charset name or {{charset, bom}}")
             elif cs and not _charset_ok(cs):
                 errors.append(f"encoding.{key}.{k}: unknown charset '{cs}'")
     if enc.get("mojibake") not in ("block", "warn", "off"):
         errors.append("encoding.mojibake: must be block, warn or off")
-    if not (isinstance(enc.get("mojibake_ignore"), list) and all(isinstance(x, str) for x in enc["mojibake_ignore"])):
+    if not (
+        isinstance(enc.get("mojibake_ignore"), list)
+        and all(isinstance(x, str) for x in enc["mojibake_ignore"])
+    ):
         errors.append("encoding.mojibake_ignore: must be a list of globs")
-    com = get(data, "commit")
+    return errors
+
+
+def _validate_commit(com):
+    """Check the 'commit' section.
+
+    Args:
+        com: the section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
     if com.get("charset") not in ("ascii", "utf-8", "any"):
         errors.append("commit.charset: must be ascii, utf-8 or any")
-    if not (isinstance(com.get("types"), list) and all(isinstance(t, str) and re.fullmatch(r"[a-z][a-z0-9-]*", t)
-                                                       for t in com["types"])):
+    if not (
+        isinstance(com.get("types"), list)
+        and all(isinstance(t, str) and re.fullmatch(r"[a-z][a-z0-9-]*", t) for t in com["types"])
+    ):
         errors.append("commit.types: must be a list of lowercase words")
     if not isinstance(com.get("subject_max"), int) or com["subject_max"] < 10:
         errors.append("commit.subject_max: must be an integer >= 10")
-    br = get(data, "branches")
+    return errors
+
+
+def _validate_branches(br):
+    """Check the 'branches' section.
+
+    Args:
+        br: the section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
     if br.get("enforce") not in ("block", "warn", "off"):
         errors.append("branches.enforce: must be block, warn or off")
     if br.get("leaf_merge") not in ("merge", "squash"):
@@ -137,6 +218,23 @@ def validate(data):
         errors.append("branches.release_leaf: must differ from parent_leaf")
     if br.get("pom_version") not in ("update", "snapshot", "check", "off"):
         errors.append("branches.pom_version: must be update, snapshot, check or off")
+    errors += _validate_branch_paths(br)
+    errors += _validate_branch_patterns(br)
+    if not isinstance(br.get("tag_level"), int) or br["tag_level"] < 0:
+        errors.append("branches.tag_level: must be an integer >= 0")
+    return errors
+
+
+def _validate_branch_paths(br):
+    """Check the URL templates and file paths of the 'branches' section.
+
+    Args:
+        br: the section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
     for key, ph in (("tag_url", "{tag}"), ("commit_url", "{commit}")):
         v = br.get(key)
         if not isinstance(v, str) or (v not in ("", "-") and ph not in v):
@@ -145,20 +243,33 @@ def validate(data):
         v = br.get(key)
         if not isinstance(v, str) or v.startswith(("/", "-")) or ".." in v.split("/") or "\\" in v:
             errors.append(f"branches.{key}: a path inside the repository ('' = off)")
+    return errors
+
+
+def _validate_branch_patterns(br):
+    """Check the name lists and regular expressions of the 'branches' section.
+
+    Args:
+        br: the section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
     for key in ("levels", "allow", "protected"):
         if not (isinstance(br.get(key), list) and all(isinstance(x, str) for x in br[key])):
             errors.append(f"branches.{key}: must be a list of strings")
-    for rx in list(br.get("levels") or []) + list(br.get("allow") or []) + [br.get("segment", "")]:
+    patterns = list(br.get("levels") or []) + list(br.get("allow") or [])
+    for rx in [*patterns, br.get("segment", "")]:
         try:
             re.compile(rx)
         except (re.error, TypeError):
             errors.append(f"branches: invalid regular expression {rx!r}")
-    if not isinstance(br.get("tag_level"), int) or br["tag_level"] < 0:
-        errors.append("branches.tag_level: must be an integer >= 0")
     return errors
 
 
 # ---------------------------------------------------------------- host export
+
 
 def _sh(v):
     return "'" + str(v).replace("'", "'\\''") + "'"
@@ -201,10 +312,16 @@ def shell_env(data):
 
 # ---------------------------------------------------------------- encoding
 
+
 def _norm(cs):
     cs = (cs or "utf-8").lower().replace("_", "-")
-    return {"utf8": "utf-8", "latin1": "iso-8859-1", "latin-1": "iso-8859-1", "cp1252": "windows-1252",
-            "us-ascii": "ascii"}.get(cs, cs)
+    return {
+        "utf8": "utf-8",
+        "latin1": "iso-8859-1",
+        "latin-1": "iso-8859-1",
+        "cp1252": "windows-1252",
+        "us-ascii": "ascii",
+    }.get(cs, cs)
 
 
 def expected(enc, rel, lang_id):
@@ -227,9 +344,12 @@ def expected(enc, rel, lang_id):
 
 def glob_match(rel, pat):
     """fnmatch for repository paths: 'x/**/y' also matches 'x/y'; a bare name matches any folder."""
-    return fnmatch.fnmatch(rel, pat) or ("/" not in pat and fnmatch.fnmatch(os.path.basename(rel), pat)) \
-        or (pat.startswith("**/") and fnmatch.fnmatch(rel, pat[3:])) or ("/**/" in pat and fnmatch.fnmatch(
-            rel, pat.replace("/**/", "/")))
+    return (
+        fnmatch.fnmatch(rel, pat)
+        or ("/" not in pat and fnmatch.fnmatch(os.path.basename(rel), pat))
+        or (pat.startswith("**/") and fnmatch.fnmatch(rel, pat[3:]))
+        or ("/**/" in pat and fnmatch.fnmatch(rel, pat.replace("/**/", "/")))
+    )
 
 
 def _line_col(raw, pos):
@@ -252,46 +372,126 @@ def check(raw, cs, bom):
 
     why: a file whose encoding changed (UTF-8 saved as ANSI, or converted the other way)
     silently corrupts accents for every other developer and tool, so it must not land.
+
+    Args:
+        raw: the file bytes.
+        cs: the expected charset, normalized (see expected()).
+        bom: the BOM policy: forbid, allow or require.
+
+    Returns:
+        list[str]: at most one problem; empty when the bytes match.
     """
-    has_bom = raw.startswith(BOM_UTF8)
     if cs in ("utf-16", "utf-16-le", "utf-16-be", "utf-32"):
-        try:
-            raw.decode(cs)
-            return []
-        except UnicodeDecodeError as e:
-            return [f"not valid {cs.upper()} at byte {e.start}"]
+        return _check_wide(raw, cs)
     if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE, codecs.BOM_UTF32_LE)):
         return [f"file is UTF-16/32 but must be {cs.upper()}; re-save it as {cs.upper()}"]
     if cs == "utf-8":
-        body = raw[3:] if has_bom else raw
-        try:
-            body.decode("utf-8")
-        except UnicodeDecodeError as e:
-            if _guess(body) == "UTF-16":
-                return ["file looks like UTF-16 without a BOM; save it as 'UTF-8'"]
-            line, col = _line_col(body, e.start)
-            _, spots, utf8_chars = decode_mixed(body)
-            what = (f"mixed encodings: {len(spots)} character(s) in Windows-1252 next to {utf8_chars} in UTF-8 "
-                    f"(the editor opened it with the wrong encoding and saved new text in Windows-1252)"
-                    if utf8_chars else f"saved as Windows-1252/ISO-8859-1 (ANSI) instead of UTF-8: "
-                                       f"{len(spots)} character(s)")
-            where = "; ".join(f'line {ln}: "{_show(w)}"' for ln, w in _spot_words(body, spots)[:3])
-            more = f" (+{len(spots) - 3} more)" if len(spots) > 3 else ""
-            return [f"not valid UTF-8 at line {line}, column {col} (byte 0x{body[e.start]:02X}): {what}; "
-                    f"{where}{more}. Repair: git encoding --fix FILE"]
-        if has_bom and bom == "forbid":
-            return ["starts with a UTF-8 BOM (EF BB BF), which is forbidden here; save it as 'UTF-8' without BOM"]
-        if not has_bom and bom == "require" and any(b >= 0x80 for b in body):
-            return ["must start with a UTF-8 BOM (encoding.bom = require)"]
-        return []
-    if has_bom:
+        return _check_utf8(raw, bom)
+    if raw.startswith(BOM_UTF8):
         return [f"starts with a UTF-8 BOM but must be {cs.upper()}"]
     if cs == "ascii":
-        for i, b in enumerate(raw):
-            if b >= 0x80:
-                line, col = _line_col(raw, i)
-                return [f"non-ASCII byte 0x{b:02X} at line {line}, column {col} (encoding is ascii)"]
+        return _check_ascii(raw)
+    return _check_legacy(raw, cs)
+
+
+def _check_wide(raw, cs):
+    """check() for UTF-16 and UTF-32 charsets.
+
+    Args:
+        raw: the file bytes.
+        cs: the expected charset.
+
+    Returns:
+        list[str]: the decoding problem, or empty.
+    """
+    try:
+        raw.decode(cs)
         return []
+    except UnicodeDecodeError as e:
+        return [f"not valid {cs.upper()} at byte {e.start}"]
+
+
+def _check_utf8(raw, bom):
+    """check() for UTF-8: valid bytes and the BOM policy.
+
+    Args:
+        raw: the file bytes.
+        bom: the BOM policy: forbid, allow or require.
+
+    Returns:
+        list[str]: the problem found, or empty.
+    """
+    has_bom = raw.startswith(BOM_UTF8)
+    body = raw[3:] if has_bom else raw
+    try:
+        body.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return _utf8_damage(body, e)
+    if has_bom and bom == "forbid":
+        return [
+            "starts with a UTF-8 BOM (EF BB BF), which is forbidden here; "
+            "save it as 'UTF-8' without BOM"
+        ]
+    if not has_bom and bom == "require" and any(b >= 0x80 for b in body):
+        return ["must start with a UTF-8 BOM (encoding.bom = require)"]
+    return []
+
+
+def _utf8_damage(body, e):
+    """Explain why bytes that must be UTF-8 do not decode.
+
+    Args:
+        body: the file bytes without BOM.
+        e: the UnicodeDecodeError of the UTF-8 decode.
+
+    Returns:
+        list[str]: one message with position, likely cause, sample words and the repair.
+    """
+    if _guess(body) == "UTF-16":
+        return ["file looks like UTF-16 without a BOM; save it as 'UTF-8'"]
+    line, col = _line_col(body, e.start)
+    _, spots, utf8_chars = decode_mixed(body)
+    what = (
+        f"mixed encodings: {len(spots)} character(s) in Windows-1252 next to "
+        f"{utf8_chars} in UTF-8 "
+        f"(the editor opened it with the wrong encoding and saved new text in Windows-1252)"
+        if utf8_chars
+        else f"saved as Windows-1252/ISO-8859-1 (ANSI) instead of UTF-8: {len(spots)} character(s)"
+    )
+    where = "; ".join(f'line {ln}: "{_show(w)}"' for ln, w in _spot_words(body, spots)[:3])
+    more = f" (+{len(spots) - 3} more)" if len(spots) > 3 else ""
+    return [
+        f"not valid UTF-8 at line {line}, column {col} (byte 0x{body[e.start]:02X}): "
+        f"{what}; {where}{more}. Repair: git encoding --fix FILE"
+    ]
+
+
+def _check_ascii(raw):
+    """check() for ASCII: the first byte >= 0x80.
+
+    Args:
+        raw: the file bytes.
+
+    Returns:
+        list[str]: the first non-ASCII byte with its position, or empty.
+    """
+    for i, b in enumerate(raw):
+        if b >= 0x80:
+            line, col = _line_col(raw, i)
+            return [f"non-ASCII byte 0x{b:02X} at line {line}, column {col} (encoding is ascii)"]
+    return []
+
+
+def _check_legacy(raw, cs):
+    """check() for single-byte charsets (ISO-8859-1, Windows-1252, ...).
+
+    Args:
+        raw: the file bytes (no BOM).
+        cs: the expected charset.
+
+    Returns:
+        list[str]: an undecodable byte, or a file that looks converted to UTF-8, or empty.
+    """
     try:
         raw.decode(cs)
     except (UnicodeDecodeError, LookupError) as e:
@@ -302,15 +502,25 @@ def check(raw, cs, bom):
         try:
             text = raw.decode("utf-8")
             if any(ord(ch) >= 0x80 for ch in text):
-                return [f"looks like UTF-8 but must be {cs.upper()} (the file was converted?); "
-                        f"convert it back: iconv -f UTF-8 -t {cs.upper()} FILE > tmp && mv tmp FILE"]
+                return [
+                    f"looks like UTF-8 but must be {cs.upper()} (the file was converted?); "
+                    f"convert it back: iconv -f UTF-8 -t {cs.upper()} FILE > tmp && mv tmp FILE"
+                ]
         except UnicodeDecodeError:
             pass
     return []
 
 
 def needs_protection(raw, cs):
-    """True when tools that assume UTF-8 could corrupt this file (non-UTF-8 charset + non-ASCII bytes)."""
+    """True when tools that assume UTF-8 could corrupt this file.
+
+    Args:
+        raw: the file bytes.
+        cs: the expected charset.
+
+    Returns:
+        bool: the charset is neither UTF-8 nor ASCII and the file has non-ASCII bytes.
+    """
     return cs not in ("utf-8", "ascii") and any(b >= 0x80 for b in raw)
 
 
@@ -325,15 +535,20 @@ def needs_protection(raw, cs):
 #   question marks    saved in a charset without those letters: each accent becomes "?"
 # The first is found in the text alone; the last two need the previous version of the file.
 
+
 def _cp1252_bytes():
-    """{character: byte} for bytes 0x80-0xFF as Windows-1252 shows them (ISO-8859-1 for its holes)."""
+    """Map the characters Windows-1252 shows for bytes 0x80-0xFF back to the bytes.
+
+    ISO-8859-1 fills the holes of Windows-1252.
+
+    Returns:
+        dict[str, int]: {character: byte}.
+    """
     out = {}
     for b in range(0x80, 0x100):
         out[chr(b)] = b
-        try:
+        with contextlib.suppress(UnicodeDecodeError):
             out[bytes([b]).decode("cp1252")] = b
-        except UnicodeDecodeError:
-            pass
     return out
 
 
@@ -346,9 +561,10 @@ def _cls(lo, hi):
 
 _CONT = "[" + _cls(0x80, 0xBF) + "]"
 # one UTF-8 multi-byte sequence as it looks after a Windows-1252 decode: lead byte + continuations
-MOJIBAKE_RX = re.compile("[%s]%s|[%s]%s{2}|[%s]%s{3}" % (_cls(0xC2, 0xDF), _CONT, _cls(0xE0, 0xEF), _CONT,
-                                                           _cls(0xF0, 0xF4), _CONT))
-ALLOW_MARK = "qs-allow-mojibake"     # a line containing this text is never reported;
+MOJIBAKE_RX = re.compile(
+    f"[{_cls(0xC2, 0xDF)}]{_CONT}|[{_cls(0xE0, 0xEF)}]{_CONT}{{2}}|[{_cls(0xF0, 0xF4)}]{_CONT}{{3}}"
+)
+ALLOW_MARK = "qs-allow-mojibake"  # a line containing this text is never reported;
 # '...-begin' / '...-end' lines exempt everything between them (documentation examples)
 
 
@@ -366,17 +582,23 @@ def _undo_once(text):
         try:
             ch = bytes(BYTE_OF[c] for c in m.group()).decode("utf-8")
         except UnicodeDecodeError:
-            continue            # why: not a real UTF-8 sequence (overlong, surrogate): leave it
+            continue  # why: not a real UTF-8 sequence (overlong, surrogate): leave it
         o = ord(ch)
-        kind = "ok" if (o >= 0x800 or _LATIN[0] <= o <= _LATIN[1]) else \
-            "word" if any(a <= o <= b for a, b in _SCRIPTS_2) else None
+        kind = (
+            "ok"
+            if (o >= 0x800 or _LATIN[0] <= o <= _LATIN[1])
+            else "word"
+            if any(a <= o <= b for a, b in _SCRIPTS_2)
+            else None
+        )
         if kind:
             found.append([m.start(), m.end(), ch, kind])
     keep = []
     for i, f in enumerate(found):
         if f[3] == "word":
-            near = (i > 0 and found[i - 1][1] == f[0] and found[i - 1][3] == "word") or \
-                   (i + 1 < len(found) and found[i + 1][0] == f[1] and found[i + 1][3] == "word")
+            near = (i > 0 and found[i - 1][1] == f[0] and found[i - 1][3] == "word") or (
+                i + 1 < len(found) and found[i + 1][0] == f[1] and found[i + 1][3] == "word"
+            )
             if not near:
                 continue
         keep.append(f)
@@ -404,7 +626,9 @@ def undo_double_encoding(text):
 
 def _show(s):
     """Snippet for a console line: control characters escaped, long text cut."""
-    s = "".join(ch if (ch >= " " and not "\x7f" <= ch <= "\x9f") else f"\\x{ord(ch):02x}" for ch in s)
+    s = "".join(
+        ch if (ch >= " " and not "\x7f" <= ch <= "\x9f") else f"\\x{ord(ch):02x}" for ch in s
+    )
     return s if len(s) <= 60 else s[:57] + "..."
 
 
@@ -432,7 +656,8 @@ def decode_mixed(body):
             return bytes([b]).decode("cp1252"), e.start + 1
         except UnicodeDecodeError:
             return chr(b), e.start + 1
-    name = "qs-cp1252-%d" % id(spots)
+
+    name = f"qs-cp1252-{id(spots)}"
     codecs.register_error(name, handler)
     text = body.decode("utf-8", errors=name)
     utf8_chars = sum(1 for ch in text if ord(ch) >= 0x80) - len(spots)
@@ -449,18 +674,28 @@ def _spot_words(body, spots):
         seen.add(line)
         a = body.rfind(b"\n", 0, pos) + 1
         z = body.find(b"\n", pos)
-        raw_line = body[a:z if z >= 0 else len(body)]
+        raw_line = body[a : z if z >= 0 else len(body)]
         text = raw_line.decode("cp1252", errors="replace")
         out.append((line, _word_at(text, pos - a, pos - a + 1)))
     return out
 
 
 def _lossy(line):
-    """The ways an editor writes a line it could not encode: '?' or U+FFFD for each non-ASCII char."""
+    """The ways an editor writes a line it could not encode.
+
+    Args:
+        line: a line of the previous version.
+
+    Returns:
+        tuple[str, ...]: the line with '?' and with U+FFFD for each non-ASCII character;
+        empty when the line is ASCII.
+    """
     if all(ord(c) < 0x80 for c in line):
         return ()
-    return ("".join(c if ord(c) < 0x80 else "?" for c in line),
-            "".join(c if ord(c) < 0x80 else "\ufffd" for c in line))
+    return (
+        "".join(c if ord(c) < 0x80 else "?" for c in line),
+        "".join(c if ord(c) < 0x80 else "\ufffd" for c in line),
+    )
 
 
 def decode_any(raw):
@@ -490,15 +725,28 @@ def mojibake(text, old_text=None):
     allowed = False
     for n, line in enumerate(text.splitlines(), 1):
         if ALLOW_MARK in line:
-            allowed = (allowed or line.find(ALLOW_MARK + "-begin") >= 0) and line.find(ALLOW_MARK + "-end") < 0
+            allowed = (allowed or line.find(ALLOW_MARK + "-begin") >= 0) and line.find(
+                ALLOW_MARK + "-end"
+            ) < 0
             continue
         if allowed or (all(ord(c) < 0x80 for c in line) and "?" not in line):
             continue
         found = []
         if line in lossy and line not in old_lines:
             kind = "replacement" if "\ufffd" in line else "lost"
-            col = next(i for i, (a, b) in enumerate(zip(line, lossy[line])) if a != b) + 1
-            found.append({"line": n, "col": col, "kind": kind, "found": line.strip(), "fixed": lossy[line].strip()})
+            col = (
+                next(i for i, (a, b) in enumerate(zip(line, lossy[line], strict=True)) if a != b)
+                + 1
+            )
+            found.append(
+                {
+                    "line": n,
+                    "col": col,
+                    "kind": kind,
+                    "found": line.strip(),
+                    "fixed": lossy[line].strip(),
+                }
+            )
         else:
             for m in MOJIBAKE_RX.finditer(line):
                 fixed, k = undo_double_encoding(m.group())
@@ -507,12 +755,26 @@ def mojibake(text, old_text=None):
                 word = _word_at(line, m.start(), m.end())
                 if found and found[-1]["kind"] == "double" and found[-1]["found"] == word:
                     continue
-                found.append({"line": n, "col": m.start() + 1, "kind": "double", "found": word,
-                              "fixed": undo_double_encoding(word)[0]})
+                found.append(
+                    {
+                        "line": n,
+                        "col": m.start() + 1,
+                        "kind": "double",
+                        "found": word,
+                        "fixed": undo_double_encoding(word)[0],
+                    }
+                )
             i = line.find("\ufffd")
             if i >= 0:
-                found.append({"line": n, "col": i + 1, "kind": "replacement",
-                              "found": _word_at(line, i, i + 1), "fixed": None})
+                found.append(
+                    {
+                        "line": n,
+                        "col": i + 1,
+                        "kind": "replacement",
+                        "found": _word_at(line, i, i + 1),
+                        "fixed": None,
+                    }
+                )
         (warnings if line in old_lines else errors).extend(found)
     return errors, warnings
 
@@ -529,7 +791,7 @@ def describe(f):
     head = f'line {f["line"]}, column {f["col"]}: "{_show(f["found"])}"'
     if f["fixed"]:
         head += f' should be "{_show(f["fixed"])}"'
-    return f'{head} ({MOJIBAKE_WHY[f["kind"]]})'
+    return f"{head} ({MOJIBAKE_WHY[f['kind']]})"
 
 
 def repair(raw, old_raw=None):
