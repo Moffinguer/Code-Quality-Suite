@@ -153,6 +153,14 @@ when they change: `VERSION` (semver, = the version of the branch, = `pom.xml`), 
 keys), `CODEOWNERS` (owners), `LICENSE` (template placeholders), and warns while a generated
 file still has `qs:fill` markers. Details: `docs/REPO-FILES.md`.
 
+## Large files and generated files (`qs-large-file`)
+
+`qs-large-file` rejects files over `max_kb` (default 512 KB). Generated files are exempt through
+a tracked, repo-wide mark: set the git attribute `qs-generated` (or `linguist-generated`) in
+`.gitattributes`, for example `schema/quality-rules.schema.json qs-generated`. The check reads
+it with `git check-attr`; if git cannot answer, the file is not exempt. Every other file stays
+subject to the limit. Do not raise `max_kb` in the personal `.quality-rules.json` for this.
+
 ## Levels
 
 | Level | Runs | Typical use |
