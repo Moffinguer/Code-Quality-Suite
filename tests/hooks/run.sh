@@ -654,17 +654,50 @@ git init -q -b develop "$T/ai"
 	ok "ai-init: OpenCode agents on gateway roles, permissions from the tools, skills synced" || fail "ai-init opencode"
 # dev_documents templates: created when missing, never overwritten, not even by --actualizar
 D="$SUITE/ai-template/dev_documents"
-[ "$(find "$D" -maxdepth 1 -type f -name "*.md" | wc -l | tr -d " ")" = 4 ] && [ -z "$(find "$D" -maxdepth 1 -type f ! -name "*.md")" ] &&
-	grep -q '^# Requirements$' "$D/Requirements.md" && grep -q '^### RF-001: ' "$D/Requirements.md" && grep -q '^### RNF-001: ' "$D/Requirements.md" &&
-	grep -q '^# Functional design$' "$D/Functional_Design.md" && grep -q '^### CU-001: ' "$D/Functional_Design.md" && grep -q '^## Traceability matrix$' "$D/Functional_Design.md" &&
-	grep -q '^# Technical design$' "$D/Technical_Design.md" && grep -q '^## Module: ' "$D/Technical_Design.md" && grep -q '^- Use cases: CU-001$' "$D/Technical_Design.md" &&
-	grep -q '^# Tests$' "$D/Tests.md" && grep -q '^## CP-001: ' "$D/Tests.md" &&
-	[ "$(grep -l '^<!--$' "$D"/*.md | wc -l | tr -d ' ')" = 4 ] &&
-	ok "dev_documents templates: four files with title, format comment and one placeholder per type" || fail "dev_documents templates"
+# Check one dev_documents template: $1 file name, then grep patterns that must match
+# Prints the file and pattern that failed and returns non-zero on the first miss
+dd_check() {
+	local f="$1" pat
+	shift
+	for pat in "$@"; do
+		grep -q -- "$pat" "$D/$f" || {
+			echo "dev_documents template $f lacks: $pat"
+			return 1
+		}
+	done
+}
+dd_ok=1
+dd_n=$(find "$D" -maxdepth 1 -type f -name "*.md" | wc -l | tr -d " ")
+[ "$dd_n" -gt 0 ] || {
+	dd_ok=0
+	echo "no templates in ai-template/dev_documents"
+}
+[ -z "$(find "$D" -maxdepth 1 -type f ! -name "*.md")" ] || {
+	dd_ok=0
+	echo "non-markdown file in ai-template/dev_documents"
+}
+dd_check Requirements.md '^# Requirements$' '^### RF-001: ' '^### RNF-001: ' || dd_ok=0
+dd_check Functional_Design.md '^# Functional design$' '^### CU-001: ' '^## Traceability matrix$' || dd_ok=0
+dd_check Technical_Design.md '^# Technical design$' '^## Module: ' '^- Use cases: CU-001$' || dd_ok=0
+dd_check Tests.md '^# Tests$' '^## CP-001: ' || dd_ok=0
+for f in "$D"/*.md; do
+	grep -q '^<!--$' "$f" || {
+		dd_ok=0
+		echo "$(basename "$f") has no format comment"
+	}
+done
+[ "$dd_ok" = 1 ] &&
+	ok "dev_documents templates: $dd_n files with title, format comment and one placeholder per type" || fail "dev_documents templates"
 git init -q -b develop "$T/dd"
 (cd "$T/dd" && bash "$SUITE/scripts/ai-init.sh" . >/dev/null && cmp -s dev_documents/Tests.md "$D/Tests.md" &&
 	echo "# Tests filled" >dev_documents/Tests.md && bash "$SUITE/scripts/ai-init.sh" . >/dev/null &&
-	bash "$SUITE/scripts/ai-init.sh" --actualizar . >/dev/null && [ "$(cat dev_documents/Tests.md)" = "# Tests filled" ] &&
-	cmp -s dev_documents/Requirements.md "$D/Requirements.md" && git check-ignore -q dev_documents/Tests.md) &&
-	ok "git ia: dev_documents created when missing, filled ones kept by ia and --actualizar" || fail "git ia dev_documents"
+	bash "$SUITE/scripts/ai-init.sh" --actualizar . >"$T/dd-act.out" 2>&1 && [ "$(cat dev_documents/Tests.md)" = "# Tests filled" ] &&
+	grep -q 'dev_documents/ untouched' "$T/dd-act.out" &&
+	rm dev_documents/Requirements.md && bash "$SUITE/scripts/ai-init.sh" . >/dev/null &&
+	cmp -s dev_documents/Requirements.md "$D/Requirements.md" && git check-ignore -q dev_documents/Tests.md &&
+	[ -z "$(git status --porcelain -- dev_documents)" ]) &&
+	ok "git ia: dev_documents created, recreated if deleted, filled ones kept by ia and --actualizar" || {
+	cat "$T/dd-act.out" 2>/dev/null
+	fail "git ia dev_documents"
+}
 echo "all hook checks passed"

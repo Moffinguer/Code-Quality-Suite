@@ -183,7 +183,7 @@ skill (`git ayuda` shows the same to you).
 
 `git ia` also creates `dev_documents/` with four ID-based templates (`Requirements.md`,
 `Functional_Design.md`, `Technical_Design.md`, `Tests.md`) only when they are missing;
-`--actualizar` never overwrites them.
+`--actualizar` never overwrites them. In this suite repo, run `bash scripts/ai-init.sh .` (or `git ia`) to create the local, git-ignored `dev_documents/`.
 
 Edit the **Project** section of `AGENTS.md` (name, data class, stack, build command), then:
 
