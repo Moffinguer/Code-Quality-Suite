@@ -1379,12 +1379,12 @@ def _tool_release_notes(ap, argv, where):
     link = tag_t.replace("{tag}", a.tag or a.version) if tag_t else ""
     if a.union:
         block = changelog.union(a.version, a.date, [read_text(f) for f in a.union], link)
-        items, omitted, no_ot = [], [], []
+        items, omitted = [], []
     else:
-        items, omitted, no_ot = changelog.entries(git, a.tip, a.base, commit_t, ot_rx, ot=a.ot)
+        items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx, ot=a.ot)
         block = changelog.render(a.version, a.date, items, link)
     sys.stdout.write(block)
-    for c in no_ot:
+    for c in changelog.without_ot(items):
         print(
             f"[quality-suite] WARN: change without OT: {c['hash'][:7]} {c['subject']}",
             file=sys.stderr,

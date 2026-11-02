@@ -198,21 +198,19 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
             line is needed); '' derives it from the 'Refs:' line of each change.
 
     Returns:
-        tuple: (entries, omitted subjects, changes without OT). An entry is
-        {group, breaking, text, ref, ot, order}; ot is None when unknown; the third item
-        lists {hash, subject} of the entries without OT. Authors and norm ids are not kept.
+        tuple: (entries, omitted subjects). An entry is {group, breaking, text, ref, ot,
+        hash, subject, order}; ot is None when unknown. Authors and norm ids are not kept.
 
     Raises:
         RuntimeError: git failed.
     """
     out, omitted, seq = [], [], [0]
-    no_ot = []
 
     def add(c, src=None):
         """Record one change in out, or in omitted when its subject is not classified.
 
         Skips release commits and duplicates of an entry already in out. Updates the
-        closure lists out, omitted, no_ot and seq; returns nothing.
+        closure lists out, omitted and seq; returns nothing.
 
         Args:
             c: the commit (dict with subject, body, parents).
@@ -230,8 +228,6 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
         for e in out:
             if (e["group"], e["text"], e["ot"]) == (group, text, found):
                 return
-        if not found:
-            no_ot.append({"hash": c["hash"], "subject": c["subject"]})
         out.append(
             {
                 "group": group,
@@ -239,6 +235,8 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
                 "text": text,
                 "ref": _commit_ref(c["hash"], commit_url),
                 "ot": found,
+                "hash": c["hash"],
+                "subject": c["subject"],
                 "order": seq[0],
             }
         )
@@ -273,7 +271,19 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
                 add(c, _refs_src(c["body"]))
 
     walk(tip, [base] if base else [])
-    return out, omitted, no_ot
+    return out, omitted
+
+
+def without_ot(items):
+    """The entries that have no OT, for the 'change without OT' warning.
+
+    Args:
+        items: entries from entries().
+
+    Returns:
+        list[dict]: the entries whose ot is empty (each has hash and subject).
+    """
+    return [e for e in items if not e.get("ot")]
 
 
 # ---------------------------------------------------------------- render / merge
@@ -285,7 +295,7 @@ def render(version, date, items, tag_url="", notice=""):
     Args:
         version: the release version.
         date: the release date, YYYY-MM-DD.
-        items: entries from entries(): {group, breaking, text, ref, ot, order}.
+        items: entries from entries(): {group, breaking, text, ref, ot, ...}.
         tag_url: URL of the release tag; when set the heading links the version.
         notice: optional one-sentence notice under the heading.
 

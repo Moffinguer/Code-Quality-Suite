@@ -118,15 +118,15 @@ class FromGit(unittest.TestCase):
         shutil.rmtree(self.d, ignore_errors=True)
 
     def test_ot_forced(self):
-        items, _, no_ot = changelog.entries(GIT + ["-C", self.d], self.tip, self.base, ot="git")
-        self.assertEqual(no_ot, [])
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base, ot="git")
+        self.assertEqual(changelog.without_ot(items), [])
         block = changelog.render("5.0.0", "2026-11-02", items)
         self.assertIn(f"- Tighten generated-file matching ({self.tip[:7]}; git)", block)
         self.assertIn("### Fixed", block)
 
     def test_no_ot_is_reported(self):
-        items, _, no_ot = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
-        self.assertEqual([c["hash"] for c in no_ot], [self.tip])
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
+        self.assertEqual([c["hash"] for c in changelog.without_ot(items)], [self.tip])
         self.assertIsNone(items[0]["ot"])
         self.assertNotIn(";", changelog.render("5.0.0", "2026-11-02", items).split("- ")[1])
 
