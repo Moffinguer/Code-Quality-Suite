@@ -973,7 +973,13 @@ cmd_changelog() { # preview: changelog + release notes + checks + plan; changes 
 	say "preview only, nothing changed. Next: git release $REL_TAG --version $REL_VERSION"
 }
 
-commit_files() { # commit_files <subject> <file>...: commit those files if they changed (hooks run)
+# What to tell the human when a release commit fails: git release resumes, git combinar starts over.
+REL_AGAIN="fix it, then run the same git release again (it resumes)"
+
+# commit_files <subject> <file>...: commit those files if they changed (the hooks run).
+# Arguments: $1 the subject; $2... the files (missing ones are skipped). Exit status: 0; ends the
+# script through die when a hook rejects the commit (the message ends with REL_AGAIN).
+commit_files() {
 	local subject="$1"
 	shift
 	local f add=()
@@ -981,7 +987,7 @@ commit_files() { # commit_files <subject> <file>...: commit those files if they 
 	[ "${#add[@]}" -gt 0 ] || return 0
 	git add -- "${add[@]}"
 	git diff --cached --quiet && return 0
-	git commit -q -m "$subject" || die "the commit '$subject' was rejected (see the hook messages); fix it, then run the same git release again (it resumes)"
+	git commit -q -m "$subject" || die "the commit '$subject' was rejected (see the hook messages); $REL_AGAIN"
 	say "committed: $subject"
 }
 
@@ -1251,22 +1257,25 @@ release_branches() { # every '<version>/RELEASE' (local or origin)
 
 RELEASE_COMMITS_RX='^(chore\((version|release)\)|docs\((changelog|readme)\))[:!]'
 
-# The release commits of REL_VERSION on the current branch (REL_RELEASE): version files,
-# CHANGELOG.md entry, README badge. Needs REL_VERSION REL_TIP REL_CL_BASE REL_TAG.
+# release_commits: the release commits of REL_VERSION on the HEAD of the current work tree
+# (REL_RELEASE, or the temporary worktree of git combinar): version files, CHANGELOG.md entry,
+# README badge.
+# Arguments: none; reads REL_VERSION REL_TIP REL_CL_BASE REL_TAG REL_AGAIN. Exit status: 0; ends
+# the script through die when the suite image cannot run or a hook rejects a commit.
 release_commits() {
 	local root changed pom
 	root="$(git rev-parse --show-toplevel)"
 	pom="$QS_BR_POM"
 	[ "$pom" = snapshot ] && pom=update
 	changed="$(engine "$root" version-set "$REL_VERSION" --pom "$pom" --version-file "$QS_BR_VERSION_FILE" | tr -d '\r')" ||
-		die "the suite image could not run (Docker?); run the same command again when it works (it resumes)"
+		die "the suite image could not run (Docker?); $REL_AGAIN"
 	# shellcheck disable=SC2086
 	[ -z "$changed" ] || commit_files "$(version_subject "$REL_VERSION")" $changed
 	if [ -n "$QS_BR_CHANGELOG" ]; then
-		release_notes --write >/dev/null 2>&1 || die "could not write $QS_BR_CHANGELOG"
+		release_notes --write >/dev/null 2>&1 || die "could not write $QS_BR_CHANGELOG; $REL_AGAIN"
 		commit_files "docs(changelog): $REL_VERSION" "$QS_BR_CHANGELOG"
 	fi
-	changed="$(engine "$root" release-docs --version "$REL_VERSION" | tr -d '\r')" || die "could not update the README badge"
+	changed="$(engine "$root" release-docs --version "$REL_VERSION" | tr -d '\r')" || die "could not update the README badge; $REL_AGAIN"
 	# shellcheck disable=SC2086
 	[ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
 }
@@ -1274,17 +1283,69 @@ release_commits() {
 # --- git combinar --------------------------------------------------------------------------------
 # State of one run, set by cmd_combinar: CB_BASE the develop commit, CB_GD the state folder, CB_WT
 # the temporary worktree. Helpers return through CB_* variables when a subshell would lose them.
+# CB_ARCHIVE holds "<branch><TAB><archive name><TAB><tip>" per combined RELEASE; CB_ROLLBACK is 1
+# while the local branches are being moved (CB_HEAD_REF / CB_HEAD_SHA: where HEAD was); CB_PWD and
+# CB_PREV_TRAP are restored when the run ends.
 CB_BASE="" CB_GD="" CB_WT="" CB_REL="" CB_ONLY="" CB_OUT="" CB_CONFLICTS=""
 CB_N=0 CB_M=0 CB_K=0 CB_J=0
+CB_ARCHIVE=() CB_ROLLBACK=0 CB_HEAD_REF="" CB_HEAD_SHA="" CB_PWD="" CB_PREV_TRAP=""
 
-# Remove what a git combinar run leaves behind: the temporary worktree and its scratch files.
+# combine_cleanup: undo what a git combinar run leaves behind. When it stops while the local
+# branches are being moved, the branches and HEAD go back to where they were (all-or-nothing); if
+# the undo is rejected (a branch moved meanwhile) HEAD stays detached, with a warning and the
+# manual steps, never a symbolic ref to a missing branch;
+# then the temporary worktree and the scratch files are removed and the directory is restored.
 # Arguments: none. Exit status: 0 always (it runs from the EXIT trap).
 combine_cleanup() {
+	local undone
+	# why: first, out of the temporary worktree that is removed below
+	if [ -n "$CB_PWD" ]; then cd "$CB_PWD" 2>/dev/null || true; fi
+	if [ "$CB_ROLLBACK" = 1 ]; then
+		CB_ROLLBACK=0
+		undone=1
+		if [ -s "$CB_GD/combine.undo" ] && ! git update-ref --stdin <"$CB_GD/combine.undo"; then
+			undone=0
+			echo "[rama] ERROR: could not put the branches back; the old tips are in $CB_GD/combine.undo.keep" >&2
+			cp "$CB_GD/combine.undo" "$CB_GD/combine.undo.keep" 2>/dev/null || true
+		fi
+		# why: HEAD goes back to its branch only when the undo worked and that branch exists, so it
+		# never points at a branch that is gone; otherwise it stays detached where it is
+		if [ "$undone" = 1 ]; then
+			git checkout -q --detach "$CB_HEAD_SHA" 2>/dev/null || true
+			if [ -n "$CB_HEAD_REF" ] && exists_ref "$CB_HEAD_REF"; then git symbolic-ref HEAD "$CB_HEAD_REF" 2>/dev/null || true; fi
+			echo "[rama] the branches and HEAD were put back as they were" >&2
+		else
+			git checkout -q --detach 2>/dev/null || git update-ref --no-deref HEAD "$CB_HEAD_SHA" 2>/dev/null || true
+			echo "[rama] WARN: HEAD was left detached (it was on ${CB_HEAD_REF:-$CB_HEAD_SHA}) because a branch moved meanwhile." >&2
+			echo "  Check git branch -a, put the branches back from $CB_GD/combine.undo.keep" >&2
+			echo "  (git update-ref --stdin < that file), then run: git switch ${CB_HEAD_REF#refs/heads/}" >&2
+		fi
+	fi
 	if [ -n "$CB_WT" ] && [ -e "$CB_WT" ]; then
 		git worktree remove --force "$CB_WT" >/dev/null 2>&1 || rm -rf "$CB_WT"
 	fi
 	git worktree prune 2>/dev/null || true
-	if [ -n "$CB_GD" ]; then rm -f "$CB_GD"/combine.*; fi
+	if [ -n "$CB_GD" ]; then rm -f "$CB_GD"/combine.idx "$CB_GD"/combine.log "$CB_GD"/combine.msg \
+		"$CB_GD"/combine.tx "$CB_GD"/combine.undo "$CB_GD"/combine.undo.new; fi
+	return 0
+}
+
+# combine_trap_set: run combine_cleanup on EXIT and then the EXIT trap that was already set, so a
+# caller's trap is kept (chained, not replaced).
+# Arguments: none. Exit status: 0.
+combine_trap_set() {
+	# why: 'trap -p' quotes the command as shell words; eval of 'set --' gives it back as it was
+	eval "set -- $(trap -p EXIT)"
+	CB_PREV_TRAP="${3:-}"
+	# shellcheck disable=SC2016 # why: expanded when the trap fires, not now
+	trap 'combine_cleanup; eval "$CB_PREV_TRAP"' EXIT
+}
+
+# combine_finish: end of a run that got this far: clean up, and give back the previous EXIT trap.
+# Arguments: none. Exit status: 0.
+combine_finish() {
+	combine_cleanup
+	if [ -n "$CB_PREV_TRAP" ]; then trap -- "$CB_PREV_TRAP" EXIT; else trap - EXIT; fi
 	return 0
 }
 
@@ -1416,22 +1477,44 @@ combine_originals() {
 	return 0
 }
 
-# combine_order_key <commit>...: the creation order key of a tree: the commit time of its oldest
-# commit not in develop (its version commit when made by git np), then how many such commits the
-# tips have together. A copy (git nueva-version) shares its oldest commit with its source and has
-# more commits, so it sorts after it.
-# Arguments: $1... the tips of the tree. Output: "<seconds since the epoch><TAB><count>".
-# Exit status: 0.
+# combine_tree_date <tip> <version>: when a tree was created, from author dates (a rebase or a
+# cherry-pick keeps them; the committer date changes). A combined RELEASE (it has chore(combine)
+# commits not in develop) takes the earliest author date of its squash commits: git combinar
+# writes each squash with the date of what it squashes. Any other tree takes the author date of
+# its version commit (the oldest one not in develop whose subject is the version subject of
+# <version>, made by git np or git nueva-version), or of its oldest commit not in develop.
+# Arguments: $1 the tip; $2 its version. Output: seconds since the epoch, or nothing when the tree
+# has no commit of its own. Exit status: 0.
+combine_tree_date() {
+	local tip="$1" vs d
+	vs="$(version_subject "$2")"
+	d="$(git log --format=%at --grep='^chore(combine)' "$tip" "^$CB_BASE" -- | sort -n | sed -n 1p)"
+	if [ -z "$d" ]; then
+		# why: awk reads everything (no exit); an early exit would end git with SIGPIPE under pipefail
+		d="$(git log --reverse --format='%at%x1f%s' "$tip" "^$CB_BASE" -- | awk -F'\037' -v s="$vs" '$2 == s && !n++ { print $1 }')"
+	fi
+	[ -n "$d" ] || d="$(git log --reverse --format=%at "$tip" "^$CB_BASE" -- | sed -n 1p)"
+	printf '%s' "$d"
+}
+
+# combine_order_key <version> <tip> [<branch> <sha>]...: the creation order key of a tree: the
+# earliest combine_tree_date of its tip and of the originals it squashed (the 'Squashes:' lines;
+# the ones that are gone are not given, and the squash dates stand in for them), then how many
+# commits not in develop they have together. A copy (git nueva-version) has a later version
+# commit than its source, and more commits when both fall in the same second, so it sorts after.
+# Arguments: $1 the version of the tree; $2 its tip; then pairs of original branch and sha.
+# Output: "<seconds since the epoch><TAB><count>". Exit status: 0.
 combine_order_key() {
-	local c first t=""
-	for c in "$@"; do
-		# why: sed reads everything; head would end git with SIGPIPE, an error under pipefail
-		first="$(git rev-list --reverse "$c" "^$CB_BASE" -- | sed -n 1p)"
-		[ -n "$first" ] || continue
-		first="$(git log -1 --format=%ct "$first")"
-		if [ -z "$t" ] || [ "$first" -lt "$t" ]; then t="$first"; fi
+	local d t tips=("$2")
+	t="$(combine_tree_date "$2" "$1")"
+	shift 2
+	while [ "$#" -ge 2 ]; do
+		tips+=("$2")
+		d="$(combine_tree_date "$2" "$(branch_version "$1")")"
+		if [ -n "$d" ] && { [ -z "$t" ] || [ "$d" -lt "$t" ]; }; then t="$d"; fi
+		shift 2
 	done
-	printf '%s\t%s\n' "${t:-0}" "$(git rev-list --count "$@" "^$CB_BASE" --)"
+	printf '%s\t%s\n' "${t:-0}" "$(git rev-list --count "${tips[@]}" "^$CB_BASE" --)"
 }
 
 # combine_copy_point <tip> <earlier>...: where a tree was copied from one combined before it (git
@@ -1524,23 +1607,110 @@ combine_message() {
 	printf '%s\n' "$sq"
 }
 
-# combine_archive <branch> <tip>: keep a combined RELEASE as 'unmerged/<branch>' (local and on
-# origin) instead of deleting it, so the changelog refs and the 'Squashes:' shas still resolve.
-# Arguments: $1 the RELEASE branch; $2 its tip. Output: a line naming the archive.
-# Exit status: 0; ends the script when no free name is left.
-combine_archive() {
-	local b="$1" tip="$2" new
-	REL_PLANNED=$'\n'
-	new="$(archive_name "$b")" || die "no free name to set '$b' aside; it is kept"
-	git branch -q -f --no-track "$new" "$tip"
-	if [ "$(current_branch || true)" = "$b" ]; then git checkout -q --detach; fi
-	if exists_ref "refs/heads/$b"; then git branch -q -D "$b"; fi
-	if has_origin && exists_ref "refs/remotes/origin/$b"; then
-		git push -q origin "$tip:refs/heads/$new" ":refs/heads/$b" ||
-			echo "[rama] WARN: could not move $b to $new on origin: git push origin $new :$b" >&2
+# combine_archive_plan <branch> <tip>...: the archive name of each combined RELEASE
+# ('unmerged/<branch>': kept, not deleted, so the changelog refs and the 'Squashes:' shas still
+# resolve), added to CB_ARCHIVE, and the plan printed: what is renamed locally and on origin
+# (there the old name is deleted). Nothing is changed yet.
+# Arguments: pairs of RELEASE branch and tip. Output: the plan lines.
+# Exit status: 0; ends the script through die when no free name is left.
+combine_archive_plan() {
+	local b new
+	REL_PLANNED=$'\n' CB_ARCHIVE=()
+	while [ "$#" -ge 2 ]; do
+		b="$1"
+		new="$(archive_name "$b")" || die "no free name to set '$b' aside; nothing was changed"
+		REL_PLANNED="$REL_PLANNED$new"$'\n'
+		CB_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$2")
+		if exists_ref "refs/heads/$b"; then echo "  local:  $b -> $new"; else echo "  local:  $new (copy of origin/$b)"; fi
+		if has_origin && exists_ref "refs/remotes/origin/$b"; then
+			echo "  origin: $b -> $new  (renamed on origin: $b is deleted there)"
+		fi
+		shift 2
+	done
+	echo "  local:  $REL_RELEASE $(if exists_ref "refs/heads/$REL_RELEASE"; then echo "moves to the combined result"; else echo "created"; fi)"
+	if has_origin; then echo "  origin: $REL_RELEASE pushed; all origin changes in one atomic push, at the end"; fi
+}
+
+# combine_apply <result>: move the local branches in one transaction (git update-ref --stdin):
+# REL_RELEASE to the result, each CB_ARCHIVE entry renamed, then check out REL_RELEASE. HEAD is
+# detached first; the undo file (combine.undo) is written before any branch moves, and while
+# CB_ROLLBACK is 1 a failure puts every branch and HEAD back (combine_cleanup, from the EXIT
+# trap; if a branch moved meanwhile and the undo is rejected, HEAD stays detached with a warning).
+# Arguments: $1 the combined result. Exit status: 0; ends the script through die on a failure,
+# with nothing changed.
+combine_apply() {
+	local res="$1" tx="$CB_GD/combine.tx" undo="$CB_GD/combine.undo" old entry b new t
+	: >"$tx"
+	: >"$undo.new"
+	for entry in ${CB_ARCHIVE[@]+"${CB_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new t <<<"$entry"
+		printf 'create refs/heads/%s %s\n' "$new" "$t" >>"$tx"
+		printf 'delete refs/heads/%s %s\n' "$new" "$t" >>"$undo.new"
+		if [ "$b" != "$REL_RELEASE" ] && exists_ref "refs/heads/$b"; then
+			old="$(git rev-parse "refs/heads/$b")"
+			printf 'delete refs/heads/%s %s\n' "$b" "$old" >>"$tx"
+			printf 'create refs/heads/%s %s\n' "$b" "$old" >>"$undo.new"
+		fi
+	done
+	if exists_ref "refs/heads/$REL_RELEASE"; then
+		old="$(git rev-parse "refs/heads/$REL_RELEASE")"
+		printf 'update refs/heads/%s %s %s\n' "$REL_RELEASE" "$res" "$old" >>"$tx"
+		printf 'update refs/heads/%s %s %s\n' "$REL_RELEASE" "$old" "$res" >>"$undo.new"
+	else
+		printf 'create refs/heads/%s %s\n' "$REL_RELEASE" "$res" >>"$tx"
+		printf 'delete refs/heads/%s %s\n' "$REL_RELEASE" "$res" >>"$undo.new"
 	fi
-	git config --unset "qs.release.$(branch_version "$b").tag" 2>/dev/null || true
-	say "$b kept as $new"
+	CB_HEAD_REF="$(git symbolic-ref -q HEAD || true)"
+	CB_HEAD_SHA="$(git rev-parse HEAD)"
+	# why: the undo file is complete on disk before any branch moves, so a kill at any point leaves it
+	mv "$undo.new" "$undo"
+	CB_ROLLBACK=1
+	# why: a branch checked out here may be renamed; a detached HEAD at the same commit leaves the
+	# work tree as it is
+	git checkout -q --detach || die "could not detach HEAD; nothing was changed"
+	# why: the transaction is all or nothing, so when it fails there is nothing to undo
+	git update-ref --stdin <"$tx" || {
+		rm -f "$undo"
+		die "could not move the local branches; nothing was changed"
+	}
+	git checkout -q "$REL_RELEASE" || die "could not check out $REL_RELEASE; nothing was changed"
+	CB_ROLLBACK=0
+	rm -f "$undo" "$tx"
+}
+
+# combine_push: publish the local result on origin in one atomic push (git push --atomic): the new
+# REL_RELEASE, and each combined RELEASE that origin has renamed to its archive name. Every ref
+# origin had is protected by --force-with-lease with the value last fetched. A failure keeps the
+# local result and prints the push to run by hand.
+# Arguments: none. Output: progress. Exit status: 0 when pushed or there is no origin; ends the
+# script through die when the push fails.
+combine_push() {
+	local entry b new t n=0 args=() lease=()
+	has_origin || return 0
+	args=("refs/heads/$REL_RELEASE:refs/heads/$REL_RELEASE")
+	if exists_ref "refs/remotes/origin/$REL_RELEASE"; then
+		lease+=("--force-with-lease=refs/heads/$REL_RELEASE:$(git rev-parse "refs/remotes/origin/$REL_RELEASE")")
+	fi
+	for entry in ${CB_ARCHIVE[@]+"${CB_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new t <<<"$entry"
+		exists_ref "refs/remotes/origin/$b" || continue
+		args+=("$t:refs/heads/$new")
+		n=$((n + 1))
+		if [ "$b" != "$REL_RELEASE" ]; then
+			args+=(":refs/heads/$b")
+			lease+=("--force-with-lease=refs/heads/$b:$(git rev-parse "refs/remotes/origin/$b")")
+		fi
+	done
+	if ! git push -q --atomic -u origin ${lease[@]+"${lease[@]}"} "${args[@]}"; then
+		cat >&2 <<EOF
+[rama] the push to origin failed: origin is unchanged; the local result is kept ($REL_RELEASE, and
+  the combined RELEASE branches renamed locally). When origin accepts pushes again, run:
+  git push --atomic -u origin ${lease[*]} ${args[*]}
+  Then review $QS_BR_CHANGELOG on $REL_RELEASE and run git publicar --version $(branch_version "$REL_RELEASE").
+EOF
+		die "push to origin failed"
+	fi
+	say "origin: $REL_RELEASE pushed; $n RELEASE branch(es) renamed there"
 }
 
 # combine_stale_help: how to bring develop into a RELEASE by hand when combinar cannot do it.
@@ -1558,14 +1728,18 @@ EOF
 # develop and gets, oldest tree first, one squash commit per RELEASE with only its own changes
 # (no develop content, no release commits, nothing an earlier tree brought), then the version,
 # changelog and readme commits of the target. The CHANGELOG.md entry is built from the original
-# histories. The joined RELEASE branches are kept as 'unmerged/<v>/RELEASE'.
+# histories. The joined RELEASE branches are kept as 'unmerged/<v>/RELEASE', locally and on origin.
+# All or nothing: every commit (squashes and release commits) is made in a temporary worktree
+# first; then the local branches move in one transaction (put back on any failure), and last
+# origin gets one atomic push.
 # Arguments: --version <v>, --incluir <v1,v2...>, and --yes (global). Output: plan and progress.
-# Exit status: 0 on success; 1 (through die) on a bad argument, a conflict or a failed step;
-# nothing is changed when it stops before the result is written.
+# Exit status: 0 on success; 1 (through die) on a bad argument, a conflict or a failed step, with
+# nothing changed; when only the push to origin fails, the local result is kept and the push to
+# run by hand is printed.
 cmd_combinar() {
 	local target="" incl="" rels=() chosen=() ordered=() done_tips=() links=() r t c d cp src bad=0
-	local btree ntree p s h tree sq made here wt b m only
-	local -A tip=() up=() orig=()
+	local btree ntree p s h tree sq made here wt b m only res pairs=()
+	local -A tip=() up=() orig=() okey=()
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 		--version)
@@ -1583,7 +1757,10 @@ cmd_combinar() {
 		shift
 	done
 	require_clean || die "working tree not clean: commit or stash first"
-	# why: the index and tree paths below are relative to the top of the work tree
+	CB_PWD="$PWD"
+	combine_trap_set
+	# why: the index and tree paths below are relative to the top of the work tree (combine_cleanup
+	# goes back to CB_PWD)
 	cd "$(git rev-parse --show-toplevel)"
 	fetch_origin
 	CB_BASE="$(best_ref "$QS_BR_MAINLINE" || true)"
@@ -1623,7 +1800,6 @@ cmd_combinar() {
 	done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
 	CB_GD="$(git rev-parse --absolute-git-dir)/quality-suite"
 	mkdir -p "$CB_GD"
-	trap combine_cleanup EXIT
 
 	# 1. every RELEASE up to date with develop: a temporary merge commit when it is not
 	for r in "${chosen[@]}"; do
@@ -1644,28 +1820,32 @@ cmd_combinar() {
 		combine_stale_help
 		die "nothing was changed"
 	fi
-	# 2. creation order: the oldest own commit of each tree (of its originals when it was combined;
-	# its squashes are newer than anything it holds)
-	mapfile -t ordered < <(for r in "${chosen[@]}"; do
-		if [ -n "${orig[$r]}" ]; then
-			# shellcheck disable=SC2046 # why: one sha per word
-			c="$(combine_order_key $(cut -d' ' -f2 <<<"${orig[$r]}"))"
-		else c="$(combine_order_key "${tip[$r]}")"; fi
-		printf '%s\t%s\n' "$c" "$r"
-	done | sort -t $'\t' -k1,1n -k2,2n -k3,3 | cut -f3-)
+	# 2. creation order (combine_order_key): author dates, so a rebase or a cherry-pick does not
+	# change it; a combined RELEASE takes the earliest date of what it squashed
+	for r in "${chosen[@]}"; do
+		# shellcheck disable=SC2046 # why: "<branch> <sha>" lines, one word each
+		okey[$r]="$(combine_order_key "$(branch_version "$r")" "${tip[$r]}" $(printf '%s' "${orig[$r]}"))"
+	done
+	mapfile -t ordered < <(for r in "${chosen[@]}"; do printf '%s\t%s\n' "${okey[$r]}" "$r"; done |
+		sort -t $'\t' -k1,1n -k2,2n -k3,3 | cut -f3-)
 	[ "${#ordered[@]}" -eq "${#chosen[@]}" ] || die "could not order the RELEASE branches by creation"
 	echo "Combine into $REL_RELEASE, on $QS_BR_MAINLINE ($(git rev-parse --short "$CB_BASE")), oldest first; one squash commit"
 	echo "per RELEASE with its own changes; their version/changelog/readme commits are written again for $target:"
 	for r in "${ordered[@]}"; do
 		echo "  $r$([ -n "${orig[$r]}" ] && echo "  (combined from: $(cut -d' ' -f1 <<<"${orig[$r]}" | tr '\n' ' '))")"
+		pairs+=("$r" "${tip[$r]}")
 	done
-	confirm "Go on?" || die "cancelled; nothing was changed"
+	echo "Then, when every commit is made (all or nothing):"
+	combine_archive_plan "${pairs[@]}"
+	confirm "Go on (local and origin changes above)?" || die "cancelled; nothing was changed"
 
 	# 3.-6. one squash per RELEASE, in a temporary worktree detached at develop
 	CB_WT="$CB_GD/combine-wt"
 	rm -rf "$CB_WT"
 	git worktree prune
 	git worktree add -q --detach "$CB_WT" "$CB_BASE" >/dev/null 2>&1 || die "could not create a temporary worktree; nothing was changed"
+	# why: the hooks of the release commits read the git-ignored rules of this work tree
+	if [ -f "$here/.quality-rules.json" ]; then cp "$here/.quality-rules.json" "$CB_WT/"; fi
 	for r in "${ordered[@]}"; do
 		t="${tip[$r]}"
 		combine_paths "$t"
@@ -1705,7 +1885,8 @@ cmd_combinar() {
 			h="$(git -C "$CB_WT" rev-parse HEAD)"
 			if [ "$tree" != "$(git rev-parse "$h^{tree}")" ]; then
 				combine_message "$(branch_version "$r")" "$t" "$sq" ${done_tips[@]+"${done_tips[@]}"} >"$CB_GD/combine.msg"
-				h="$(git commit-tree "$tree" -p "$h" -F "$CB_GD/combine.msg")"
+				# why: the squash keeps the creation date of what it squashes (the order of a later combinar)
+				h="$(GIT_AUTHOR_DATE="${okey[$r]%%$'\t'*} +0000" git commit-tree "$tree" -p "$h" -F "$CB_GD/combine.msg")"
 				made=1
 			fi
 			git -C "$CB_WT" reset -q --hard "$h"
@@ -1720,30 +1901,34 @@ cmd_combinar() {
 		fi
 		links+=("$t")
 	done
-	t="$(git -C "$CB_WT" rev-parse HEAD)"
-	git worktree remove --force "$CB_WT"
-	CB_WT=""
 	# 7. the changelog reads the original histories: a chain of temporary merges on develop
 	m="$CB_BASE"
 	for c in "${links[@]}"; do
 		m="$(git commit-tree "$c^{tree}" -p "$m" -p "$c" -m "Combine $(git rev-parse --short "$c") (git combinar, temporary)")"
 	done
-	# 8. the combined branch, then the release commits of the new version on it
-	case " ${chosen[*]} " in *" $REL_RELEASE "*) combine_archive "$REL_RELEASE" "${tip[$REL_RELEASE]}" ;; esac
-	if [ "$(current_branch || true)" = "$REL_RELEASE" ]; then git checkout -q --detach; fi
-	git branch -q -f --no-track "$REL_RELEASE" "$t"
-	git checkout -q "$REL_RELEASE"
+	# 8. the release commits of the new version, still in the temporary worktree (no branch moved)
 	REL_VERSION="$target" REL_TIP="$m" REL_CL_BASE="$CB_BASE" REL_PUSH=1
 	REL_TAG="$(render_tag "$target/$QS_BR_LEAF")"
-	git config "qs.release.$target.tag" "$REL_TAG"
+	REL_AGAIN="nothing was changed; fix it and run git combinar again"
+	# why: no subshell, so errexit still applies inside; every die there says nothing was changed,
+	# and combine_cleanup goes back to CB_PWD
+	cd "$CB_WT"
 	release_commits
-	if has_origin; then
-		git push -q -u origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the RELEASE branches combined are kept"
-	fi
-	# 9. the joined RELEASE branches are kept, renamed, so their history stays reachable
+	cd "$here"
+	res="$(git -C "$CB_WT" rev-parse HEAD)"
+	git worktree remove --force "$CB_WT"
+	CB_WT=""
+	# 9. the local branches in one transaction: REL_RELEASE on the result, the joined RELEASE
+	# branches renamed (kept, so their history stays reachable); HEAD on REL_RELEASE
+	combine_apply "$res"
+	git config "qs.release.$target.tag" "$REL_TAG"
 	for r in "${chosen[@]}"; do
-		[ "$r" = "$REL_RELEASE" ] || combine_archive "$r" "${tip[$r]}"
+		[ "$r" = "$REL_RELEASE" ] || git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
 	done
+	for c in "${CB_ARCHIVE[@]}"; do say "${c%%$'\t'*} kept as $(cut -f2 <<<"$c")"; done
+	# 10. origin last, in one atomic push
+	combine_push
+	combine_finish
 	say "combined ${#chosen[@]} release(s) into $REL_RELEASE; RELEASE branches now: $(release_branches | tr '\n' ' ')"
 	echo "Review $QS_BR_CHANGELOG on $REL_RELEASE, then: git publicar --version $target"
 }

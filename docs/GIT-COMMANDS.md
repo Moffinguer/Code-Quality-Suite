@@ -266,8 +266,13 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
   `CHANGELOG.md` and README badge commits of the new version. The changelog entry comes from the
   original histories, each change once. Prints per `RELEASE` the commits squashed and the
   mainline merges, release commits and already combined commits dropped. The joined branches
-  are kept as `unmerged/<v>/RELEASE` (local and origin); a combined `RELEASE` can be combined
-  again. On any conflict nothing changes.
+  are kept as `unmerged/<v>/RELEASE` (local and origin; on origin the old name is deleted). The
+  plan lists every local and origin rename before the confirmation (`--yes` answers it). A
+  combined `RELEASE` can be combined again. Order: author date of each tree's version commit; a
+  combined `RELEASE` takes the earliest date of what it squashed. All or nothing: every commit
+  is made in a temporary worktree first, then the local branches move in one transaction, then
+  one `git push --atomic` to origin. On any conflict or failure nothing changes; if only the
+  push fails, the local result is kept and the push to run is printed.
 - **Use it when:** several prepared versions must reach `develop` as one.
 - **Who:** human.
 
