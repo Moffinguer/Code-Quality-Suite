@@ -286,8 +286,13 @@ its own `RELEASE` (`git release --version <v>`). Then:
 - **One at a time.** With two or more `RELEASE` branches, `git publicar` refuses to guess:
   `git publicar --version <v>` merges exactly that one.
 - **Joined first.** `git combinar` asks yes/no for each `<v>/RELEASE`, then the version of the
-  result, and joins the chosen ones **in creation order** (oldest tree first: the date of its
-  first commit not in `develop`) into `<version>/RELEASE`:
+  result, and joins the chosen ones **in creation order** into `<version>/RELEASE`. The order
+  uses author dates, which a rebase or a cherry-pick keeps: a tree is dated by its version commit
+  (`chore(version): <v>`, made by `git np` or `git nueva-version`), or by its oldest commit not in
+  `develop` when it has none; a combined `RELEASE` takes the earliest date of what it squashed
+  (each squash commit is written with that date, so the order holds even when an original named
+  in `Squashes:` is gone). On the same second, the tree with fewer commits (the source of a copy)
+  goes first:
 
   ```bash
   git combinar                                              # questions
@@ -318,7 +323,17 @@ its own `RELEASE` (`git release --version <v>`). Then:
      never appear in it.
   4. **Originals kept.** The joined `RELEASE` branches are renamed to `unmerged/<v>/RELEASE`
      (local and origin), so the changelog refs and the `Squashes:` shas keep resolving; remove
-     them by hand when no longer needed. The new branch is pushed.
+     them by hand when no longer needed. On origin a rename deletes the old name
+     (`<v>/RELEASE`) there. Before anything is done, the plan lists every rename, local and on
+     origin, and asks for confirmation in the same `[y/N]` question (`--yes` answers it).
+  5. **All or nothing.** Every commit (squashes and release commits) is made first in a
+     temporary worktree. Only then the local branches move, in one transaction (`git update-ref
+     --stdin`): `<version>/RELEASE` on the result, the joined ones renamed, HEAD on the result;
+     on any failure (a hook rejects a release commit, the suite image does not run...) branches
+     and HEAD stay as they were. Last, origin gets **one atomic push** (`git push --atomic`, with
+     `--force-with-lease` on every ref it had): the new branch and the renames, all or none. If
+     that push fails, the local result is kept and the exact `git push --atomic ...` to run when
+     origin accepts it is printed.
 
   The output shows, per `RELEASE`, how many own commits were squashed and how many mainline
   merges (merges whose second parent is in `develop`), release commits and commits already
