@@ -13257,6 +13257,15 @@
     "conventional": {
      "type": "boolean",
      "default": true
+    },
+    "files": {
+     "enum": [
+      "block",
+      "warn",
+      "off"
+     ],
+     "default": "block",
+     "description": "the 'Files:' block in every commit message"
     }
    }
   },
@@ -13315,12 +13324,37 @@
      },
      "description": "extra allowed branch regexes"
     },
+    "model": {
+     "type": "integer",
+     "default": 5,
+     "description": "marker of the one-time migration to the 5.x branch model"
+    },
+    "flow": {
+     "enum": [
+      "squash",
+      "merge"
+     ],
+     "default": "squash",
+     "description": "squash (5.x) or merge (4.x behaviour, deprecated)"
+    },
+    "ot_tag": {
+     "type": "string",
+     "default": "ot/{version}/{ot}",
+     "description": "annotated tag on the OT ORIGINAL at the OT release; must contain {ot} ('' = none)"
+    },
+    "testing_leaf": {
+     "type": "string",
+     "pattern": "^[A-Za-z0-9_-]+$",
+     "default": "TESTING",
+     "description": "reserved leaf of the TESTING sandbox '<level>/<testing_leaf>'"
+    },
     "leaf_merge": {
      "enum": [
       "merge",
       "squash"
      ],
-     "default": "merge"
+     "default": "merge",
+     "description": "applies to flow = merge only"
     },
     "require_children_merged": {
      "type": "boolean",
@@ -13334,7 +13368,8 @@
     "tag_level": {
      "type": "integer",
      "minimum": 0,
-     "default": 1
+     "default": 1,
+     "description": "applies to flow = merge only"
     },
     "release_leaf": {
      "type": "string",
