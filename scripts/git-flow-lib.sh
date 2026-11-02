@@ -192,8 +192,13 @@ best_ref() {
 	git rev-parse -q --verify "refs/heads/$b" >/dev/null 2>&1 && echo "$b"
 }
 
+# Render the release tag of a branch from the tag template (QS_BR_TAG).
+# Arguments: $1 branch (<version>/<ot>/...). Returns: 0; prints the tag, no newline.
+# Loads the policy first, so it also works when the library is sourced on its own.
 render_tag() {
-	local b="$1" t="$QS_BR_TAG"
+	local b="$1" t
+	qs_policy_load
+	t="$QS_BR_TAG"
 	t="${t//\{version\}/$(branch_version "$b")}"
 	t="${t//\{ot\}/$(branch_ot "$b")}"
 	t="${t//\{date\}/$(date +%Y%m%d)}"

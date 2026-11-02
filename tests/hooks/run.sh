@@ -188,15 +188,16 @@ git np ABC123 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ABC123/ORI
 	[ "$(git branch --show-current)" = 6.22.6/ABC123/login ] && ok "git np/nr: text OT ABC123" || fail "text OT refused"
 (
 	# shellcheck source=/dev/null
-	. "$SUITE/scripts/git-flow-lib.sh" && export QS_BR_TAG='{version}-{ot}' &&
+	. "$SUITE/scripts/git-flow-lib.sh" && qs_policy_load && export QS_BR_TAG='{version}-{ot}' &&
 		[ "$(render_tag 6.22.6/ABC123/ORIGINAL)" = 6.22.6-ABC123 ]
 ) && ok "tag {version}-{ot} with a text OT" || fail "render_tag text OT"
 git checkout -q 6.22.6/ORIGINAL
+before_bad="$(git for-each-ref --format='%(refname:short)' refs/heads)"
 for bad in "AB 12" "A$(printf '\303\221')O1" "" AB-12 AB_12 RELEASE ORIGINAL; do
 	if git np "$bad" >/dev/null 2>&1; then fail "OT '$bad' accepted"; else ok "OT '$bad' refused"; fi
 done
 if git nr RELEASE >/dev/null 2>&1; then fail "git nr RELEASE accepted"; else ok "git nr RELEASE refused"; fi
-[ -z "$(git branch --list '6.22.6/AB*' '6.22.6/RELEASE*')" ] && ok "refused OTs created nothing" || fail "refused OT created a branch"
+[ "$(git for-each-ref --format='%(refname:short)' refs/heads)" = "$before_bad" ] && ok "refused OTs created nothing" || fail "refused OT created a branch"
 if (git checkout -q develop && git np ABC123 >/dev/null 2>&1); then fail "text name accepted as a version"; else ok "git np ABC123 from develop refused"; fi
 git checkout -q 6.22.6/ORIGINAL
 git np 188858 >/dev/null && git np RF001 >/dev/null || fail "np nested"
@@ -261,7 +262,7 @@ out="$(printf '6.22.8/300001/RF1/a\n6.22.8/300001/RF1/c\n' | git es --push 2>&1)
 [ "$(git rev-parse 6.22.8/300001/RF1/a)" = "$before" ] && grep -q '= 6.22.8/300001/RF1/a ' <<<"$out" &&
 	grep -q '+ 6.22.8/300001/RF1/c ' <<<"$out" && git ls-remote --heads origin | grep -q '6.22.8/300001/RF1/ORIGINAL$' &&
 	ok "git estructura keeps existing branches, adds siblings, pushes" || fail "estructura sibling: $out"
-if printf '6.22.8/x1/y\n' | git es >/dev/null 2>&1 || git rev-parse -q --verify 6.22.8/x1/y >/dev/null; then
+if printf '6.22.8/x-1/y\n' | git es >/dev/null 2>&1 || git rev-parse -q --verify 6.22.8/x-1/y >/dev/null; then
 	fail "estructura accepted an invalid OT"
 else ok "git estructura validates everything before creating"; fi
 # release: recursive check, changelog, unmerged branches set aside, tag, merge into develop, tree deleted
