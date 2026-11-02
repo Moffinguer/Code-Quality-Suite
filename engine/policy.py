@@ -15,7 +15,9 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 # level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
 # no '-' or '_', so it never collides with the leaf names of the branch model
@@ -87,7 +89,8 @@ BOM_UTF8 = codecs.BOM_UTF8
 MODEL = DEFAULTS["branches"]["model"]
 OLD_OT_RX = r"^[0-9]+$"  # level 2 default before 4.2.1 (numeric OTs only)
 FLOW_NOTICE = (
-    "version trees started with 4.x: set `branches.flow` to `merge` until they are published"
+    "existing rules file: `branches.flow` set to `merge` to keep the 4.x behaviour; "
+    "set `branches.flow` to `squash` in .quality-rules.json to adopt the 5.x flow"
 )
 
 
@@ -95,8 +98,9 @@ def migrate(data):
     """One-time migration of a rules file to the 5.x branch model. Run before populate.
 
     When `branches.model` is missing or below 5: `branches.levels[1]` equal to the old default
-    `^[0-9]+$` becomes OT_RX (any other value is kept), `branches.flow` is added as `squash`
-    and `branches.model` is set to 5. A second run changes nothing. Never weakens a rule.
+    `^[0-9]+$` becomes OT_RX (any other value is kept), `branches.flow` is added as `merge`
+    (4.x behaviour kept; new files get `squash` from populate) and `branches.model` is set to 5.
+    A second run changes nothing. Never weakens a rule.
 
     Args:
         data: the parsed rules file (dict), changed in place.
@@ -116,8 +120,8 @@ def migrate(data):
         levels[1] = OT_RX
         msgs.append(f"migrated branches.levels[1]: {OLD_OT_RX} -> {OT_RX}")
     if "flow" not in br:
-        br["flow"] = "squash"
-        msgs.append(f"migrated branches.flow: squash ({FLOW_NOTICE})")
+        br["flow"] = "merge"
+        msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
     br["model"] = MODEL
     msgs.append(f"migrated branches.model: {MODEL}")
     return msgs
@@ -961,24 +965,54 @@ def repair(raw, old_raw=None):
 def _migrate_file(path):
     """Migrate a rules file on disk (host-side, no engine image needed).
 
+    The new text goes to a uniquely named temporary file (`mkstemp`) in the same directory;
+    the permission bits of the original are copied to it and it is then moved over the
+    original (`os.replace`). Its line endings (LF or CRLF) are kept. If the write or the
+    replace fails, the temporary file is removed and the OSError propagates; the original is
+    left unchanged. A file with a BOM or that is not UTF-8 is skipped with a warning.
+
     Args:
         path: the rules file; a missing, empty or unreadable file is left alone.
 
     Returns:
         int: 0 (also when nothing changed or the file is not usable).
+
+    Raises:
+        OSError: when the temporary file cannot be written, copied or moved over the file.
     """
+    name = os.path.basename(path)
     try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0
+    if raw.startswith(BOM_UTF8):
+        print(f"[quality-suite] WARN {name}: UTF-8 BOM, not migrated", file=sys.stderr)
+        return 0
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        print(f"[quality-suite] WARN {name}: not UTF-8, not migrated", file=sys.stderr)
+        return 0
+    except ValueError:
         return 0
     msgs = migrate(data)
     if msgs:
-        with open(path, "w", encoding="utf-8", newline="\n") as fh:
-            json.dump(data, fh, indent=2, ensure_ascii=False)
-            fh.write("\n")
+        eol = "\r\n" if b"\r\n" in raw else "\n"
+        text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+                fh.write(text)
+            shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        finally:
+            # after a successful replace the temp name is gone; otherwise drop the leftover
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
         for m in msgs:
-            print(f"[quality-suite] {os.path.basename(path)}: {m}")
+            print(f"[quality-suite] {name}: {m}")
     return 0
 
 

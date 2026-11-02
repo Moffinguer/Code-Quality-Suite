@@ -339,7 +339,7 @@ def policy_schema():
                 "leaf_merge": {
                     "enum": ["merge", "squash"],
                     "default": "merge",
-                    "description": "only used with flow = merge",
+                    "description": "applies to flow = merge only",
                 },
                 "require_children_merged": {"type": "boolean", "default": True},
                 "tag": {
@@ -351,7 +351,7 @@ def policy_schema():
                     "type": "integer",
                     "minimum": 0,
                     "default": 1,
-                    "description": "only used with flow = merge",
+                    "description": "applies to flow = merge only",
                 },
                 "release_leaf": {
                     "type": "string",

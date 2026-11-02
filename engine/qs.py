@@ -255,10 +255,9 @@ class App:
             list[str]: what the suite changed (policy, global, language ids, detected versions).
         """
         changed_by_suite = []
-        self._migrate()
         migrated = self._migrate()
         added = policy.populate(self.data)
-        if migrated and "policy" not in changed_by_suite:
+        if migrated:
             changed_by_suite.append("policy")
         if added and not getattr(self, "_created", False):
             changed_by_suite.append("policy")

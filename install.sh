@@ -137,12 +137,17 @@ REPO_TOP="$(cd "$(git rev-parse --show-toplevel)" && pwd)"
 grep -qxF "$REPO_TOP" "$QS_HOME/repos.list" || printf '%s\n' "$REPO_TOP" >>"$QS_HOME/repos.list"
 # why: one-time migration of an existing rules file (branches.model 5); the engine does it
 # in Docker on the next commit, this applies it now for `git instalar` / `git actualizar-suite`
-for _py in python3 python; do
-	if command -v "$_py" >/dev/null 2>&1; then
-		[ ! -f "$REPO_TOP/.quality-rules.json" ] || "$_py" "$SCRIPT_DIR/engine/policy.py" migrate "$REPO_TOP/.quality-rules.json" || true
-		break
-	fi
-done
+# why: the Windows Store python3 stub exists on Git Bash but fails, so try each until one works
+if [ -f "$REPO_TOP/.quality-rules.json" ]; then
+	_migrated=0
+	for _py in python3 python; do
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$SCRIPT_DIR/engine/policy.py" migrate "$REPO_TOP/.quality-rules.json"; then
+			_migrated=1
+			break
+		fi
+	done
+	[ "$_migrated" = 1 ] || echo "[install] WARN: no working python3/python: rules file not migrated (the engine does it on the next commit)" >&2
+fi
 
 echo "[install] Hooks: pre-commit, pre-push, prepare-commit-msg, commit-msg, pre-rebase, pre-merge-commit,"
 echo "          post-checkout -> $([ "$HOOK_STUBS" = 1 ] && echo "stubs running" || echo "symbolic links to") ${COMMON}"
