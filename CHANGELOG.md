@@ -1,5 +1,16 @@
 # Changelog
 
+## 4.2.0 - 2026-11-02
+
+### Added
+
+- Clean old images on install (ff00729; Fernando Mateos)
+- Add qs_clean_old_images (b90ede6; Fernando Mateos)
+
+### Fixed
+
+- Match the suite repo exactly (0f29e54, OT 100; Fernando Mateos)
+
 ## 4.0.0 - 2026-11-01
 
 ### Added
