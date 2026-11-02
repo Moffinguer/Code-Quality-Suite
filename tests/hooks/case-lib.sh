@@ -28,6 +28,10 @@ case_sandbox() {
 	git config user.name tester
 	"$SUITE/install.sh" "$CASE_REPO" >/dev/null || fail "install in $CASE_REPO"
 	git remote add origin "$CASE_REPO.git"
+	printf '# sandbox\n' >README.md
+	git add README.md
+	# why: the rules file is created by the first commit
+	git commit -q -m "chore: initial" || fail "initial commit in $CASE_REPO"
 	if [ -n "$flow" ]; then
 		python3 - "$flow" <<'PY'
 import json, sys
@@ -37,9 +41,6 @@ d.setdefault("branches", {})["flow"] = sys.argv[1]
 json.dump(d, open(p, "w"), indent=2)
 PY
 	fi
-	printf '# sandbox\n' >README.md
-	git add README.md
-	git commit -q -m "chore: initial" || fail "initial commit in $CASE_REPO"
 	git push -q origin develop 2>/dev/null || fail "push develop in $CASE_REPO"
 }
 
