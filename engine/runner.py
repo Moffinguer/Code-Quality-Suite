@@ -3,6 +3,7 @@
 Step order per language: syntax -> marker -> format -> lint -> deep. A file that
 fails the syntax step is dropped from the later steps (its errors would be noise).
 """
+
 import copy
 import fnmatch
 import os
@@ -12,27 +13,37 @@ import subprocess
 import tempfile
 
 import builtin
+import generated
 import qslog
-from registry import ROLE_LEVEL, level_rank
 import versions
+
+from registry import ROLE_LEVEL, level_rank
+
+# why: generated files (git attribute qs-generated) are rewritten by their generator, so
+# marking, formatting and linting them would only make the output unstable; secrets still count.
+GENERATED_SKIP_ROLES = ("marker", "format", "lint", "deep")
+SECRET_SCANNERS = ("gitleaks", "qs-private-key")
 
 ROLE_ORDER = {"syntax": 0, "marker": 1, "format": 2, "lint": 3, "deep": 4}
 
 
 class Ctx:
-    def __init__(self, root, mode, tmp, cfg_paths, exec_files, ambiguous=None):
+    # why: shared engine call contract; a parameter object would change every caller
+    def __init__(self, root, mode, tmp, cfg_paths, exec_files, ambiguous=None):  # noqa: PLR0913, PLR0917
         self.root, self.mode, self.tmp = root, mode, tmp
-        self.cfg_paths = cfg_paths          # (lang_id, tool_id) -> generated config path
-        self.exec_files = exec_files        # set of repo-relative executable paths
-        self.ambiguous = ambiguous or set() # files whose extension was ambiguous (confidently resolved)
-        self.protect = {}                   # file -> non-UTF-8 charset: formatters/markers never touch it
-        self.charsets = {}                  # lang -> charset name for {charset} (e.g. PMD --encoding)
+        self.cfg_paths = cfg_paths  # (lang_id, tool_id) -> generated config path
+        self.exec_files = exec_files  # set of repo-relative executable paths
+        self.ambiguous = (
+            ambiguous or set()
+        )  # files whose extension was ambiguous (confidently resolved)
+        self.protect = {}  # file -> non-UTF-8 charset: formatters/markers never touch it
+        self.charsets = {}  # lang -> charset name for {charset} (e.g. PMD --encoding)
 
 
 class StepResult:
     def __init__(self, tool_id, role):
         self.tool_id, self.role = tool_id, role
-        self.status = {}                    # file -> SUCCESS|ERROR|SKIP
+        self.status = {}  # file -> SUCCESS|ERROR|SKIP
         self.output = []
         self.note = ""
 
@@ -73,7 +84,9 @@ def _subst(t, ctx, tool, version, vv):
     s = s.replace("{charset}", ctx.charsets.get(tool.get("_lang"), "UTF-8"))
     s = _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), s)
     rules = tool.get("_rules") or {}
-    s = _RULE_RE.sub(lambda m: "" if rules.get(m.group(1)) in (None, False) else str(rules.get(m.group(1))), s)
+    s = _RULE_RE.sub(
+        lambda m: "" if rules.get(m.group(1)) in (None, False) else str(rules.get(m.group(1))), s
+    )
     s = s.replace("{config_dir}", os.path.dirname(cfg) if cfg else "").replace("{config}", cfg)
     s = versions.fmt(s, version) if version is not None else versions.fmt(s, "")
     for k, val in vv.items():
@@ -84,7 +97,8 @@ def _subst(t, ctx, tool, version, vv):
     return s
 
 
-def expand(tokens, ctx, tool, files, args, version, extra=None):
+# why: shared engine call contract; a parameter object would change every caller
+def expand(tokens, ctx, tool, files, args, version, extra=None):  # noqa: PLR0913, PLR0917
     """Expand a command template. A nested list is an optional group: it is dropped
     when any of its placeholders resolves empty (e.g. ["--config", "{config}"])."""
     out = []
@@ -132,8 +146,8 @@ def effective_rules(tool, rules, version):
     out = copy.deepcopy(rules or {})
     if version:
         vv = _vars(tool, version, {})
-        for path, tmpl in (tool.get("version_rules") or {}).items():
-            path = versions.fmt(path, version)
+        for raw_path, tmpl in (tool.get("version_rules") or {}).items():
+            path = versions.fmt(raw_path, version)
             if not isinstance(tmpl, str):
                 set_path(out, path, tmpl)
                 continue
@@ -160,12 +174,14 @@ def rule_args(tool, rules):
     prefix = spec.get("prefix", "--") if isinstance(spec, dict) else "--"
     aliases = spec.get("aliases", {}) if isinstance(spec, dict) else {}
     out = []
-    for k, v in (rules or {}).items():
-        if k.startswith("$"):
+    for name, v in (rules or {}).items():
+        if name.startswith("$"):
             continue
-        k = aliases.get(k, k)  # why: a flag renamed upstream keeps working in existing rules files
+        k = aliases.get(
+            name, name
+        )  # why: a flag renamed upstream keeps working in existing rules files
         flag = k if k.startswith("-") else prefix + k
-        for x in (v if isinstance(v, list) else [v]):
+        for x in v if isinstance(v, list) else [v]:
             if x is True:
                 out.append(flag)
             elif x is False or x is None:
@@ -180,8 +196,17 @@ def rule_args(tool, rules):
 def _run(cmd, cwd, env, timeout, stdin=None):
     try:
         # why: a tool that falls back to reading stdin must see EOF, never hang the commit
-        p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
-                           errors="replace", **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}))
+        p = subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            errors="replace",
+            check=False,
+            **({"input": stdin} if stdin is not None else {"stdin": subprocess.DEVNULL}),
+        )
         return p.returncode, p.stdout, p.stderr
     except FileNotFoundError as e:
         return 127, "", str(e)
@@ -192,8 +217,12 @@ def _run(cmd, cwd, env, timeout, stdin=None):
 def _env(tool, ctx):
     env = dict(os.environ)
     for k, v in (tool.get("env") or {}).items():
-        env[k] = v.replace("{root}", ctx.root).replace("{tmp}", ctx.tmp).replace("{suite}", SUITE) \
+        env[k] = (
+            v.replace("{root}", ctx.root)
+            .replace("{tmp}", ctx.tmp)
+            .replace("{suite}", SUITE)
             .replace("{charset}", ctx.charsets.get(tool.get("_lang"), "UTF-8"))
+        )
     rules = tool.get("_rules") or {}
     for k, spec in (tool.get("env_from_rules") or {}).items():
         val = rules.get(spec["rule"])
@@ -231,8 +260,15 @@ def _group(files, root, markers):
 def _requires(tool, ctx):
     req = tool.get("requires") or {}
     for cand in req.get("any_file", []):
-        hits = [cand] if not any(c in cand for c in "*?[") else \
-            [n for n in (os.listdir(ctx.root) if os.path.isdir(ctx.root) else []) if fnmatch.fnmatch(n, cand)]
+        hits = (
+            [cand]
+            if not any(c in cand for c in "*?[")
+            else [
+                n
+                for n in (os.listdir(ctx.root) if os.path.isdir(ctx.root) else [])
+                if fnmatch.fnmatch(n, cand)
+            ]
+        )
         for h in hits:
             if os.path.exists(os.path.join(ctx.root, h)):
                 p = os.path.join(ctx.root, h)
@@ -252,7 +288,9 @@ def _attribute(res, files, rc_ok, out):
 
 # ---------------------------------------------------------------- builtins
 
-def run_builtin(tool, settings, lang, ctx, files, version):
+
+# why: one dispatch branch per builtin check; a registry of handlers is a separate refactor
+def run_builtin(tool, settings, lang, ctx, files, version):  # noqa: C901, PLR0912, PLR0913, PLR0917
     res = StepResult(tool["id"], tool["role"])
     name = tool["cmd"]["builtin"]
     spec = dict((lang or {}).get("basic", {}))
@@ -263,7 +301,11 @@ def run_builtin(tool, settings, lang, ctx, files, version):
             probs = builtin.basic_syntax(p, spec)
         elif name == "basic_format":
             ok = builtin.basic_format(p, spec, write=(ctx.mode == "fix"))
-            probs = [] if ok or ctx.mode == "fix" else ["whitespace not normalized (trailing spaces / final newline)"]
+            probs = (
+                []
+                if ok or ctx.mode == "fix"
+                else ["whitespace not normalized (trailing spaces / final newline)"]
+            )
         elif name == "marker":
             probs = _marker(lang, settings, ctx, f, p)
         elif name == "python_ast":
@@ -273,22 +315,33 @@ def run_builtin(tool, settings, lang, ctx, files, version):
         elif name == "conflict_markers":
             text, _ = builtin.read_text(p)
             m = builtin.CONFLICT.search(text or "")
-            probs = [f"merge-conflict marker at line {text.count(chr(10), 0, m.start()) + 1}"] if m else []
+            probs = (
+                [f"merge-conflict marker at line {text.count(chr(10), 0, m.start()) + 1}"]
+                if m
+                else []
+            )
         elif name == "private_key":
             text, _ = builtin.read_text(p)
-            probs = ["looks like a private key"] if text and builtin.PRIVATE_KEY.search(text) else []
+            probs = (
+                ["looks like a private key"] if text and builtin.PRIVATE_KEY.search(text) else []
+            )
         elif name == "mixed_line_endings":
             raw = builtin.slurp(p)
             crlf = raw.count(b"\r\n")
             probs = ["mixed CRLF/LF line endings"] if crlf and raw.count(b"\n") != crlf else []
         elif name == "repo_files":
-            import repofiles
-            probs, warns = repofiles.check(ctx.root, f, getattr(ctx, "policy", None), os.environ.get("QS_BRANCH", ""))
+            # why: loaded only for this builtin, keeps engine start-up light
+            import repofiles  # noqa: PLC0415
+
+            probs, warns = repofiles.check(
+                ctx.root, f, getattr(ctx, "policy", None), os.environ.get("QS_BRANCH", "")
+            )
             for w in warns:
                 qslog.log("WARN", "repo-files", w, f, tool["id"], "WARN")
         elif name == "large_file":
             kb = int((settings.get("rules") or {}).get("max_kb", 512))
-            probs = [f"file larger than {kb} KB (use Git LFS or exclude it)"] if os.path.getsize(p) > kb * 1024 else []
+            big = os.path.getsize(p) > kb * 1024 and not generated.is_generated(ctx.root, f)
+            probs = [f"file larger than {kb} KB (use Git LFS or exclude it)"] if big else []
         else:
             probs = [f"unknown builtin {name}"]
         res.status[f] = "ERROR" if probs else "SUCCESS"
@@ -305,7 +358,9 @@ def _marker(lang, settings, ctx, rel, path):
     first = text.split("\n", 1)[0]
     base = os.path.basename(rel)
     want = None
-    shebang_due = spec.get("shebang") and (spec.get("always") or rel in ctx.exec_files or "." not in base)
+    shebang_due = spec.get("shebang") and (
+        spec.get("always") or rel in ctx.exec_files or "." not in base
+    )
     if shebang_due and not first.startswith("#!"):
         want = ("shebang", spec["shebang"])
     elif spec.get("modeline") and rel in ctx.ambiguous:
@@ -323,7 +378,7 @@ def _marker(lang, settings, ctx, rel, path):
     if want[0] == "shebang":
         lines.insert(0, want[1] + ("\r" if eol == "\r\n" else ""))
     else:
-        # why: some files require a fixed first line (shebang, <?xml ?>, <?php); the modeline goes after it.
+        # why: some files need a fixed first line (shebang, <?xml ?>, <?php); modeline goes after
         after = spec.get("modeline_after", r"^(#!|<\?xml|<\?php)")
         pos = 1 if lines and re.match(after, lines[0]) else 0
         lines.insert(pos, want[1] + ("\r" if eol == "\r\n" else ""))
@@ -334,6 +389,7 @@ def _marker(lang, settings, ctx, rel, path):
 
 
 # ---------------------------------------------------------------- external tools
+
 
 def _cwd(tool, ctx, gdir, unit, work=None):
     root = work or ctx.root
@@ -358,7 +414,8 @@ def _paths(tool, ctx, unit, work=None):
     return unit if tool.get("cwd", "root") == "root" else [os.path.join(root, f) for f in unit]
 
 
-def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args, extra):
+# why: shared engine call contract; a parameter object would change every caller
+def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args, extra):  # noqa: PLR0913, PLR0917
     """Formatter that prints the formatted file on stdout (xmllint --format, latexindent -s ...)."""
     seq = tool["cmd"]["stdout"]
     ok_codes = tool.get("success", [0])
@@ -369,7 +426,9 @@ def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args,
         rc, out, err = _run(cmd, _cwd(tool, ctx, ctx.root, [f]), env, timeout, stdin)
         if rc not in ok_codes or not out.strip():
             res.status[f] = "ERROR"
-            res.output += [f"{f}: {l}" for l in (err or out or f"exit {rc}").splitlines() if l.strip()][:40]
+            res.output += [
+                f"{f}: {line}" for line in (err or out or f"exit {rc}").splitlines() if line.strip()
+            ][:40]
             continue
         cur = builtin.slurp(p).decode("utf-8", "replace")
         if "\r\n" in cur and "\r\n" not in out:
@@ -386,8 +445,13 @@ def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args,
     return res
 
 
-def run_tool(tool, settings, lang, ctx, files, version, lid=None):
+# why: central step runner; splitting it is a separate refactor
+def run_tool(tool, settings, lang, ctx, files, version, lid=None):  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915, PLR0917
     tool = dict(tool, _lang=lid)
+    if tool["role"] in GENERATED_SKIP_ROLES and tool["id"] not in SECRET_SCANNERS:
+        files = [f for f in files if not generated.is_generated(ctx.root, f)]
+        if not files:
+            return StepResult(tool["id"], tool["role"])
     if "builtin" in tool.get("cmd", {}):
         return run_builtin(tool, settings, lang, ctx, files, version)
     res = StepResult(tool["id"], tool["role"])
@@ -408,7 +472,9 @@ def run_tool(tool, settings, lang, ctx, files, version, lid=None):
         return res
     extra = _requires(tool, ctx)
     if extra is None:
-        res.note = "skipped: " + (tool.get("requires", {}).get("why") or "prerequisite file not found")
+        res.note = "skipped: " + (
+            tool.get("requires", {}).get("why") or "prerequisite file not found"
+        )
         for f in files:
             res.status[f] = "SKIP"
         return res
@@ -418,7 +484,9 @@ def run_tool(tool, settings, lang, ctx, files, version, lid=None):
         return _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args, extra)
     autofix = settings.get("autofix", tool.get("autofix", False))
     fixing = ctx.mode == "fix" and "fix" in cmds and (role in ("format", "marker") or autofix)
-    ok_codes = tool.get("success_fix", tool.get("success", [0])) if fixing else tool.get("success", [0])
+    ok_codes = (
+        tool.get("success_fix", tool.get("success", [0])) if fixing else tool.get("success", [0])
+    )
     groups = {None: files}
     if tool.get("group_by"):
         groups = _group(files, ctx.root, tool["group_by"])
@@ -445,20 +513,26 @@ def run_tool(tool, settings, lang, ctx, files, version, lid=None):
                 cmd = expand(s, ctx, tool, _paths(tool, ctx, unit), args, version, gextra)
                 rc, out, err = _run(cmd, _cwd(tool, ctx, gdir or ctx.root, unit), env, timeout)
                 out_all += out + err
-                if rc not in ok_codes or (tool.get("fail_on_output") and not fixing and out.strip()) \
-                        or (tool.get("fail_regex") and re.search(tool["fail_regex"], out + err, re.M)):
-                    # why fail_regex: some linters always exit 0 (CFLint, bibtool, Royale) and only print
+                if (
+                    rc not in ok_codes
+                    or (tool.get("fail_on_output") and not fixing and out.strip())
+                    or (tool.get("fail_regex") and re.search(tool["fail_regex"], out + err, re.M))
+                ):
+                    # why fail_regex: some linters (CFLint, bibtool, Royale) exit 0 and only print
                     ok_all = False
                     break
             if not ok_all and pats and any(re.search(p, out_all, re.I) for p in pats):
                 for f in unit:
                     res.status[f] = "SKIP"
-                res.note = ("skipped: needs dependencies or network that are not available offline"
-                            if any(re.search(p, out_all, re.I) for p in tool.get("offline_skip") or [])
-                            else "skipped: " + tool.get("skip_why", "the tool cannot analyse this file in isolation"))
+                res.note = (
+                    "skipped: needs dependencies or network that are not available offline"
+                    if any(re.search(p, out_all, re.I) for p in tool.get("offline_skip") or [])
+                    else "skipped: "
+                    + tool.get("skip_why", "the tool cannot analyse this file in isolation")
+                )
                 continue
             _attribute(res, unit, ok_all, out_all)
-            res.output += [l for l in out_all.splitlines() if l.strip()]
+            res.output += [line for line in out_all.splitlines() if line.strip()]
     return res
 
 
@@ -467,7 +541,8 @@ def _seqs(seq):
     return seq["all"] if isinstance(seq, dict) else [seq]
 
 
-def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):
+# why: shared engine call contract; a parameter object would change every caller
+def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):  # noqa: C901, PLR0913, PLR0917
     """Check mode for formatters without a reliable --check: format a copy and compare."""
     work = tempfile.mkdtemp(dir=ctx.tmp, prefix=f"chk-{tool['id']}-")
     seqs = _seqs(tool["cmd"]["fix"])
@@ -476,9 +551,15 @@ def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):
         dst = os.path.join(work, f)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(ctx.root, f), dst)
-    for marker in ([tool["group_by"]] if isinstance(tool.get("group_by"), str) else tool.get("group_by") or []):
+    for marker in (
+        [tool["group_by"]] if isinstance(tool.get("group_by"), str) else tool.get("group_by") or []
+    ):
         for gdir in groups:
-            if gdir and not any(c in marker for c in "*?[") and os.path.exists(os.path.join(gdir, marker)):
+            if (
+                gdir
+                and not any(c in marker for c in "*?[")
+                and os.path.exists(os.path.join(gdir, marker))
+            ):
                 dst = os.path.join(work, os.path.relpath(gdir, ctx.root), marker)
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(os.path.join(gdir, marker), dst)
@@ -488,12 +569,20 @@ def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):
         units = [gfiles] if tool.get("batch", True) else [[f] for f in gfiles]
         for unit in units:
             for s in seqs:
-                cmd = expand(s, sub, tool, _paths(tool, sub, unit, work), args, version, dict(extra, group=gdir))
+                cmd = expand(
+                    s,
+                    sub,
+                    tool,
+                    _paths(tool, sub, unit, work),
+                    args,
+                    version,
+                    dict(extra, group=gdir),
+                )
                 rc, out, err = _run(cmd, _cwd(tool, ctx, gdir, unit, work), env, timeout)
                 if rc not in ok_codes:
                     for f in unit:
                         res.status[f] = "ERROR"
-                    res.output += [l for l in (out + err).splitlines() if l.strip()]
+                    res.output += [line for line in (out + err).splitlines() if line.strip()]
                     break
     for f in files:
         if res.status.get(f) == "ERROR":
@@ -508,7 +597,9 @@ def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):
 
 # ---------------------------------------------------------------- planning
 
-def plan(reg, data, lang_id, lang_files, subtypes_by_file, env_level, rules_mod, quiet=False):
+
+# why: shared engine call contract; a parameter object would change every caller
+def plan(reg, data, lang_id, lang_files, subtypes_by_file, env_level, rules_mod, quiet=False):  # noqa: C901, PLR0912, PLR0913, PLR0917
     """Return (ordered list of (tool, settings, files), level) for a language."""
     lang = reg.languages[lang_id]
     lvl = rules_mod.lang_level(data, lang_id, env_level)
@@ -537,8 +628,14 @@ def plan(reg, data, lang_id, lang_files, subtypes_by_file, env_level, rules_mod,
             continue
         if not available(tool):
             if not quiet:
-                qslog.log("WARN", lang_id, f"tool '{tid}' not installed; skipped (it is installed on the next "
-                          "commit that needs it)", action="plan", status="SKIP")
+                qslog.log(
+                    "WARN",
+                    lang_id,
+                    f"tool '{tid}' not installed; skipped (it is installed on the next "
+                    "commit that needs it)",
+                    action="plan",
+                    status="SKIP",
+                )
             continue
         covered.get(tool["role"], set()).update(tool_files[tid])
         steps.append((tool, st, tool_files[tid]))
@@ -557,14 +654,20 @@ def run_language(reg, lang_id, steps, ctx, version):
     lang = reg.languages[lang_id]
     alive = None
     results = []
-    for tool, st, files in steps:
-        files = [f for f in files if alive is None or f in alive]
+    for tool, st, step_files in steps:
+        files = [f for f in step_files if alive is None or f in alive]
         if tool["role"] in ("format", "marker") and ctx.protect:
-            # why: formatters read and write UTF-8; a legacy-charset file with accents would be corrupted
+            # why: formatters read and write UTF-8; a legacy-charset file would be corrupted
             kept = [f for f in files if f not in ctx.protect]
             for f in sorted(set(files) - set(kept)):
-                qslog.log("WARN", lang_id, f"{tool['id']} skipped: file is {ctx.protect[f]} (tools assume UTF-8)",
-                          f, tool["id"], "SKIP")
+                qslog.log(
+                    "WARN",
+                    lang_id,
+                    f"{tool['id']} skipped: file is {ctx.protect[f]} (tools assume UTF-8)",
+                    f,
+                    tool["id"],
+                    "SKIP",
+                )
             files = kept
         if not files:
             continue

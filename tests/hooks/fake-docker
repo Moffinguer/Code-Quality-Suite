@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """fake-docker - just enough of the docker CLI to test the hooks without Docker.
-Images are JSON files in $FAKE_DOCKER_DIR; `run` executes the engine on the host with the
-container paths (/workspace, /qs-state) mapped back to the bind-mounted host paths."""
+Images are JSON files in $FAKE_DOCKER_DIR; containers are the list in containers.json there
+(`[{"id", "image", "state", "labels"}]`, written by the tests); `run` executes the engine on the
+host with the container paths (/workspace, /qs-state) mapped back to the bind-mounted host paths."""
+
 import json
 import os
 import re
@@ -19,13 +21,15 @@ def img_path(tag):
 
 def load(tag):
     try:
-        return json.load(open(img_path(tag)))
+        with open(img_path(tag)) as fh:
+            return json.load(fh)
     except OSError:
         return None
 
 
 def save(tag, data):
-    json.dump(data, open(img_path(tag), "w"))
+    with open(img_path(tag), "w") as fh:
+        json.dump(data, fh)
 
 
 def log(*a):
@@ -36,14 +40,36 @@ def log(*a):
 args = sys.argv[1:]
 log(*args)
 cmd = args[0]
+if os.environ.get("FAKE_DOCKER_DOWN") == "1":  # the daemon is not running: every command fails
+    print("fake-docker: Cannot connect to the Docker daemon", file=sys.stderr)
+    sys.exit(1)
 if cmd == "info":
     print("[name=seccomp]")
+    sys.exit(0)
+if cmd in ("stop", "kill"):  # logged only: the tests assert that the suite never calls them
     sys.exit(0)
 TITLE = "org.opencontainers.image.title=code-quality-suite"
 
 
+def load_containers():
+    try:
+        with open(os.path.join(D, "containers.json")) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return []
+
+
+def save_containers(items):
+    with open(os.path.join(D, "containers.json"), "w") as fh:
+        json.dump(items, fh)
+
+
 def all_tags():
-    return sorted(f[:-5].replace("@", ":").replace("_", "/") for f in os.listdir(D) if f.endswith(".json"))
+    return sorted(
+        f[:-5].replace("@", ":").replace("_", "/")
+        for f in os.listdir(D)
+        if f.endswith(".json") and f != "containers.json"
+    )
 
 
 if cmd == "image" and args[1] == "inspect":
@@ -60,31 +86,114 @@ if cmd == "image" and args[1] == "inspect":
             print(img["labels"].get(m.group(1), ""))
         elif "Id" in fmt:
             import hashlib
+
             print("sha256:" + hashlib.sha256(json.dumps(img, sort_keys=True).encode()).hexdigest())
         else:
             print("0" if "Size" in fmt else "")
     sys.exit(0)
 if cmd == "image" and args[1] == "rm":
+    force, rc = "-f" in args[2:], 0
     for t in args[2:]:
-        if not t.startswith("-") and os.path.exists(img_path(t)):
+        if t.startswith("-"):
+            continue
+        # FAKE_DOCKER_RM_FAIL=<tag>: simulates a container that started after the listing
+        if not force and (
+            t == os.environ.get("FAKE_DOCKER_RM_FAIL")
+            or any(c["image"] == t for c in load_containers())
+        ):
+            print(
+                f"Error response from daemon: conflict: unable to remove {t}: image is being used",
+                file=sys.stderr,
+            )
+            rc = 1
+        elif os.path.exists(img_path(t)):
             os.remove(img_path(t))
-    sys.exit(0)
+    sys.exit(rc)
 if cmd == "image" and args[1] == "ls":  # image ids are the tags here
     label = next((a.split("=", 1)[1] for a in args if a.startswith("label=")), None)
-    repo = next((a for a in args[2:] if not a.startswith("-") and "=" not in a and "{{" not in a
-                 and args[args.index(a) - 1] not in ("--filter", "--format")), None)
+    repo = next(
+        (
+            a
+            for a in args[2:]
+            if not a.startswith("-")
+            and "=" not in a
+            and "{{" not in a
+            and args[args.index(a) - 1] not in ("--filter", "--format")
+        ),
+        None,
+    )
     for t in all_tags():
         labels = (load(t) or {}).get("labels", {})
         if label and labels.get(label.split("=", 1)[0]) != label.split("=", 1)[1]:
             continue
-        if repo and t.split(":")[0] != repo:
+        # like real Docker: also matches with the first path part (the domain) stripped
+        name = t.rsplit(":", 1)[0]
+        if repo and repo not in (name, name.split("/", 1)[-1]):
             continue
         print(t)
     sys.exit(0)
 if cmd == "image" and args[1] == "prune":
     sys.exit(0)
 if cmd == "ps":
-    sys.exit(0)  # no leftover containers: every run is --rm
+    every = quiet = False
+    filters, fmt, i = [], None, 1
+    while i < len(args):
+        if args[i] in ("-a", "--all", "-aq", "-qa"):
+            every = True
+            quiet = quiet or "q" in args[i]
+        elif args[i] in ("-q", "--quiet"):
+            quiet = True
+        elif args[i] == "--filter":
+            filters.append(args[i + 1])
+            i += 1
+        elif args[i] == "--format":
+            fmt = args[i + 1]
+            i += 1
+        i += 1
+    for c in load_containers():
+        labels = c.get("labels", {"org.opencontainers.image.title": "code-quality-suite"})
+        if not every and c["state"] != "running":
+            continue
+        keep = True
+        for f in filters:
+            k, _, v = f.partition("=")
+            if k == "label":
+                lk, _, lv = v.partition("=")
+                keep = keep and labels.get(lk) == lv
+            elif k == "status":
+                keep = keep and c["state"] == v
+        if not keep:
+            continue
+        if quiet:
+            print(c["id"])
+        elif fmt:
+            print(
+                fmt.replace("\\t", "\t")
+                .replace("{{.ID}}", c["id"])
+                .replace("{{.Image}}", c["image"])
+                .replace("{{.State}}", c["state"])
+            )
+        else:
+            print(c["id"], c["image"], c["state"])
+    sys.exit(0)
+if cmd == "rm":
+    ids = [a for a in args[1:] if not a.startswith("-")]
+    items, rc = load_containers(), 0
+    for cid in ids:
+        found = next((c for c in items if c["id"] == cid), None)
+        if found is None:
+            print(f"Error: No such container: {cid}", file=sys.stderr)
+            rc = 1
+        elif found["state"] == "running" and "-f" not in args:
+            print(
+                f"Error response from daemon: cannot remove a running container {cid}",
+                file=sys.stderr,
+            )
+            rc = 1
+        else:
+            items.remove(found)
+    save_containers(items)
+    sys.exit(rc)
 if cmd == "tag":
     save(args[2], load(args[1]))
     sys.exit(0)
@@ -93,9 +202,14 @@ if cmd == "build":
     i = 1
     while i < len(args):
         if args[i] == "-t":
-            tag = args[i + 1]; i += 2; continue
+            tag = args[i + 1]
+            i += 2
+            continue
         if args[i] == "--label":
-            k, _, v = args[i + 1].partition("="); labels[k] = v; i += 2; continue
+            k, _, v = args[i + 1].partition("=")
+            labels[k] = v
+            i += 2
+            continue
         i += 1
     if stdin_df and os.environ.get("FAKE_DOCKER_FAIL_BUILD") == "1":
         sys.stdin.read()
@@ -103,15 +217,35 @@ if cmd == "build":
         sys.exit(1)
     if stdin_df:
         df = sys.stdin.read()
-        base = load(re.search(r"^FROM (\S+)", df, re.M).group(1)) or {"labels": {}}
-        run = re.search(r"^RUN qs-install (.*)$", df, re.M).group(1)
-        log("LAYER", re.search(r"^FROM (\S+)", df, re.M).group(1), "->", tag, ":", run)
+        from_m = re.search(r"^FROM (\S+)", df, re.M)
+        run_m = re.search(r"^RUN qs-install (.*)$", df, re.M)
+        if from_m is None or run_m is None:
+            print("fake-docker: unsupported Dockerfile", file=sys.stderr)
+            sys.exit(2)
+        base = load(from_m.group(1)) or {"labels": {}}
+        run = run_m.group(1)
+        log("LAYER", from_m.group(1), "->", tag, ":", run)
         env = dict(os.environ, QS_REGISTRY=os.path.join(SUITE, "registry", "registry.json"))
-        subprocess.run([sys.executable, os.path.join(SUITE, "install", "qs-install"), "--dry-run", *run.split()],
-                       env=env, stdout=subprocess.DEVNULL)
+        subprocess.run(
+            [
+                sys.executable,
+                os.path.join(SUITE, "install", "qs-install"),
+                "--dry-run",
+                *run.split(),
+            ],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            check=False,
+        )
         new = {"labels": dict(base["labels"], **labels)}
     else:
-        new = {"labels": {"qs.langs": "", "qs.layers": "0", "org.opencontainers.image.title": "code-quality-suite"}}
+        new = {
+            "labels": {
+                "qs.langs": "",
+                "qs.layers": "0",
+                "org.opencontainers.image.title": "code-quality-suite",
+            }
+        }
     save(tag, new)
     sys.exit(0)
 if cmd == "run":
@@ -119,42 +253,55 @@ if cmd == "run":
     while i < len(args):
         a = args[i]
         if a == "-v":
-            host, cont = args[i + 1].split(":")[:2]; mounts[cont] = host; i += 2
+            src, cont = args[i + 1].split(":")[:2]
+            mounts[cont] = src
+            i += 2
         elif a == "-w":
-            workdir = args[i + 1]; i += 2
+            workdir = args[i + 1]
+            i += 2
         elif a == "-e":
             k, eq, v = args[i + 1].partition("=")
-            env[k] = v if eq else os.environ.get(k, ""); i += 2
+            env[k] = v if eq else os.environ.get(k, "")
+            i += 2
         elif a == "--env-file":
-            for line in open(args[i + 1]):
-                k, _, v = line.rstrip("\n").partition("=")
-                if k:
-                    env[k] = v
+            with open(args[i + 1]) as fh:
+                for line in fh:
+                    k, _, v = line.rstrip("\n").partition("=")
+                    if k:
+                        env[k] = v
             i += 2
         elif a in ("--network", "--tmpfs", "--cap-drop", "--security-opt", "--user"):
             i += 2
         elif a == "--entrypoint":
-            entry = args[i + 1]; i += 2
+            entry = args[i + 1]
+            i += 2
         elif a.startswith("-"):
             i += 1
         else:
             break
-    image, rest = args[i], args[i + 1:]
+    image, rest = args[i], args[i + 1 :]
     if load(image) is None:
-        print(f"fake-docker: no image {image}", file=sys.stderr); sys.exit(125)
+        print(f"fake-docker: no image {image}", file=sys.stderr)
+        sys.exit(125)
     if entry:
         sys.exit(0)  # e.g. listing installer failures: none in the fake image
 
     def host(p):
         for c, h in sorted(mounts.items(), key=lambda kv: -len(kv[0])):
             if p == c or p.startswith(c + "/"):
-                return h + p[len(c):]
+                return h + p[len(c) :]
         return p
+
     full = dict(os.environ)
     full.update({k: host(v) if v.startswith("/") else v for k, v in env.items()})
     full["QS_SUITE"] = SUITE
     full.pop("QS_ROOT", None)
-    p = subprocess.run([sys.executable, os.path.join(SUITE, "engine", "qs.py"), *rest], cwd=host(workdir), env=full)
+    p = subprocess.run(
+        [sys.executable, os.path.join(SUITE, "engine", "qs.py"), *rest],
+        cwd=host(workdir),
+        env=full,
+        check=False,
+    )
     sys.exit(p.returncode)
 print("fake-docker: unsupported " + " ".join(args), file=sys.stderr)
 sys.exit(2)

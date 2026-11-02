@@ -54,6 +54,10 @@ hooks by themselves on their first commit (`setup-global.sh --on-clone` makes a 
 | hooks only, nothing pre-installed | `bash "$QS_SUITE/install.sh" /path/to/repo` |
 | Windows cmd / PowerShell | `bootstrap.bat <git-url\|path> [dest]` / `.\bootstrap.ps1 ...` |
 
+Every one of these ends by building the image of this suite version and then removing the images
+and stopped containers of **older** versions (disk space comes back; section 6 has the details).
+`QS_KEEP_OLD_IMAGES=1` skips that.
+
 `bootstrap` manages the `.gitattributes` block (LF line endings), installs the hooks and
 pre-installs the tools of the languages already in the repository, asking once for versions the
 project does not reveal. `install.sh` installs the hooks and leaves the tools to the first commit.
@@ -129,14 +133,15 @@ unzip ~/Downloads/code-quality-suite.zip -d /c/dev      # the new version, same 
 git actualizar-suite                                    # = bash /c/dev/code-quality-suite/scripts/qs-update.sh
 ```
 
-`git actualizar-suite` asks once, then: removes leftover suite containers, removes **every**
-suite image (all versions, with their tools), builds the new base image without cache, and
+`git actualizar-suite` asks once, then: removes the stopped suite containers and the images of
+**every other** version (with their tools), builds the new base image without cache, and
 re-points every repository in `repos.list` and the global git setup to the folder. The first
 commit in each repository then reinstalls the tools of its languages, like a first install.
 
 | Option | Does |
 | --- | --- |
-| `--status` | what is installed, which repositories point where, old images still on disk |
+| `--status` | what is installed, which repositories point where, what a cleanup would remove or keep |
+| `--keep-old` | remove no image and no container (same as `QS_KEEP_OLD_IMAGES=1`) |
 | `--langs "java css python"` | install those languages now instead of on the next commit |
 | `--lazy` | do not build the base now; the first commit builds it |
 | `--yes` | no question |
@@ -147,13 +152,21 @@ and the hooks remind you that old images still take disk space.
 
 Kept by an update: each repository's `.quality-rules.json` (new keys are added, yours are never
 overwritten), `quality-suite.env`, branches and aliases (refreshed), `repos.list`. Removed: the
-images and the tools inside them. Nothing in the working trees changes.
+images of the other versions and the tools inside them. Kept: running containers (with their
+image, and a warning), tags that are not versions such as `wt-textot` (the output prints the
+command to remove them) and every image that is not the suite's. Nothing in the working trees
+changes.
+
+`install.sh` (also through `git instalar`, `git clonar` and the bootstrap scripts) removes the
+**older** versions too, but only after the image of this version has built, and it keeps a newer
+version or one that another registered repository still uses. Hooks never clean. To keep every
+old image set `QS_KEEP_OLD_IMAGES=1` for the command.
 
 The same by hand:
 
 ```bash
-docker ps -aq --filter label=org.opencontainers.image.title=code-quality-suite | xargs -r docker rm -f
-docker image ls -aq --filter label=org.opencontainers.image.title=code-quality-suite | xargs -r docker image rm -f
+docker ps -aq --filter label=org.opencontainers.image.title=code-quality-suite --filter status=exited | xargs -r docker rm
+docker image ls code-quality-suite --format '{{.Repository}}:{{.Tag}}' | xargs -r docker image rm
 bash /c/dev/code-quality-suite/install.sh /path/to/repo     # only if the folder changed
 ```
 
@@ -197,7 +210,8 @@ for a in clonar iniciar instalar ia ayuda actualizar-suite; do git config --glob
 | --- | --- |
 | `the suite is not at '...' (moved or deleted)` | `git actualizar-suite` from the new folder, or `bash <suite>/install.sh <repo>` |
 | `Another repository is changing the image; waiting...` | another commit is installing tools; it continues by itself |
-| `Images of other suite versions are still on disk` | `git actualizar-suite` frees them |
+| `Images of other suite versions are still on disk` | `git actualizar-suite` frees them (or `bash <suite>/install.sh <repo>` for the older ones) |
+| `WARN: kept code-quality-suite:<v>: container <id> is running` | a check is still running; run `git actualizar-suite` again when it ends |
 | a tool failed to install | `QS_RETRY_FAILED=1 git commit ...` (built-in checks run meanwhile) |
 | `could not be added to the image` | the build failed (network, proxy): `~/.config/code-quality-suite/install.log`; the next commit retries |
 | `ENCODING: ... file(s) with encoding problems` | `git encoding --fix <file>`, then commit again ([FAQ.md](FAQ.md)) |

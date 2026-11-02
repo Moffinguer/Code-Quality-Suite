@@ -183,7 +183,23 @@ git show HEAD:legacy/m.properties | od -An -tx1 | grep -q f1 && ok "legacy chars
 export GIT_EDITOR="sed -i.bak -e s/DESCRIPCION_BREVE/integrate/"
 git checkout -q -b develop && git push -q origin develop 2>/dev/null || fail "push develop"
 git np 6.22.6 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ORIGINAL ] && ok "git np: version branch" || fail "np version"
-if git nr abc >/dev/null 2>&1; then fail "non-numeric OT accepted"; else ok "OT segment follows branches.levels"; fi
+# text OT: ASCII letters and digits (branches.levels[1]); numeric OTs keep working below
+git np ABC123 >/dev/null && [ "$(git branch --show-current)" = 6.22.6/ABC123/ORIGINAL ] && git nr login >/dev/null &&
+	[ "$(git branch --show-current)" = 6.22.6/ABC123/login ] && ok "git np/nr: text OT ABC123" || fail "text OT refused"
+(
+	# shellcheck source=/dev/null
+	. "$SUITE/scripts/git-flow-lib.sh" && qs_policy_load && export QS_BR_TAG='{version}-{ot}' &&
+		[ "$(render_tag 6.22.6/ABC123/ORIGINAL)" = 6.22.6-ABC123 ]
+) && ok "tag {version}-{ot} with a text OT" || fail "render_tag text OT"
+git checkout -q 6.22.6/ORIGINAL
+before_bad="$(git for-each-ref --format='%(refname:short)' refs/heads)"
+for bad in "AB 12" "A$(printf '\303\221')O1" "" AB-12 AB_12 RELEASE ORIGINAL; do
+	if git np "$bad" >/dev/null 2>&1; then fail "OT '$bad' accepted"; else ok "OT '$bad' refused"; fi
+done
+if git nr RELEASE >/dev/null 2>&1; then fail "git nr RELEASE accepted"; else ok "git nr RELEASE refused"; fi
+[ "$(git for-each-ref --format='%(refname:short)' refs/heads)" = "$before_bad" ] && ok "refused OTs created nothing" || fail "refused OT created a branch"
+if (git checkout -q develop && git np ABC123 >/dev/null 2>&1); then fail "text name accepted as a version"; else ok "git np ABC123 from develop refused"; fi
+git checkout -q 6.22.6/ORIGINAL
 git np 188858 >/dev/null && git np RF001 >/dev/null || fail "np nested"
 git nr login >/dev/null
 printf 'L = 1\n' >login.py
@@ -246,7 +262,7 @@ out="$(printf '6.22.8/300001/RF1/a\n6.22.8/300001/RF1/c\n' | git es --push 2>&1)
 [ "$(git rev-parse 6.22.8/300001/RF1/a)" = "$before" ] && grep -q '= 6.22.8/300001/RF1/a ' <<<"$out" &&
 	grep -q '+ 6.22.8/300001/RF1/c ' <<<"$out" && git ls-remote --heads origin | grep -q '6.22.8/300001/RF1/ORIGINAL$' &&
 	ok "git estructura keeps existing branches, adds siblings, pushes" || fail "estructura sibling: $out"
-if printf '6.22.8/x1/y\n' | git es >/dev/null 2>&1 || git rev-parse -q --verify 6.22.8/x1/y >/dev/null; then
+if printf '6.22.8/x-1/y\n' | git es >/dev/null 2>&1 || git rev-parse -q --verify 6.22.8/x-1/y >/dev/null; then
 	fail "estructura accepted an invalid OT"
 else ok "git estructura validates everything before creating"; fi
 # release: recursive check, changelog, unmerged branches set aside, tag, merge into develop, tree deleted
@@ -435,7 +451,10 @@ cl="$(git show 8.1.0/RELEASE:CHANGELOG.md)"
 	[ "$(grep -c '^- Module b' <<<"$cl")" = 1 ] && grep -q '^- Snapshot tweak' <<<"$cl" && grep -q '^## 8.1.0 - ' <<<"$cl" &&
 	! grep -q '^## 8.0.0' <<<"$cl" && [ "$(git log --format=%s develop..8.1.0/RELEASE | grep -c '^docs(changelog)')" = 1 ] &&
 	git ls-remote --heads origin | grep -q 'refs/heads/8.1.0/RELEASE$' &&
-	ok "git combinar: oldest first into 8.1.0/RELEASE, combined ones deleted, one changelog entry" ||
+	git rev-parse -q --verify unmerged/8.0.0/RELEASE >/dev/null && git rev-parse -q --verify unmerged/8.0.0-SNAPSHOT/RELEASE >/dev/null &&
+	git ls-remote --heads origin | grep -q 'refs/heads/unmerged/8.0.0-SNAPSHOT/RELEASE$' &&
+	[ "$(git log --format=%s develop..8.1.0/RELEASE | grep -c '^chore(combine): ')" = 2 ] &&
+	ok "git combinar: one squash per tree into 8.1.0/RELEASE, combined ones kept as unmerged/, one changelog entry" ||
 	{
 		cat rel.out
 		echo "$cl"
@@ -448,6 +467,284 @@ git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s 
 	fail "publicar 8.1.0"
 }
 rm -f rel.out
+
+# git combinar when develop moved after the trees were prepared: one squash per version on develop
+# combine_tree <version> <ot> <source|-> <file> <subject> [<file> <subject>]...: a version tree
+# (copied from <source> with git nv, or new from develop) with one integrated final branch per
+# file, each writing its subject to it, released as <version>/RELEASE. Exit status: that of git.
+combine_tree() {
+	local v="$1" ot="$2" from="$3"
+	shift 3
+	git checkout -q develop
+	if [ "$from" = - ]; then git np "$v" >/dev/null 2>&1; else git nv "$v" --from "$from" >/dev/null 2>&1 && git checkout -q "$v/ORIGINAL"; fi
+	git np "$ot" >/dev/null 2>&1 || return 1
+	while [ "$#" -ge 2 ]; do
+		git nr "${1%.py}" >/dev/null 2>&1 && printf 'X = "%s"\n' "$2" >"$1" && git add "$1" && git commit -q -m "$2" &&
+			git integra -m "$2" >/dev/null 2>&1 || return 1
+		shift 2
+	done
+	git integra -m "feat($ot): OT $ot" >/dev/null 2>&1 && git checkout -q develop &&
+		git release --version "$v" --yes >/dev/null 2>&1
+}
+# develop_moves <version> <file>: develop gets a change and a published-like CHANGELOG.md entry
+# and README.md badge, as git publicar of another release would leave them. Exit status: that of git.
+develop_moves() {
+	git checkout -q develop && printf 'D = 1\n' >"$2" && git add "$2" && git commit -q -m "fix(${2%.py}): hotfix on develop" &&
+		sed -i "0,/^## /s//## $1 - 2026-01-01\n\n### Fixed\n\n- Hotfix on develop\n\n## /" CHANGELOG.md &&
+		sed -i -E "s/(qs:version.*version )[0-9][0-9.]*/\1$1/" README.md && git add CHANGELOG.md README.md &&
+		git commit -q -m "docs: published $1" && git push -q origin develop 2>/dev/null
+}
+# combine_checks <target> <A> <B> <file>...: ACs 2-6 of a combination of A and B into the target,
+# whose changes are in the files given. Output: ok lines. Exit status: 0, or the test fails.
+combine_checks() {
+	local c="$1" a="$2" b="$3" f sq cl sqs=()
+	shift 3
+	sq="$(git log --format=%s "develop..$c/RELEASE" | tac | tr '\n' '|')"
+	case "$sq" in "chore(combine): $a changes|chore(combine): $b changes|chore(version): $c|docs(changelog): $c|"*) ;;
+	*) fail "combinar $c subjects: $sq" ;; esac
+	[ "$(git rev-parse "$(git rev-list --reverse develop.."$c/RELEASE" | sed -n 1p)^")" = "$(git rev-parse develop)" ] &&
+		[ -z "$(git rev-list --merges develop.."$c/RELEASE")" ] &&
+		ok "git combinar $c: on develop, one squash per RELEASE, then the release commits, no merges" || fail "combinar $c shape"
+	mapfile -t sqs < <(git log --format=%H --grep='^chore(combine)' "develop..$c/RELEASE")
+	! git diff-tree --no-commit-id --name-only -r "${sqs[@]}" | grep -q '^d' &&
+		[ "$(git diff-tree --no-commit-id --name-only -r "${sqs[0]}" | tr '\n' ' ')" = "${*: -1} " ] &&
+		ok "git combinar $c: the later squash holds only its own change, nothing of develop" || {
+		git show --stat "${sqs[@]}"
+		fail "combinar $c squash content"
+	}
+	cl="$(git show "$c/RELEASE:CHANGELOG.md")"
+	[ "$(grep -c "^## $c - " <<<"$cl")" = 1 ] && ! grep -qE "^## ($a|$b) " <<<"$cl" &&
+		[ "$(git show develop:CHANGELOG.md | sed -n '/^## /,$p')" = "$(awk -v h="## $c " '/^## /{ skip = index($0, h) == 1 } !skip' <<<"$cl" | sed -n '/^## /,$p')" ] &&
+		ok "git combinar $c: one $c entry, develop's entries unchanged" || {
+		echo "$cl"
+		fail "combinar $c changelog"
+	}
+	for f in "$@"; do
+		[ "$(grep -c "^- .*${f%.py} (.*OT " <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
+			echo "$cl"
+			fail "combinar $c: $f once in the changelog with its OT, and in the tree"
+		}
+	done
+	[ "$(git show "$c/RELEASE:VERSION")" = "$c" ] && git show "$c/RELEASE:pom.xml" | grep -q "<version>$c</version>" &&
+		git show "$c/RELEASE:README.md" | grep -q "qs:version.*version $c" &&
+		git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | grep -q "^Squashes: $b/RELEASE [0-9a-f]\{40\}$" &&
+		git cat-file -e "$(git log --format=%B --grep='^chore(combine)' develop.."$c/RELEASE" | sed -n "s|^Squashes: $a/RELEASE ||p" | sed -n 1p)" &&
+		git log -1 --format=%B "${sqs[0]}" | grep -q '^- .* (OT [0-9]*)$' &&
+		git rev-parse -q --verify "unmerged/$a/RELEASE" >/dev/null && git rev-parse -q --verify "unmerged/$b/RELEASE" >/dev/null &&
+		git ls-remote --heads origin | grep -q "refs/heads/unmerged/$b/RELEASE$" &&
+		[ -z "$(git for-each-ref "refs/heads/$a/" "refs/heads/$b/" "refs/remotes/origin/$a/" "refs/remotes/origin/$b/")" ] &&
+		ok "git combinar $c: version, pom and badge, Squashes lines that resolve, originals kept as unmerged/" ||
+		fail "combinar $c version files or archive"
+}
+git checkout -q develop
+combine_tree 9.0.0 500001 - a9.py "feat(a9): module a9" g9.py "feat(g9): module g9" || fail "tree 9.0.0"
+combine_tree 9.0.1 500002 9.0.0/RELEASE b9.py "fix(b9): fix b9" || fail "tree 9.0.1"
+combine_tree 9.0.2 500003 9.0.1/RELEASE e9.py "feat(e9): module e9" || fail "tree 9.0.2"
+develop_moves 8.9.9 d9.py || fail "develop moves 8.9.9"
+# V1: no merge of develop into the RELEASE branches
+git combinar --incluir 9.0.0,9.0.1 --version 9.1.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 9.1.0"
+}
+[ "$(grep -c 'WARN: 9.0.[01]/RELEASE lacks .* temporary commit' rel.out)" = 2 ] &&
+	grep -q '9.0.0/RELEASE: 5 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), 0 already combined' rel.out &&
+	grep -q '9.0.1/RELEASE: 3 own commit(s) squashed; dropped 0 mainline merge(s), [1-9] release commit(s), [1-9][0-9]* already combined' rel.out &&
+	ok "git combinar: a warning per RELEASE without develop, counts per RELEASE" || {
+	cat rel.out
+	fail "combinar 9.1.0 output"
+}
+combine_checks 9.1.0 9.0.0 9.0.1 a9.py g9.py b9.py
+# re-combination: 9.1.0 with 9.0.2, copied from 9.0.1/RELEASE before the first combination
+git combinar --incluir 9.1.0,9.0.2 --version 9.2.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 9.2.0"
+}
+combine_checks 9.2.0 9.1.0 9.0.2 a9.py g9.py b9.py e9.py
+git log -1 --format=%B --grep='^chore(combine): 9.1.0' develop..9.2.0/RELEASE | grep -q '^Squashes: 9.0.0/RELEASE ' &&
+	git log -1 --format=%B --grep='^chore(combine): 9.1.0' develop..9.2.0/RELEASE | grep -q '^Squashes: 9.0.1/RELEASE ' &&
+	ok "git combinar again: the combined squash carries the Squashes lines of its originals" || fail "combinar 9.2.0 trailers"
+git publicar --version 9.2.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 9.2.0" ] &&
+	ok "git publicar: a re-combined release reaches develop" || {
+	cat rel.out
+	fail "publicar 9.2.0"
+}
+# V2: develop merged by hand into both RELEASE branches first (CHANGELOG.md and badge for develop)
+combine_tree 10.0.0 600001 - a10.py "feat(a10): module a10" g10.py "feat(g10): module g10" || fail "tree 10.0.0"
+combine_tree 10.0.1 600002 10.0.0/RELEASE b10.py "fix(b10): fix b10" || fail "tree 10.0.1"
+develop_moves 9.2.1 d10.py || fail "develop moves 9.2.1"
+for v in 10.0.0 10.0.1; do
+	git checkout -q "$v/RELEASE"
+	if ! git merge -q --no-edit develop >m.out 2>&1; then
+		git diff --name-only --diff-filter=U | xargs git checkout --theirs -- && git add -u && git commit -q --no-edit ||
+			{
+				cat m.out
+				fail "merge develop into $v/RELEASE"
+			}
+	fi
+	git push -q origin HEAD 2>/dev/null || fail "push $v/RELEASE"
+done
+git checkout -q develop
+git combinar --incluir 10.0.0,10.0.1 --version 10.1.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 10.1.0"
+}
+! grep -q 'WARN: .* lacks' rel.out && grep -q '10.0.1/RELEASE: 3 own commit(s) squashed; dropped 1 mainline merge(s)' rel.out &&
+	ok "git combinar after a merge of develop: no warning, the mainline merge dropped" || {
+	cat rel.out
+	fail "combinar 10.1.0 output"
+}
+combine_checks 10.1.0 10.0.0 10.0.1 a10.py g10.py b10.py
+git publicar --version 10.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 10.1.0" ] &&
+	ok "git publicar: the combined release reaches develop" || {
+	cat rel.out
+	fail "publicar 10.1.0"
+}
+# conflicts: with develop (a file that is not a release file), and between two RELEASE branches
+git checkout -q develop && printf 'C = 0\n' >c11.py && git add c11.py && git commit -q -m "feat(c11): add c11" &&
+	git push -q origin develop 2>/dev/null || fail "c11 on develop"
+combine_tree 11.0.0 700001 - c11.py "feat(c11): change c11" || fail "tree 11.0.0"
+combine_tree 11.0.1 700002 - z11.py "feat(z11): add z11" || fail "tree 11.0.1"
+combine_tree 11.0.2 700003 - z11.py "feat(z11): other z11" || fail "tree 11.0.2"
+git checkout -q develop && printf 'C = 2\n' >c11.py && git commit -q -am "fix(c11): c11 on develop" &&
+	git push -q origin develop 2>/dev/null || fail "c11 moves"
+refs="$(
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+)"
+if git combinar --incluir 11.0.0,11.0.1 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict with develop"; fi
+grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep -q 'git checkout 11.0.0/RELEASE && git merge develop' rel.out &&
+	[ "$(
+		git for-each-ref --format='%(refname) %(objectname)'
+		git ls-remote origin
+	)" = "$refs" ] &&
+	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	ok "git combinar: a conflict with develop changes nothing and prints the steps" || {
+	cat rel.out
+	fail "combinar conflict with develop"
+}
+if git combinar --incluir 11.0.1,11.0.2 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict between trees"; fi
+grep -q 'nothing was changed' rel.out && grep -q '^    z11.py$' rel.out &&
+	[ "$(
+		git for-each-ref --format='%(refname) %(objectname)'
+		git ls-remote origin
+	)" = "$refs" ] &&
+	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	ok "git combinar: a conflict between RELEASE branches changes nothing" || {
+	cat rel.out
+	fail "combinar conflict between trees"
+}
+git push -q origin --delete 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE 2>/dev/null &&
+	git branch -q -D 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE || fail "clean 11.x"
+rm -f rel.out m.out
+
+# all or nothing, the origin renames in the plan, the order by author date
+# dated_tree <author date> <committer date> <combine_tree arguments>...: combine_tree with fixed
+# dates, as a rebase or a cherry-pick leaves them (new committer date, same author date).
+# Exit status: that of combine_tree.
+dated_tree() {
+	(
+		export GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$2"
+		shift 2
+		combine_tree "$@"
+	)
+}
+# all_refs: every local ref, origin's refs and HEAD, to compare before and after. Output: lines.
+all_refs() {
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+	git symbolic-ref -q HEAD || git rev-parse HEAD
+}
+# why: the committer dates say the newer tree is older; the author dates of the version commits do not
+dated_tree "2030-01-01T10:00:00Z" "2030-05-01T10:00:00Z" 12.0.0 800001 - a12.py "feat(a12): module a12" || fail "tree 12.0.0"
+dated_tree "2030-02-01T10:00:00Z" "2030-04-01T10:00:00Z" 12.0.1 800002 - b12.py "feat(b12): module b12" || fail "tree 12.0.1"
+dated_tree "2030-01-15T10:00:00Z" "2030-01-15T10:00:00Z" 12.0.2 800003 - e12.py "feat(e12): module e12" || fail "tree 12.0.2"
+refs="$(all_refs)"
+if command -v script >/dev/null 2>&1; then
+	printf 'n\n' | script -qec "git combinar --incluir 12.0.0,12.0.1 --version 12.1.0" /dev/null >rel.out 2>&1 || true
+	grep -q 'origin: 12.0.0/RELEASE -> unmerged/12.0.0/RELEASE  (renamed on origin' rel.out &&
+		grep -q 'origin: 12.0.1/RELEASE -> unmerged/12.0.1/RELEASE' rel.out && grep -q 'cancelled; nothing was changed' rel.out &&
+		[ "$(all_refs)" = "$refs" ] && ok "git combinar: the plan names the origin renames and asks first; a no changes nothing" || {
+		cat rel.out
+		fail "combinar plan of the origin renames"
+	}
+fi
+mkdir -p "$T/reject-hooks" && printf '#!/bin/sh\necho "rejected by the test" >&2\nexit 1\n' >"$T/reject-hooks/pre-commit" &&
+	chmod +x "$T/reject-hooks/pre-commit"
+if git -c core.hooksPath="$T/reject-hooks" combinar --incluir 12.0.0,12.0.1 --version 12.1.0 --yes >rel.out 2>&1; then
+	fail "combinar passed a rejected release commit"
+fi
+grep -q 'origin: 12.0.0/RELEASE -> unmerged/12.0.0/RELEASE' rel.out && grep -q 'rejected .*nothing was changed' rel.out &&
+	[ "$(all_refs)" = "$refs" ] && [ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	! git config qs.release.12.1.0.tag >/dev/null && git diff --quiet && git diff --cached --quiet && ok "git combinar: a rejected release commit leaves branches, HEAD and origin unchanged" || {
+	cat rel.out
+	diff <(echo "$refs") <(all_refs) || true
+	fail "combinar failure injection"
+}
+# origin rejects the push: the local result stays, origin is unchanged, the push to run is printed
+mkdir -p "$T/remote-hooks" && printf '#!/bin/sh\nexit 1\n' >"$T/remote-hooks/pre-receive" && chmod +x "$T/remote-hooks/pre-receive" &&
+	git -C "$T/remote.git" config core.hooksPath "$T/remote-hooks" || fail "remote hook"
+remote="$(git ls-remote origin)"
+if GIT_COMMITTER_DATE="2030-06-01T10:00:00Z" git combinar --incluir 12.0.0,12.0.1 --version 12.1.0 --yes >rel.out 2>&1; then
+	fail "combinar passed a rejected push"
+fi
+push="$(sed -n 's/^  \(git push --atomic .*\)$/\1/p' rel.out)"
+[ -n "$push" ] && [ "$(git ls-remote origin)" = "$remote" ] && [ "$(git branch --show-current)" = 12.1.0/RELEASE ] &&
+	git rev-parse -q --verify refs/heads/unmerged/12.0.0/RELEASE >/dev/null && ! git rev-parse -q --verify refs/heads/12.0.0/RELEASE >/dev/null &&
+	git -C "$T/remote.git" config --unset core.hooksPath && bash -c "$push" >/dev/null 2>&1 &&
+	git ls-remote --heads origin | grep -q 'refs/heads/12.1.0/RELEASE$' &&
+	git ls-remote --heads origin | grep -q 'refs/heads/unmerged/12.0.1/RELEASE$' &&
+	! git ls-remote --heads origin | grep -qE 'refs/heads/12.0.[01]/RELEASE$' &&
+	ok "git combinar: a rejected push keeps the local result, origin unchanged, and prints the atomic push" || {
+	cat rel.out
+	fail "combinar push failure"
+}
+[ "$(git log --format=%s develop..12.1.0/RELEASE | tac | sed -n 1,2p | tr '\n' '|')" = "chore(combine): 12.0.0 changes|chore(combine): 12.0.1 changes|" ] &&
+	[ "$(git log -1 --format=%at --grep='^chore(combine): 12.0.0' develop..12.1.0/RELEASE)" = "$(date -d 2030-01-01T10:00:00Z +%s)" ] &&
+	ok "git combinar: trees ordered by the author date of their version commit; the squash keeps it" || {
+	git log --format='%s %ad %cd' develop..12.1.0/RELEASE
+	fail "combinar order by author date"
+}
+# the originals gone: the squash dates still put the combined RELEASE before a later tree
+git checkout -q develop && git push -q origin --delete unmerged/12.0.0/RELEASE unmerged/12.0.1/RELEASE &&
+	git branch -q -D unmerged/12.0.0/RELEASE unmerged/12.0.1/RELEASE && rm -rf .git/logs && git gc -q --prune=now || fail "drop 12.0.x"
+! git cat-file -e "$(sed -n 's|^refs/heads/12.0.0/RELEASE ||p' <<<"$refs")" 2>/dev/null || fail "12.0.0/RELEASE still in the object store"
+git combinar --incluir 12.1.0,12.0.2 --version 12.2.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 12.2.0"
+}
+grep -q 'WARN: 12.0.0/RELEASE .* is gone' rel.out &&
+	[ "$(git log --format=%s --grep='^chore(combine)' develop..12.2.0/RELEASE | tac | tr '\n' '|')" = "chore(combine): 12.1.0 changes|chore(combine): 12.0.2 changes|" ] &&
+	ok "git combinar: a combined RELEASE whose originals are gone keeps its place by the squash dates" || {
+	cat rel.out
+	git log --format='%s %ad %cd' develop..12.2.0/RELEASE
+	fail "combinar order without originals"
+}
+git checkout -q develop && git push -q origin --delete 12.2.0/RELEASE unmerged/12.1.0/RELEASE unmerged/12.0.2/RELEASE &&
+	git branch -q -D 12.2.0/RELEASE unmerged/12.1.0/RELEASE unmerged/12.0.2/RELEASE &&
+	git config --unset qs.release.12.2.0.tag || fail "clean 12.x"
+rm -f rel.out
+
+# the rollback cannot put a branch back (it moved meanwhile): HEAD must not be left on a missing branch
+dated_tree "2031-01-01T10:00:00Z" "2031-01-01T10:00:00Z" 13.0.0 810001 - a13.py "feat(a13): module a13" || fail "tree 13.0.0"
+dated_tree "2031-02-01T10:00:00Z" "2031-02-01T10:00:00Z" 13.0.1 810002 - b13.py "feat(b13): module b13" || fail "tree 13.0.1"
+git checkout -q 13.0.0/RELEASE || fail "checkout 13.0.0/RELEASE"
+mkdir -p "$T/move-hooks" && cat >"$T/move-hooks/post-checkout" <<'EOF'
+#!/bin/sh
+# once the new release is checked out: move an archived branch, then fail
+if [ "$(git symbolic-ref -q HEAD)" = refs/heads/13.1.0/RELEASE ]; then
+	git update-ref refs/heads/unmerged/13.0.0/RELEASE "$(git rev-parse develop)"
+	exit 1
+fi
+EOF
+chmod +x "$T/move-hooks/post-checkout"
+git -c core.hooksPath="$T/move-hooks" combinar --incluir 13.0.0,13.0.1 --version 13.1.0 --yes >rel.out 2>&1 && fail "combinar passed a failing post-checkout"
+{ ! git symbolic-ref -q HEAD >/dev/null || git rev-parse -q --verify "$(git symbolic-ref -q HEAD)" >/dev/null; } &&
+	git rev-parse -q --verify HEAD >/dev/null && grep -q 'WARN: HEAD was left detached' rel.out &&
+	ok "git combinar: a rollback that is rejected leaves HEAD detached, never on a missing branch" || {
+	cat rel.out
+	git status | head -3
+	fail "combinar dangling HEAD"
+}
 
 tree="$(git arbol)"
 grep -q '^~  unmerged/7.1.0/300100/RF1/pay-2' <<<"$tree" && ok "git arbol shows branches set aside" || fail "arbol archived: $tree"
@@ -582,6 +879,238 @@ grep -q 'code-quality-suite:9.9.9' <<<"$last" && grep -qw python <<<"${last##*:}
 grep -q "Tools for    : _global python" status.log &&
 	ok "qs-update --status" || fail "status: $(cat status.log)"
 rm -f moved.err update.log
+# cleanup of the images and containers of old suite versions (qs_clean_old_images). Own QS_HOME
+# and repositories; the fake docker keeps the images as JSON files and the containers in
+# containers.json. "Calls" are the lines of calls.log.
+QS_HOME_MAIN="$QS_HOME"
+export QS_HOME="$T/qs-clean-home"
+CUR="$(cat "$SUITE/VERSION")"
+CALLS="$FAKE_DOCKER_DIR/calls.log"
+CL="$T/clean"
+mkdir -p "$CL"
+LABELLED='{"labels": {"org.opencontainers.image.title": "code-quality-suite"}}'
+
+# Create a fake image. Arguments: <tag> <json of the image>. Returns 0.
+fx_image() {
+	local n="${1//\//_}"
+	n="${n//:/@}"
+	printf '%s' "$2" >"$FAKE_DOCKER_DIR/$n.json"
+}
+# Does the fake image exist? Arguments: <tag>. Returns 0 if it does, 1 if it does not.
+img_exists() {
+	local n="${1//\//_}"
+	n="${n//:/@}"
+	[ -f "$FAKE_DOCKER_DIR/$n.json" ]
+}
+# Reset the fake Docker to the fixture of the spec: the suite images of old and newer versions,
+# a non-version tag and two foreign images, no containers, an empty call log. Returns 0.
+fx_reset() {
+	local t
+	rm -rf "$FAKE_DOCKER_DIR"
+	mkdir -p "$FAKE_DOCKER_DIR"
+	for t in 2.6.0 3.0.0 4.0.2 wt-textot base-2.6.0 base-3.0.0 base-4.0.2 9.9.9; do
+		fx_image "code-quality-suite:$t" "$LABELLED"
+	done
+	for t in code-quality-suite-foo:1.0.0 my/code-quality-suite:1.0.0 host/code-quality-suite:1.0.0; do
+		fx_image "$t" "$LABELLED"
+	done
+	fx_image python:3.12-slim '{"labels": {}}'
+	fx_image zricethezav/gitleaks:latest '{"labels": {}}'
+	: >"$CALLS"
+}
+# Write the fake containers. Arguments: <json list of {id, image, state}>. Returns 0.
+fx_containers() { printf '%s' "$1" >"$FAKE_DOCKER_DIR/containers.json"; }
+# Is there a call matching an extended regular expression? Arguments: <regex>. Returns 0 if so.
+calls_match() { grep -qE -- "$1" "$CALLS"; }
+# Does the output file contain a fixed string? Arguments: <string> [file]. Returns 0 if so.
+out_has() { grep -qF -- "$1" "${2:-$CL/out}"; }
+# Install the suite into a repository, output in $CL/out. Arguments: <repo>. Returns the exit status.
+inst() { "$SUITE/install.sh" "$1" >"$CL/out" 2>&1; }
+# Run a cleanup check: description, then a condition (a command). Exits the test on failure.
+check() {
+	local d="$1"
+	shift
+	if "$@"; then ok "$d"; else
+		echo "--- output:" >&2
+		cat "$CL/out" >&2 2>/dev/null || true
+		echo "--- calls:" >&2
+		cat "$CALLS" >&2
+		fail "$d"
+	fi
+}
+# AC1-3, 4, 6, 7: install removes the older versions, their stopped containers, nothing else
+ac_install() {
+	local t
+	for t in 2.6.0 3.0.0 4.0.2 base-2.6.0 base-3.0.0 base-4.0.2; do
+		calls_match "^image rm code-quality-suite:$t\$" && ! img_exists "code-quality-suite:$t" || return 1
+	done
+	img_exists "code-quality-suite:$CUR" && img_exists "code-quality-suite:base-$CUR"
+}
+# No call names the foreign images and both still exist. Returns 0 when so.
+ac_foreign_safe() {
+	! calls_match 'python:3.12-slim|zricethezav/gitleaks' && img_exists python:3.12-slim && img_exists zricethezav/gitleaks:latest
+}
+# No look-alike repository (code-quality-suite-foo, my/..., host/...) was removed. Returns 0 when so.
+ac_lookalikes_safe() {
+	! calls_match '^image rm .*(code-quality-suite-foo|my/|host/)' &&
+		img_exists code-quality-suite-foo:1.0.0 && img_exists my/code-quality-suite:1.0.0 && img_exists host/code-quality-suite:1.0.0
+}
+# No cleanup removal passes -f. Returns 0 when none does.
+ac_no_force() { ! calls_match '^(image )?rm .*-f'; }
+
+git init -q -b main "$CL/r1"
+fx_reset
+fx_containers '[{"id":"c2","image":"code-quality-suite:3.0.0","state":"exited"},{"id":"c3","image":"code-quality-suite:'"$CUR"'","state":"created"}]'
+inst "$CL/r1" || fail "install for the cleanup checks: $(cat "$CL/out")"
+check "AC1 install removes the older versions and their bases" ac_install
+check "AC2 foreign images are never touched" ac_foreign_safe
+check "AC2 look-alike repositories never get an image rm" ac_lookalikes_safe
+check "AC3 a non-version tag is kept with a note" out_has "kept code-quality-suite:wt-textot (not a version tag"
+check "AC3 wt-textot is still there" img_exists code-quality-suite:wt-textot
+check "AC4 a newer version is kept on install, with a note" out_has "newer than $CUR"
+check "AC4 9.9.9 still there" img_exists code-quality-suite:9.9.9
+check "AC6 stopped containers go, current version included, without -f" bash -c "grep -qx 'rm c2' '$CALLS' && grep -qx 'rm c3' '$CALLS'"
+check "AC6 no -f in rm / image rm" ac_no_force
+check "AC7 prune only with the suite label" bash -c "grep -qx 'image prune -f --filter label=org.opencontainers.image.title=code-quality-suite' '$CALLS' && ! grep '^image prune' '$CALLS' | grep -vq 'label=org.opencontainers.image.title=code-quality-suite'"
+check "AC1 summary line" out_has "removed 6 old image(s) and 2 stopped container(s)"
+# AC8: a second install has nothing left to remove
+: >"$CALLS"
+inst "$CL/r1" || fail "second install"
+check "AC8 second install is idempotent: no rm, no image rm, no summary" bash -c "! grep -qE '^(rm|image rm)( |\$)' '$CALLS' && ! grep -q 'removed ' '$CL/out'"
+
+# AC5: a running container keeps its image; its base is untagged; the rest goes
+ac_running() {
+	! calls_match '^(rm|stop|kill)( .*)? c1( |$)' && ! calls_match '^image rm code-quality-suite:4.0.2$' &&
+		calls_match '^image rm code-quality-suite:base-4.0.2$' && calls_match '^image rm code-quality-suite:2.6.0$' &&
+		img_exists code-quality-suite:4.0.2 && grep -q '"c1"' "$FAKE_DOCKER_DIR/containers.json"
+}
+fx_reset
+fx_containers '[{"id":"c1","image":"code-quality-suite:4.0.2","state":"running"}]'
+inst "$CL/r1" || fail "install with a running container"
+check "AC5 install: the running container is not touched, its image is kept with a warning" ac_running
+check "AC5 install: warning text" out_has "WARN: kept code-quality-suite:4.0.2: container c1 is running"
+fx_reset
+fx_containers '[{"id":"c1","image":"code-quality-suite:4.0.2","state":"running"}]'
+"$SUITE/scripts/qs-update.sh" --yes --lazy >"$CL/out" 2>&1 || fail "update with a running container: $(cat "$CL/out")"
+check "AC5 update: the running container survives (it used to be killed)" ac_running
+check "AC5 update: warning text" out_has "WARN: kept code-quality-suite:4.0.2: container c1 is running"
+check "AC4 update removes the newer version" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@9.9.9.json'"
+check "AC3 update keeps wt-textot, with the note" out_has "kept code-quality-suite:wt-textot (not a version tag"
+check "AC3 wt-textot survives the update" img_exists code-quality-suite:wt-textot
+check "AC2 update does not touch foreign images" ac_foreign_safe
+check "AC6 update never uses -f" ac_no_force
+
+# AC9: the opt-outs
+fx_reset
+QS_KEEP_OLD_IMAGES=1 inst "$CL/r1" || fail "install with QS_KEEP_OLD_IMAGES"
+check "AC9 QS_KEEP_OLD_IMAGES=1: nothing removed" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC9 QS_KEEP_OLD_IMAGES=1: says so" out_has "old images kept"
+fx_reset
+"$SUITE/scripts/qs-update.sh" --yes --lazy --keep-old >"$CL/out" 2>&1 || fail "update --keep-old"
+check "AC9 --keep-old: nothing removed" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC9 --keep-old: says so" out_has "old images kept"
+check "AC2 foreign images after AC9" ac_foreign_safe
+
+# AC10: no docker, or Docker down: silent, and the hooks are still installed
+mkdir -p "$CL/nodocker"
+for c in tr uname; do ln -sf "$(command -v "$c")" "$CL/nodocker/$c"; done
+# shellcheck disable=SC2016 # why: the quoted script is expanded by the inner bash, not here
+out="$(PATH="$CL/nodocker" QUALITY_SUITE_DIR="$SUITE" "$BASH" -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_clean_old_images; echo "rc=$?"' 2>&1)"
+check "AC10 without docker on PATH: prints nothing and returns 0" test "$out" = "rc=0"
+fx_reset
+out="$(FAKE_DOCKER_DOWN=1 QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_clean_old_images; echo "rc=$?"' 2>&1)"
+check "AC10 Docker down: prints nothing and returns 0" test "$out" = "rc=0"
+git init -q -b main "$CL/r5"
+FAKE_DOCKER_DOWN=1 inst "$CL/r5" || fail "install with Docker down"
+check "AC10 Docker down: the hooks are still installed" test -x "$CL/r5/.git/hooks/pre-commit"
+
+# AC11: a hook that builds a new version lazily removes nothing
+echo 4.3.0 >"$T/suite2/VERSION"
+git init -q -b main "$CL/r3"
+QS_SKIP_IMAGE=1 "$T/suite2/install.sh" "$CL/r3" >/dev/null 2>&1 || fail "hooks of suite2 into r3"
+fx_reset
+(cd "$CL/r3" && git config user.email t@example.com && git config user.name tester && printf 'x = 1\n' >a.py &&
+	git add a.py && git commit -q -m "feat: a") >"$CL/out" 2>&1 || fail "commit that builds a new version lazily: $(cat "$CL/out")"
+check "AC11 a lazy build by a hook removes nothing" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC11 and prints the note about the other versions" out_has "Images of other suite versions are still on disk"
+check "AC11 the new version is built" img_exists code-quality-suite:4.3.0
+
+# AC12: a custom target builds and cleans nothing
+fx_reset
+bash "$SUITE/scripts/build-image.sh" "$SUITE" code-quality-suite:dev >"$CL/out" 2>&1 || fail "build-image dev"
+check "AC12 build-image with a custom tag makes no cleanup calls" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+
+# AC13: a version another registered repository uses is kept on install, removed by the update
+echo 4.0.2 >"$T/suite2/VERSION"
+QS_SKIP_IMAGE=1 "$T/suite2/install.sh" "$CL/r3" >/dev/null 2>&1 || fail "hooks of suite2 (4.0.2) into r3"
+fx_reset
+inst "$CL/r1" || fail "install with a used version"
+check "AC13 install keeps a version used by another repository (and its base)" bash -c "
+	grep -q 'used by .*r3' '$CL/out' && test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json' &&
+	test -f '$FAKE_DOCKER_DIR/code-quality-suite@base-4.0.2.json'"
+check "AC13 the used version is reported with its repository and the fix" out_has "git actualizar-suite moves every repository to $CUR"
+"$SUITE/scripts/qs-update.sh" --yes --lazy >"$CL/out" 2>&1 || fail "update with a used version: $(cat "$CL/out")"
+check "AC13 update removes it and re-points the repository" bash -c "
+	! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json' && ! test -f '$FAKE_DOCKER_DIR/code-quality-suite@base-4.0.2.json' &&
+	grep -q 'QUALITY_SUITE_DIR=\"$SUITE\"' '$CL/r3/.git/hooks/quality-suite.env'"
+
+# AC14: a version that is not semver: no cleanup, one note
+echo latest >"$T/suite2/VERSION"
+git init -q -b main "$CL/r4"
+fx_reset
+"$T/suite2/install.sh" "$CL/r4" >"$CL/out" 2>&1 || fail "install of a non-semver suite"
+check "AC14 non-semver version: no cleanup calls" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+check "AC14 non-semver version: exactly one note" test "$(grep -c 'not a release version' "$CL/out")" = 1
+
+# AC15: --status shows the plan and changes nothing
+fx_reset
+"$SUITE/scripts/qs-update.sh" --status >"$CL/out" 2>&1 || fail "status"
+check "AC15 --status lists what would be removed" out_has "would remove: code-quality-suite:4.0.2"
+check "AC15 --status lists what is kept" out_has "kept: code-quality-suite:wt-textot (not a version tag"
+check "AC15 --status changes nothing" bash -c "! grep -qE '^(rm|image rm|image prune)( |\$)' '$CALLS'"
+
+# AC16: version helpers
+cmp_check() {
+	local out rc=0
+	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_semver_cmp "$@"' _ "$1" "$2")" || rc=$?
+	[ "$out" = "$3" ] && [ "$rc" = "${4:-0}" ]
+}
+tag_check() {
+	local out rc=0
+	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_tag_version "$1"' _ "$1")" || rc=$?
+	[ "$out" = "$2" ] && [ "$rc" = "$3" ]
+}
+check "AC16 4.0.10 > 4.0.9" cmp_check 4.0.10 4.0.9 1
+check "AC16 4.2.0 > 4.2.0-rc1" cmp_check 4.2.0 4.2.0-rc1 1
+check "AC16 3.0.0 < 4.0.0" cmp_check 3.0.0 4.0.0 -1
+check "AC16 4.2.0 = 4.2.0" cmp_check 4.2.0 4.2.0 0
+check "AC16 4.2.0-rc2 > 4.2.0-rc1" cmp_check 4.2.0-rc2 4.2.0-rc1 1
+check "AC16 4.1.0 > 4.1.0-rc.1" cmp_check 4.1.0 4.1.0-rc.1 1
+check "AC16 4.1.0-SNAPSHOT < 4.1.0" cmp_check 4.1.0-SNAPSHOT 4.1.0 -1
+check "AC16 4.1.0-SNAPSHOT > 4.0.9" cmp_check 4.1.0-SNAPSHOT 4.0.9 1
+check "AC16 wt-textot is not semver" cmp_check wt-textot 4.2.0 "" 2
+check "AC16 base-4.0.2 gives 4.0.2" tag_check base-4.0.2 4.0.2 0
+check "AC16 wt-textot is not a version tag" tag_check wt-textot "" 1
+
+# AC17: one removal fails: warning with the tag, the rest goes, the install succeeds
+fx_reset
+FAKE_DOCKER_RM_FAIL=code-quality-suite:3.0.0 inst "$CL/r1" || fail "install must succeed when one removal fails"
+check "AC17 warning names the tag" out_has "could not remove code-quality-suite:3.0.0"
+check "AC17 the other tags are still removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@2.6.0.json' && ! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.0.2.json'"
+check "AC17 the failing tag stays" img_exists code-quality-suite:3.0.0
+# AC18: the current version is a prerelease: the release is newer and kept on install; SNAPSHOT is older
+echo 4.1.0-rc.1 >"$T/suite2/VERSION"
+git init -q -b main "$CL/r6"
+fx_reset
+fx_image code-quality-suite:4.1.0 "$LABELLED"
+fx_image code-quality-suite:4.1.0-SNAPSHOT "$LABELLED"
+"$T/suite2/install.sh" "$CL/r6" >"$CL/out" 2>&1 || fail "install of a prerelease suite"
+check "AC18 4.1.0 is newer than 4.1.0-rc.1: kept with a note" bash -c "grep -q 'newer than 4.1.0-rc.1' '$CL/out' && test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0.json'"
+check "AC18 4.1.0-SNAPSHOT is older: removed" bash -c "! test -f '$FAKE_DOCKER_DIR/code-quality-suite@4.1.0-SNAPSHOT.json'"
+check "AC18 look-alikes untouched" ac_lookalikes_safe
+rm -rf "$CL"
+export QS_HOME="$QS_HOME_MAIN"
+
 # once per machine: setup-global, then everything is a git command
 bash "$SUITE/git-integration/setup-global.sh" >sg.out 2>&1 || {
 	cat sg.out

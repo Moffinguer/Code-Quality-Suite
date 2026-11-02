@@ -1,5 +1,34 @@
 # Changelog
 
+## 4.2.1 - 2026-11-02
+
+### Changed
+
+- Fix lint baseline (38b35cb; Fernando Mateos)
+- Fix runner lint baseline (d3a0497; Fernando Mateos)
+
+### Added
+
+- Clean old images on install (ff00729; Fernando Mateos)
+- Add qs_clean_old_images (b90ede6; Fernando Mateos)
+- One squash per version on develop (c88c0bf; Fernando Mateos)
+- Allow alphanumeric OT (c1ee8c0; Fernando Mateos)
+- Allow alphanumeric OT in scripts (3b6f5f0, OT 100; Fernando Mateos)
+- Skip style tools on generated files (1494ee0; Fernando Mateos)
+- Skip size check for generated (47d76c6; Fernando Mateos)
+- Document generated-file exemption (25a116f; Fernando Mateos)
+
+### Fixed
+
+- Match the suite repo exactly (0f29e54, OT 100; Fernando Mateos)
+- Refuse invalid OT everywhere (4fea1e5, OT 100; Fernando Mateos)
+- All or nothing, atomic origin push (4acc3ea, OT 100; Fernando Mateos)
+- OT from the Refs line in squashes (609533e; Fernando Mateos)
+- Restore gen.py output layout (831f838, OT 100; Fernando Mateos)
+- Tighten generated-file matching (421994d, OT 100; Fernando Mateos)
+- Read generated mark without git (dd50c18; Fernando Mateos)
+- Keep gen.py import order (0837be7; Fernando Mateos)
+
 ## 4.0.0 - 2026-11-01
 
 ### Added

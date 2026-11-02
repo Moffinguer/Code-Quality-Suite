@@ -32,9 +32,19 @@ runs without surprises.
   dependencies inside the offline container. Run them in the heavy stage/CI with the build.
 - **Too many image layers** - after `QS_MAX_LAYERS` (default 40) incremental installs the
   image is rebuilt from the base in a single layer automatically.
-- **Suite upgraded** - run `git actualizar-suite` (clean: removes every suite image, rebuilds the
-  base, re-points the repositories; tools come back on the first commit). Without it, the new
-  `VERSION` still builds its own image and the old ones only take disk space (`INSTALL.md`, section 6).
+- **Suite upgraded** - run `git actualizar-suite` (clean: removes the stopped containers and the
+  images of every other version, rebuilds the base, re-points the repositories; tools come back
+  on the first commit). `install.sh` also removes the older versions after it builds. Without
+  either, the new `VERSION` still builds its own image and the old ones only take disk space
+  (`INSTALL.md`, section 6). `QS_KEEP_OLD_IMAGES=1` or `--keep-old` turns the cleanup off.
+- **`WARN: kept code-quality-suite:<v>: container <id> is running`** - a check or a manual
+  `docker run` still uses that version, so the cleanup never stops it and keeps the image. Wait
+  until it ends (`docker ps --filter label=org.opencontainers.image.title=code-quality-suite`)
+  and run `git actualizar-suite` again.
+- **`kept code-quality-suite:<tag> (not a version tag ...)`** - tags such as `wt-textot` or `dev`
+  are never removed automatically; remove the one you no longer need with `docker image rm`.
+- **`kept ...: used by <repo>`** - that repository still points to an older suite folder;
+  `git actualizar-suite` re-points it and frees the image.
 - **`the suite is not at '...' (moved or deleted)`** - the suite folder of that repository is
   gone; `git actualizar-suite` from the new folder, or `bash <suite>/install.sh <repo>`.
 - **`the tools for '...' could not be added to the image`** - the image build failed (network,
