@@ -113,7 +113,7 @@ printf 'one\n' >f.txt
 git add f.txt && git commit -q -m "chore: f" && git push -q origin develop
 mkbranch unmerged/conf f.txt branch-version
 printf 'two\n' >f.txt
-git add f.txt && git commit -q -m "chore: f2"
+git add f.txt && git commit -q -m "chore: f2" && git push -q origin develop
 git checkout -q --orphan unmerged/orphan
 git rm -rfq . 2>/dev/null
 printf 'o\n' >o.txt
