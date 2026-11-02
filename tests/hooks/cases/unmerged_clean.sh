@@ -18,6 +18,18 @@ mkbranch() {
 	git checkout -q develop
 }
 
+# mkforeign NAME FILE TEXT: like mkbranch for a name the branch model rejects (feature/x): the
+# commit is made on a scratch branch and origin's ref is written with plumbing, no hook involved.
+mkforeign() {
+	local sha
+	mkbranch "unmerged/scratch-$$" "$2" "$3"
+	sha="$(git rev-parse "unmerged/scratch-$$")"
+	git --git-dir="$CASE_REPO.git" update-ref "refs/heads/$1" "$sha" || fail "origin ref $1"
+	git push -q origin ":unmerged/scratch-$$" || fail "drop scratch on origin"
+	git branch -q -D "unmerged/scratch-$$"
+	git fetch -q origin
+}
+
 # squash_local BRANCH: bring the changes of BRANCH into local develop as one new commit (a squash).
 squash_local() {
 	git merge --squash "$1" >/dev/null || fail "squash $1"
@@ -53,8 +65,8 @@ run_unmerged
 mkbranch unmerged/a a.txt A
 mkbranch unmerged-20261102/b b.txt B
 mkbranch unmerged/c c.txt C
-mkbranch feature/x x.txt X
-mkbranch 5.0.0-RC1/f/x y.txt Y
+mkforeign feature/x x.txt X
+mkforeign 5.0.0-RC1/f/x y.txt Y
 mkbranch unmerged/rel VERSION 9.9.9
 mkbranch unmerged/p p.txt P
 git checkout -q -b unmerged/readme develop
