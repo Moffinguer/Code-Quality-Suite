@@ -255,7 +255,11 @@ class App:
             list[str]: what the suite changed (policy, global, language ids, detected versions).
         """
         changed_by_suite = []
+        self._migrate()
+        migrated = self._migrate()
         added = policy.populate(self.data)
+        if migrated and "policy" not in changed_by_suite:
+            changed_by_suite.append("policy")
         if added and not getattr(self, "_created", False):
             changed_by_suite.append("policy")
             qslog.log(
@@ -306,6 +310,19 @@ class App:
                 )
                 self._created = False
         return changed_by_suite
+
+    def _migrate(self):
+        """Run the one-time policy migration (policy.migrate) on the loaded rules, logging it.
+
+        Returns:
+            list[str]: the migration messages (empty when nothing changed).
+        """
+        msgs = policy.migrate(self.data)
+        for m in msgs:
+            qslog.log("INFO", "rules", m, os.path.basename(self.rules_path), "migrate", "SUCCESS")
+        if any(policy.FLOW_NOTICE in m for m in msgs):
+            print(f"[quality-suite] {policy.FLOW_NOTICE}", file=sys.stderr)
+        return msgs
 
     def export_tests(self):
         """Plain list of test commands for the host hook (it has no JSON parser on Git Bash)."""
@@ -476,6 +493,7 @@ class App:
         """
         if not self.load_rules():
             return 2
+        self._migrate()
         policy.populate(self.data)
         cls = self.classify(files)
         self.encoding_gate(cls)
