@@ -15,7 +15,9 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 # level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
 # no '-' or '_', so it never collides with the leaf names of the branch model
@@ -963,15 +965,20 @@ def repair(raw, old_raw=None):
 def _migrate_file(path):
     """Migrate a rules file on disk (host-side, no engine image needed).
 
-    The file is written to a temporary file in the same directory and then moved over the
-    original (`os.replace`); its line endings (LF or CRLF) are kept. A file with a BOM or
-    that is not UTF-8 is skipped with a warning.
+    The new text goes to a uniquely named temporary file (`mkstemp`) in the same directory;
+    the permission bits of the original are copied to it and it is then moved over the
+    original (`os.replace`). Its line endings (LF or CRLF) are kept. If the write or the
+    replace fails, the temporary file is removed and the OSError propagates; the original is
+    left unchanged. A file with a BOM or that is not UTF-8 is skipped with a warning.
 
     Args:
         path: the rules file; a missing, empty or unreadable file is left alone.
 
     Returns:
         int: 0 (also when nothing changed or the file is not usable).
+
+    Raises:
+        OSError: when the temporary file cannot be written, copied or moved over the file.
     """
     name = os.path.basename(path)
     try:
@@ -993,10 +1000,17 @@ def _migrate_file(path):
     if msgs:
         eol = "\r\n" if b"\r\n" in raw else "\n"
         text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8", newline=eol) as fh:
-            fh.write(text)
-        os.replace(tmp, path)
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+                fh.write(text)
+            shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        finally:
+            # after a successful replace the temp name is gone; otherwise drop the leftover
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
         for m in msgs:
             print(f"[quality-suite] {name}: {m}")
     return 0
