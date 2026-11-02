@@ -73,14 +73,14 @@ mkforeign 5.0.0-RC1/f/x y.txt Y
 mkbranch unmerged/rel VERSION 9.9.9
 mkbranch unmerged/p p.txt P
 git checkout -q -b unmerged/readme develop
-printf '# sandbox\n<!-- qs:version -->[badge 1]<!-- /qs:version -->\n' >README.md
-printf '1.0\n' >CITATION.cff
+printf '# sandbox\n<!-- qs:version -->![version 1.0.0](u)<!-- /qs:version -->\n' >README.md
+printf 'cff-version: 1.2.0\nmessage: m\ntitle: t\nauthors:\n  - name: a\n' >CITATION.cff
 git add README.md CITATION.cff
-git commit -q -m "docs: badge" && git push -q origin unmerged/readme
+git commit -q -m "docs: badge" && git push -q origin unmerged/readme || fail "readme fixture"
 git checkout -q -b unmerged/readme2 develop
-printf '# sandbox\n<!-- qs:version -->[badge 2]<!-- /qs:version -->\nextra line\n' >README.md
+printf '# sandbox\n<!-- qs:version -->![version 1.1.0](u)<!-- /qs:version -->\nextra line\n' >README.md
 git add README.md
-git commit -q -m "docs: extra" && git push -q origin unmerged/readme2
+git commit -q -m "docs: extra" && git push -q origin unmerged/readme2 || fail "readme2 fixture"
 git checkout -q develop
 squash unmerged/a
 squash unmerged-20261102/b
