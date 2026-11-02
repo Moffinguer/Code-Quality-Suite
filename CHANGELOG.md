@@ -1,5 +1,27 @@
 # Changelog
 
+## 4.1.0 - 2026-11-02
+
+### Changed
+
+- Fix lint baseline (38b35cb; Fernando Mateos)
+- Fix runner lint baseline (d3a0497; Fernando Mateos)
+
+### Added
+
+- Allow alphanumeric OT (c1ee8c0; Fernando Mateos)
+- Allow alphanumeric OT in scripts (3b6f5f0, OT 100; Fernando Mateos)
+- Skip style tools on generated files (1494ee0; Fernando Mateos)
+- Skip size check for generated (47d76c6; Fernando Mateos)
+- Document generated-file exemption (25a116f; Fernando Mateos)
+
+### Fixed
+
+- Restore gen.py output layout (831f838, OT 100; Fernando Mateos)
+- Tighten generated-file matching (421994d, OT 100; Fernando Mateos)
+- Read generated mark without git (dd50c18; Fernando Mateos)
+- Keep gen.py import order (0837be7; Fernando Mateos)
+
 ## 4.0.0 - 2026-11-01
 
 ### Added
