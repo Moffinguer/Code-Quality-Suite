@@ -9,6 +9,7 @@ set -euo pipefail
 SUITE="$(cd "$(dirname "$0")/../.." && pwd)"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
+export SUITE T
 export FAKE_DOCKER_DIR="$T/docker" QS_SUITE_HOST="$SUITE" QS_NO_PROMPT=1 QS_REPO_FILES=0
 # why: never touch the real global git config or the real list of installed repositories
 export GIT_CONFIG_GLOBAL="$T/gitconfig" QS_HOME="$T/qs-home"
@@ -19,11 +20,8 @@ mkdir -p "$HOME"
 mkdir -p "$T/bin"
 ln -s "$SUITE/tests/hooks/fake-docker" "$T/bin/docker"
 export PATH="$T/bin:$PATH"
-fail() {
-	echo "FAIL: $*" >&2
-	exit 1
-}
-ok() { echo "ok   $*"; }
+# shellcheck source=tests/hooks/case-lib.sh
+. "$SUITE/tests/hooks/case-lib.sh"
 
 git init -q -b main "$T/repo"
 cd "$T/repo"
@@ -171,6 +169,8 @@ rm -f latin.txt
 python3 - <<'PY'
 import json; p='.quality-rules.json'; d=json.load(open(p))
 d['encoding']['by_glob'] = {'legacy/*.properties': 'iso-8859-1'}
+# why: the 4.x regression suite below is pinned to the merge flow
+d.setdefault('branches', {})['flow'] = 'merge'
 json.dump(d, open(p, 'w'), indent=2)
 PY
 mkdir -p legacy
@@ -1229,4 +1229,6 @@ git init -q -b develop "$T/dd"
 	cat "$T/dd-act.out" 2>/dev/null
 	fail "git ia dev_documents"
 }
+# new end-to-end cases live in tests/hooks/cases/*.sh (one file per area)
+run_cases "$SUITE/tests/hooks/cases"
 echo "all hook checks passed"
