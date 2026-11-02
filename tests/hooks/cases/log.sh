@@ -55,14 +55,20 @@ grep -qE '^A.r\.txt$' <<<"$(msg)" && ok "L3 root commit" || fail "L3 root: $(msg
 git checkout -q develop
 
 # L3: merge --no-ff lists files vs first parent
-git checkout -q -b side
+# why: branch names outside the model are not checked by pre-merge-commit
+git checkout -q -b scratch-a
+echo t >t.txt
+git add t.txt
+git commit -q -m "feat: first parent"
+git checkout -q -b scratch-b develop
 echo s >s.txt
 git add s.txt
-git commit -q -m "feat: side"
-git checkout -q develop
-git merge -q --no-ff side -m "Merge side"
+git commit -q -m "feat: second parent"
+git checkout -q scratch-a
+git merge -q --no-ff scratch-b -m "Merge scratch-b"
 m="$(msg)"
-grep -qE '^A.s\.txt$' <<<"$m" && ! grep -q 'a\.txt' <<<"$m" && ok "L3 merge vs first parent" || fail "L3 merge: $m"
+grep -qE '^A.s\.txt$' <<<"$m" && ! grep -q 't\.txt' <<<"$m" && ok "L3 merge vs first parent" || fail "L3 merge: $m"
+git checkout -q develop
 
 # L3: editor commit keeps the template and lists the files
 echo e >e.txt
