@@ -636,6 +636,93 @@ git push -q origin --delete 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE 2>/dev/
 	git branch -q -D 11.0.0/RELEASE 11.0.1/RELEASE 11.0.2/RELEASE || fail "clean 11.x"
 rm -f rel.out m.out
 
+# all or nothing, the origin renames in the plan, the order by author date
+# dated_tree <author date> <committer date> <combine_tree arguments>...: combine_tree with fixed
+# dates, as a rebase or a cherry-pick leaves them (new committer date, same author date).
+# Exit status: that of combine_tree.
+dated_tree() {
+	(
+		export GIT_AUTHOR_DATE="$1" GIT_COMMITTER_DATE="$2"
+		shift 2
+		combine_tree "$@"
+	)
+}
+# all_refs: every local ref, origin's refs and HEAD, to compare before and after. Output: lines.
+all_refs() {
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+	git symbolic-ref -q HEAD || git rev-parse HEAD
+}
+# why: the committer dates say the newer tree is older; the author dates of the version commits do not
+dated_tree "2030-01-01T10:00:00Z" "2030-05-01T10:00:00Z" 12.0.0 800001 - a12.py "feat(a12): module a12" || fail "tree 12.0.0"
+dated_tree "2030-02-01T10:00:00Z" "2030-04-01T10:00:00Z" 12.0.1 800002 - b12.py "feat(b12): module b12" || fail "tree 12.0.1"
+dated_tree "2030-01-15T10:00:00Z" "2030-01-15T10:00:00Z" 12.0.2 800003 - e12.py "feat(e12): module e12" || fail "tree 12.0.2"
+refs="$(all_refs)"
+if command -v script >/dev/null 2>&1; then
+	printf 'n\n' | script -qec "git combinar --incluir 12.0.0,12.0.1 --version 12.1.0" /dev/null >rel.out 2>&1 || true
+	grep -q 'origin: 12.0.0/RELEASE -> unmerged/12.0.0/RELEASE  (renamed on origin' rel.out &&
+		grep -q 'origin: 12.0.1/RELEASE -> unmerged/12.0.1/RELEASE' rel.out && grep -q 'cancelled; nothing was changed' rel.out &&
+		[ "$(all_refs)" = "$refs" ] && ok "git combinar: the plan names the origin renames and asks first; a no changes nothing" || {
+		cat rel.out
+		fail "combinar plan of the origin renames"
+	}
+fi
+mkdir -p "$T/reject-hooks" && printf '#!/bin/sh\necho "rejected by the test" >&2\nexit 1\n' >"$T/reject-hooks/pre-commit" &&
+	chmod +x "$T/reject-hooks/pre-commit"
+if git -c core.hooksPath="$T/reject-hooks" combinar --incluir 12.0.0,12.0.1 --version 12.1.0 --yes >rel.out 2>&1; then
+	fail "combinar passed a rejected release commit"
+fi
+grep -q 'origin: 12.0.0/RELEASE -> unmerged/12.0.0/RELEASE' rel.out && grep -q 'rejected .*nothing was changed' rel.out &&
+	[ "$(all_refs)" = "$refs" ] && [ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
+	! git config qs.release.12.1.0.tag >/dev/null && git diff --quiet && git diff --cached --quiet && ok "git combinar: a rejected release commit leaves branches, HEAD and origin unchanged" || {
+	cat rel.out
+	diff <(echo "$refs") <(all_refs) || true
+	fail "combinar failure injection"
+}
+# origin rejects the push: the local result stays, origin is unchanged, the push to run is printed
+mkdir -p "$T/remote-hooks" && printf '#!/bin/sh\nexit 1\n' >"$T/remote-hooks/pre-receive" && chmod +x "$T/remote-hooks/pre-receive" &&
+	git -C "$T/remote.git" config core.hooksPath "$T/remote-hooks" || fail "remote hook"
+remote="$(git ls-remote origin)"
+if GIT_COMMITTER_DATE="2030-06-01T10:00:00Z" git combinar --incluir 12.0.0,12.0.1 --version 12.1.0 --yes >rel.out 2>&1; then
+	fail "combinar passed a rejected push"
+fi
+push="$(sed -n 's/^  \(git push --atomic .*\)$/\1/p' rel.out)"
+[ -n "$push" ] && [ "$(git ls-remote origin)" = "$remote" ] && [ "$(git branch --show-current)" = 12.1.0/RELEASE ] &&
+	git rev-parse -q --verify refs/heads/unmerged/12.0.0/RELEASE >/dev/null && ! git rev-parse -q --verify refs/heads/12.0.0/RELEASE >/dev/null &&
+	git -C "$T/remote.git" config --unset core.hooksPath && bash -c "$push" >/dev/null 2>&1 &&
+	git ls-remote --heads origin | grep -q 'refs/heads/12.1.0/RELEASE$' &&
+	git ls-remote --heads origin | grep -q 'refs/heads/unmerged/12.0.1/RELEASE$' &&
+	! git ls-remote --heads origin | grep -qE 'refs/heads/12.0.[01]/RELEASE$' &&
+	ok "git combinar: a rejected push keeps the local result, origin unchanged, and prints the atomic push" || {
+	cat rel.out
+	fail "combinar push failure"
+}
+[ "$(git log --format=%s develop..12.1.0/RELEASE | tac | sed -n 1,2p | tr '\n' '|')" = "chore(combine): 12.0.0 changes|chore(combine): 12.0.1 changes|" ] &&
+	[ "$(git log -1 --format=%at --grep='^chore(combine): 12.0.0' develop..12.1.0/RELEASE)" = "$(date -d 2030-01-01T10:00:00Z +%s)" ] &&
+	ok "git combinar: trees ordered by the author date of their version commit; the squash keeps it" || {
+	git log --format='%s %ad %cd' develop..12.1.0/RELEASE
+	fail "combinar order by author date"
+}
+# the originals gone: the squash dates still put the combined RELEASE before a later tree
+git checkout -q develop && git push -q origin --delete unmerged/12.0.0/RELEASE unmerged/12.0.1/RELEASE &&
+	git branch -q -D unmerged/12.0.0/RELEASE unmerged/12.0.1/RELEASE && rm -rf .git/logs && git gc -q --prune=now || fail "drop 12.0.x"
+! git cat-file -e "$(sed -n 's|^refs/heads/12.0.0/RELEASE ||p' <<<"$refs")" 2>/dev/null || fail "12.0.0/RELEASE still in the object store"
+git combinar --incluir 12.1.0,12.0.2 --version 12.2.0 --yes >rel.out 2>&1 || {
+	cat rel.out
+	fail "combinar 12.2.0"
+}
+grep -q 'WARN: 12.0.0/RELEASE .* is gone' rel.out &&
+	[ "$(git log --format=%s --grep='^chore(combine)' develop..12.2.0/RELEASE | tac | tr '\n' '|')" = "chore(combine): 12.1.0 changes|chore(combine): 12.0.2 changes|" ] &&
+	ok "git combinar: a combined RELEASE whose originals are gone keeps its place by the squash dates" || {
+	cat rel.out
+	git log --format='%s %ad %cd' develop..12.2.0/RELEASE
+	fail "combinar order without originals"
+}
+git checkout -q develop && git push -q origin --delete 12.2.0/RELEASE unmerged/12.1.0/RELEASE unmerged/12.0.2/RELEASE &&
+	git branch -q -D 12.2.0/RELEASE unmerged/12.1.0/RELEASE unmerged/12.0.2/RELEASE &&
+	git config --unset qs.release.12.2.0.tag || fail "clean 12.x"
+rm -f rel.out
+
 tree="$(git arbol)"
 grep -q '^~  unmerged/7.1.0/300100/RF1/pay-2' <<<"$tree" && ok "git arbol shows branches set aside" || fail "arbol archived: $tree"
 git branch -q -D unmerged/7.1.0/300100/RF1/pay
