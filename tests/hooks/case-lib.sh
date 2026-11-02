@@ -14,13 +14,24 @@ fail() {
 ok() { echo "ok   $*"; }
 
 # case_sandbox [FLOW]: create a fresh repo with the suite installed, a bare "origin" and an
-# initial commit on branch develop, then cd into it. Sets CASE_REPO. When FLOW (squash or
-# merge) is given it is written to branches.flow of the repo's rules file.
-# Errors: exits 1 through fail when the install or the first commit does not work.
+# initial commit on branch develop, then cd into it. Sets CASE_REPO (a unique "$T/case-XXXX"
+# folder; the bare origin is "$CASE_REPO.git"). When FLOW (squash or merge) is given it is
+# written to branches.flow of the repo's rules file.
+# Errors: exits 1 through fail when HOME, QS_HOME or GIT_CONFIG_GLOBAL is not under $T (the
+# case would touch the real configuration), when the install or the first commit does not
+# work.
 case_sandbox() {
-	local flow="${1:-}" n
-	n="$(find "$T" -maxdepth 1 -name 'case-*' | wc -l | tr -d ' ')"
-	CASE_REPO="$T/case-$n"
+	local flow="${1:-}" name
+	[ -n "${T:-}" ] || fail "case_sandbox: T is not set; run the cases through tests/hooks/run.sh"
+	# why: a case run on its own must never write to the real global configuration
+	for name in HOME QS_HOME GIT_CONFIG_GLOBAL; do
+		case "${!name:-}" in
+		"$T"/?*) ;;
+		*) fail "case_sandbox: $name='${!name:-}' is not under $T; refusing to run" ;;
+		esac
+	done
+	# why: mktemp gives a unique name; counting folders would also count the origin folders
+	CASE_REPO="$(mktemp -d "$T/case-XXXX")" || fail "cannot create a case folder in $T"
 	git init -q --bare "$CASE_REPO.git"
 	git init -q -b develop "$CASE_REPO"
 	cd "$CASE_REPO" || fail "cannot enter $CASE_REPO"

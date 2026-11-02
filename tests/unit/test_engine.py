@@ -683,7 +683,15 @@ class RegistryIntegrity(unittest.TestCase):
 
 
 def load_tests(loader, tests, pattern):
-    """Also run every sibling tests/unit/test_*.py module (the file name is not a pattern)."""
+    """Add every sibling tests/unit/test_*.py module when this file is run directly.
+
+    Parameters: loader (unittest loader), tests (suite to extend), pattern (None when the
+    file is run directly; a discovery pattern such as "test*.py" under discover).
+    Returns the extended suite. Under discover the siblings are already found, so nothing
+    is added there (otherwise they would run twice).
+    """
+    if pattern is not None:
+        return tests
     here = os.path.dirname(os.path.abspath(__file__))
     own = os.path.basename(__file__)
     for name in sorted(os.listdir(here)):
