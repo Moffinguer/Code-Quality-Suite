@@ -1291,21 +1291,35 @@ CB_N=0 CB_M=0 CB_K=0 CB_J=0
 CB_ARCHIVE=() CB_ROLLBACK=0 CB_HEAD_REF="" CB_HEAD_SHA="" CB_PWD="" CB_PREV_TRAP=""
 
 # combine_cleanup: undo what a git combinar run leaves behind. When it stops while the local
-# branches are being moved, the branches and HEAD go back to where they were (all-or-nothing);
+# branches are being moved, the branches and HEAD go back to where they were (all-or-nothing); if
+# the undo is rejected (a branch moved meanwhile) HEAD stays detached, with a warning and the
+# manual steps, never a symbolic ref to a missing branch;
 # then the temporary worktree and the scratch files are removed and the directory is restored.
 # Arguments: none. Exit status: 0 always (it runs from the EXIT trap).
 combine_cleanup() {
+	local undone
 	# why: first, out of the temporary worktree that is removed below
 	if [ -n "$CB_PWD" ]; then cd "$CB_PWD" 2>/dev/null || true; fi
 	if [ "$CB_ROLLBACK" = 1 ]; then
 		CB_ROLLBACK=0
+		undone=1
 		if [ -s "$CB_GD/combine.undo" ] && ! git update-ref --stdin <"$CB_GD/combine.undo"; then
+			undone=0
 			echo "[rama] ERROR: could not put the branches back; the old tips are in $CB_GD/combine.undo.keep" >&2
 			cp "$CB_GD/combine.undo" "$CB_GD/combine.undo.keep" 2>/dev/null || true
 		fi
-		git checkout -q --detach "$CB_HEAD_SHA" 2>/dev/null || true
-		if [ -n "$CB_HEAD_REF" ]; then git symbolic-ref HEAD "$CB_HEAD_REF" 2>/dev/null || true; fi
-		echo "[rama] the branches and HEAD were put back as they were" >&2
+		# why: HEAD goes back to its branch only when the undo worked and that branch exists, so it
+		# never points at a branch that is gone; otherwise it stays detached where it is
+		if [ "$undone" = 1 ]; then
+			git checkout -q --detach "$CB_HEAD_SHA" 2>/dev/null || true
+			if [ -n "$CB_HEAD_REF" ] && exists_ref "$CB_HEAD_REF"; then git symbolic-ref HEAD "$CB_HEAD_REF" 2>/dev/null || true; fi
+			echo "[rama] the branches and HEAD were put back as they were" >&2
+		else
+			git checkout -q --detach 2>/dev/null || git update-ref --no-deref HEAD "$CB_HEAD_SHA" 2>/dev/null || true
+			echo "[rama] WARN: HEAD was left detached (it was on ${CB_HEAD_REF:-$CB_HEAD_SHA}) because a branch moved meanwhile." >&2
+			echo "  Check git branch -a, put the branches back from $CB_GD/combine.undo.keep" >&2
+			echo "  (git update-ref --stdin < that file), then run: git switch ${CB_HEAD_REF#refs/heads/}" >&2
+		fi
 	fi
 	if [ -n "$CB_WT" ] && [ -e "$CB_WT" ]; then
 		git worktree remove --force "$CB_WT" >/dev/null 2>&1 || rm -rf "$CB_WT"
@@ -1619,8 +1633,9 @@ combine_archive_plan() {
 
 # combine_apply <result>: move the local branches in one transaction (git update-ref --stdin):
 # REL_RELEASE to the result, each CB_ARCHIVE entry renamed, then check out REL_RELEASE. HEAD is
-# detached first, and while CB_ROLLBACK is 1 a failure puts every branch and HEAD back
-# (combine_cleanup, from the EXIT trap).
+# detached first; the undo file (combine.undo) is written before any branch moves, and while
+# CB_ROLLBACK is 1 a failure puts every branch and HEAD back (combine_cleanup, from the EXIT
+# trap; if a branch moved meanwhile and the undo is rejected, HEAD stays detached with a warning).
 # Arguments: $1 the combined result. Exit status: 0; ends the script through die on a failure,
 # with nothing changed.
 combine_apply() {
@@ -1647,13 +1662,17 @@ combine_apply() {
 	fi
 	CB_HEAD_REF="$(git symbolic-ref -q HEAD || true)"
 	CB_HEAD_SHA="$(git rev-parse HEAD)"
-	rm -f "$undo"
+	# why: the undo file is complete on disk before any branch moves, so a kill at any point leaves it
+	mv "$undo.new" "$undo"
 	CB_ROLLBACK=1
 	# why: a branch checked out here may be renamed; a detached HEAD at the same commit leaves the
 	# work tree as it is
 	git checkout -q --detach || die "could not detach HEAD; nothing was changed"
-	git update-ref --stdin <"$tx" || die "could not move the local branches; nothing was changed"
-	mv "$undo.new" "$undo"
+	# why: the transaction is all or nothing, so when it fails there is nothing to undo
+	git update-ref --stdin <"$tx" || {
+		rm -f "$undo"
+		die "could not move the local branches; nothing was changed"
+	}
 	git checkout -q "$REL_RELEASE" || die "could not check out $REL_RELEASE; nothing was changed"
 	CB_ROLLBACK=0
 	rm -f "$undo" "$tx"

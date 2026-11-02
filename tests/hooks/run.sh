@@ -723,6 +723,28 @@ git checkout -q develop && git push -q origin --delete 12.2.0/RELEASE unmerged/1
 	git config --unset qs.release.12.2.0.tag || fail "clean 12.x"
 rm -f rel.out
 
+# the rollback cannot put a branch back (it moved meanwhile): HEAD must not be left on a missing branch
+dated_tree "2031-01-01T10:00:00Z" "2031-01-01T10:00:00Z" 13.0.0 810001 - a13.py "feat(a13): module a13" || fail "tree 13.0.0"
+dated_tree "2031-02-01T10:00:00Z" "2031-02-01T10:00:00Z" 13.0.1 810002 - b13.py "feat(b13): module b13" || fail "tree 13.0.1"
+git checkout -q 13.0.0/RELEASE || fail "checkout 13.0.0/RELEASE"
+mkdir -p "$T/move-hooks" && cat >"$T/move-hooks/post-checkout" <<'EOF'
+#!/bin/sh
+# once the new release is checked out: move an archived branch, then fail
+if [ "$(git symbolic-ref -q HEAD)" = refs/heads/13.1.0/RELEASE ]; then
+	git update-ref refs/heads/unmerged/13.0.0/RELEASE "$(git rev-parse develop)"
+	exit 1
+fi
+EOF
+chmod +x "$T/move-hooks/post-checkout"
+git -c core.hooksPath="$T/move-hooks" combinar --incluir 13.0.0,13.0.1 --version 13.1.0 --yes >rel.out 2>&1 && fail "combinar passed a failing post-checkout"
+{ ! git symbolic-ref -q HEAD >/dev/null || git rev-parse -q --verify "$(git symbolic-ref -q HEAD)" >/dev/null; } &&
+	git rev-parse -q --verify HEAD >/dev/null && grep -q 'WARN: HEAD was left detached' rel.out &&
+	ok "git combinar: a rollback that is rejected leaves HEAD detached, never on a missing branch" || {
+	cat rel.out
+	git status | head -3
+	fail "combinar dangling HEAD"
+}
+
 tree="$(git arbol)"
 grep -q '^~  unmerged/7.1.0/300100/RF1/pay-2' <<<"$tree" && ok "git arbol shows branches set aside" || fail "arbol archived: $tree"
 git branch -q -D unmerged/7.1.0/300100/RF1/pay
