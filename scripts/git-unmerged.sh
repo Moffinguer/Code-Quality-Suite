@@ -39,7 +39,7 @@ is_release_file() {
 # badge), pom.xml (<version> lines) and package.json ("version" lines).
 strip_release_lines() {
 	case "$1" in
-	"$QS_BR_README") sed -e '/<!-- qs:version -->/,/<!-- \/qs:version -->/d' ;;
+	"$QS_BR_README") sed -e 's|<!-- qs:version -->.*<!-- /qs:version -->||' | grep -v '^[[:space:]]*$' || true ;;
 	*pom.xml) grep -v '<version>' || true ;;
 	*package.json) grep -v '"version"' || true ;;
 	*) cat ;;

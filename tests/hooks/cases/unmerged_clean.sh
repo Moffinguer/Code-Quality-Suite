@@ -13,15 +13,15 @@ mkbranch() {
 	git checkout -q -b "$1" develop || fail "branch $1"
 	printf '%s\n' "$3" >"$2"
 	git add "$2"
-	git commit -q -m "chore: change $2" || fail "commit on $1"
-	git push -q origin "$1" || fail "push $1"
+	git commit -q --no-verify -m "chore: change $2" || fail "commit on $1"
+	git push -q --no-verify origin "$1" || fail "push $1"
 	git checkout -q develop
 }
 
 # squash BRANCH: bring the changes of BRANCH into develop as one new commit (a squash).
 squash() {
-	git merge --squash "$1" >/dev/null 2>&1 || fail "squash $1"
-	git commit -q -m "feat: squash $1" || fail "commit squash of $1"
+	git -c merge.ff=true merge --squash "$1" >/dev/null || fail "squash $1"
+	git commit -q --no-verify -m "feat: squash $1" || fail "commit squash of $1"
 }
 
 # run_unmerged ARGS...: run git limpiar-unmerged, keeping its output in $OUT and status in $RC.
@@ -55,11 +55,11 @@ git checkout -q -b unmerged/readme develop
 printf '# sandbox\n<!-- qs:version -->[badge 1]<!-- /qs:version -->\n' >README.md
 printf '1.0\n' >CITATION.cff
 git add README.md CITATION.cff
-git commit -q -m "docs: badge" && git push -q origin unmerged/readme
+git commit -q --no-verify -m "docs: badge" && git push -q --no-verify origin unmerged/readme
 git checkout -q -b unmerged/readme2 develop
 printf '# sandbox\n<!-- qs:version -->[badge 2]<!-- /qs:version -->\nextra line\n' >README.md
 git add README.md
-git commit -q -m "docs: extra" && git push -q origin unmerged/readme2
+git commit -q --no-verify -m "docs: extra" && git push -q --no-verify origin unmerged/readme2
 git checkout -q develop
 squash unmerged/a
 squash unmerged-20261102/b
@@ -89,14 +89,14 @@ grep -A1 '^pending: unmerged/p$' <<<"$OUT" | grep -q 'p.txt' && ok "U6 pending l
 # --- U6 conflict and no merge base
 case_sandbox
 printf 'one\n' >f.txt
-git add f.txt && git commit -q -m "chore: f" && git push -q origin develop
+git add f.txt && git commit -q --no-verify -m "chore: f" && git push -q --no-verify origin develop
 mkbranch unmerged/conf f.txt branch-version
 printf 'two\n' >f.txt
-git add f.txt && git commit -q -m "chore: f2"
+git add f.txt && git commit -q --no-verify -m "chore: f2"
 git checkout -q --orphan unmerged/orphan
 git rm -rfq . 2>/dev/null
 printf 'o\n' >o.txt
-git add o.txt && git commit -q -m "chore: orphan" && git push -q origin unmerged/orphan
+git add o.txt && git commit -q --no-verify -m "chore: orphan" && git push -q --no-verify origin unmerged/orphan
 git checkout -q develop
 run_unmerged -n
 grep -q '^pending: unmerged/conf$' <<<"$OUT" && grep -q 'conflicts' <<<"$OUT" &&
@@ -105,15 +105,19 @@ grep -q '^pending: unmerged/conf$' <<<"$OUT" && grep -q 'conflicts' <<<"$OUT" &&
 
 # --- U5 superseded
 case_sandbox
-mkbranch unmerged/4.0.2/RELEASE r.txt one
+git checkout -q -b unmerged/4.0.2/RELEASE develop
+printf 'one\n' >r.txt
+printf 'dropped later\n' >z.txt
+git add r.txt z.txt && git commit -q --no-verify -m "chore: r" && git push -q --no-verify origin unmerged/4.0.2/RELEASE
 git checkout -q -b unmerged/4.0.3/RELEASE unmerged/4.0.2/RELEASE
 printf 'two\n' >r2.txt
-git add r2.txt && git commit -q -m "chore: r2" && git push -q origin unmerged/4.0.3/RELEASE
+git rm -q z.txt
+git add r2.txt && git commit -q --no-verify -m "chore: r2" && git push -q --no-verify origin unmerged/4.0.3/RELEASE
 git checkout -q develop
 git checkout -q -b tmp-tag develop
 printf 'T\n' >t.txt
 printf '3.0.0\n' >VERSION
-git add t.txt VERSION && git commit -q -m "chore: tagged" && git tag 3.0.0
+git add t.txt VERSION && git commit -q --no-verify -m "chore: tagged" && git tag 3.0.0
 git checkout -q develop && git branch -D tmp-tag >/dev/null
 mkbranch unmerged/tt t.txt T
 mkbranch unmerged/old o.txt old
@@ -151,7 +155,7 @@ mkbranch unmerged/d d.txt D
 squash unmerged/d
 git checkout -q unmerged/d
 printf '# changed\n' >README.md
-git add README.md && git commit -q -m "chore: local only"
+git add README.md && git commit -q --no-verify -m "chore: local only"
 git checkout -q develop
 run_unmerged --yes
 grep -q '^pending: unmerged/d$' <<<"$OUT" && git rev-parse -q --verify refs/heads/unmerged/d >/dev/null &&
@@ -181,7 +185,7 @@ OUT="$({
 	sleep 3
 	(cd "$other" && git config user.email o@example.com && git config user.name other &&
 		git checkout -q unmerged/m2 && printf 'moved\n' >moved.txt && git add moved.txt &&
-		git commit -q -m "chore: moved" --no-verify && git push -q origin unmerged/m2)
+		git commit -q --no-verify -m "chore: moved" --no-verify && git push -q --no-verify origin unmerged/m2)
 	echo y
 } | git limpiar-unmerged 2>&1)" || RC=$?
 [ "$RC" = 1 ] && git ls-remote origin refs/heads/unmerged/m1 | grep -q . && git ls-remote origin refs/heads/unmerged/m2 | grep -q . &&
