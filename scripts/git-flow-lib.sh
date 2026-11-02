@@ -233,6 +233,7 @@ configure_repo() {
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
 	done
+	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir

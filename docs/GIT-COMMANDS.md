@@ -32,6 +32,7 @@ again after moving the suite; `git actualizar-suite` runs it for you after an up
 | plan a whole tree at once | `git es` (stdin), `git es -n` to preview |
 | give a final branch children | `git convertir-padre` |
 | bring my branch up to date and push it | `git subir` |
+| delete archived `unmerged/...` branches already integrated | `git limpiar-unmerged -n`, then without `-n` |
 | hand my finished branch to its parent | `git integra` |
 | see where everything stands | `git arbol` |
 | check / repair the encoding of my changes | `git encoding` / `git encoding --fix` |
@@ -224,6 +225,21 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
 ```
 
 ## 7. Releases
+
+### git limpiar-unmerged
+
+- **Syntax:** `git limpiar-unmerged [-n] [--yes]`
+- **Does:** lists the archived branches (`unmerged/...`, `unmerged-<stamp>/...`, local or only on
+  origin) with a state. `integrated`: a simulated merge with `develop` changes nothing but
+  release files (`VERSION`, `CHANGELOG.md`, `CITATION.cff`, the README badge, pom/package.json
+  version lines), so squashes count. `superseded by <ref>`: proved an ancestor of, or with the
+  same content as, an integrated archived branch or a release tag. `pending`: anything else
+  (lists its `M <file>` changes, a conflict or no merge base); never deleted. Deletes the
+  integrated and superseded ones on origin (one atomic push with leases) and locally, printing
+  `deleted <branch> (was <sha>)`; `git branch <branch> <sha>` restores one. A branch checked
+  out in a worktree keeps its local copy.
+- **Use it when:** after `git release` / `git publicar`, to tidy the archive.
+- **Who:** lead. `-n` previews without fetching or changing anything; `--yes` skips the question.
 
 ### git changelog
 
