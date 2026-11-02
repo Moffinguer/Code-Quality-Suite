@@ -51,7 +51,6 @@ def read_text(path):
         return fh.read()
 
 
-VERSION = read_text(os.path.join(ROOT, "VERSION")).strip()
 DEFAULT_EXCLUDES = [
     "**/node_modules/**",
     "**/vendor/**",
@@ -275,6 +274,11 @@ def policy_schema():
                     "default": d["commit"]["subject_max"],
                 },
                 "conventional": {"type": "boolean", "default": True},
+                "files": {
+                    "enum": ["block", "warn", "off"],
+                    "default": d["commit"]["files"],
+                    "description": "the 'Files:' block in every commit message",
+                },
             },
         },
         "branches": {
@@ -310,14 +314,45 @@ def policy_schema():
                     "items": {"type": "string"},
                     "description": "extra allowed branch regexes",
                 },
-                "leaf_merge": {"enum": ["merge", "squash"], "default": "merge"},
+                "model": {
+                    "type": "integer",
+                    "default": d["branches"]["model"],
+                    "description": "marker of the one-time migration to the 5.x branch model",
+                },
+                "flow": {
+                    "enum": ["squash", "merge"],
+                    "default": d["branches"]["flow"],
+                    "description": "squash (5.x) or merge (4.x behaviour, deprecated)",
+                },
+                "ot_tag": {
+                    "type": "string",
+                    "default": d["branches"]["ot_tag"],
+                    "description": "annotated tag on the OT ORIGINAL at the OT release; must "
+                    "contain {ot} ('' = none)",
+                },
+                "testing_leaf": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9_-]+$",
+                    "default": d["branches"]["testing_leaf"],
+                    "description": "reserved leaf of the TESTING sandbox '<level>/<testing_leaf>'",
+                },
+                "leaf_merge": {
+                    "enum": ["merge", "squash"],
+                    "default": "merge",
+                    "description": "only used with flow = merge",
+                },
                 "require_children_merged": {"type": "boolean", "default": True},
                 "tag": {
                     "type": "string",
                     "default": "{version}",
                     "description": "{version} {ot} {date}",
                 },
-                "tag_level": {"type": "integer", "minimum": 0, "default": 1},
+                "tag_level": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "default": 1,
+                    "description": "only used with flow = merge",
+                },
                 "release_leaf": {
                     "type": "string",
                     "pattern": "^[A-Za-z0-9_-]+$",
@@ -580,7 +615,6 @@ def main(argv):
         if b is not None:
             t["defaults"] = writers.deep_merge(b, t.get("defaults") or {})
     reg = {
-        "version": VERSION,
         "tools": tools,
         "languages": langs,
         "runtimes": runtimes,

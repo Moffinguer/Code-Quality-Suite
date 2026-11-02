@@ -21,9 +21,10 @@ current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 # shellcheck disable=SC2034 # why: these QS_* variables are read by the scripts that source this file
 qs_policy_defaults() {
 	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
-	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1
+	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1 QS_COMMIT_FILES=block
 	QS_BR_ENFORCE=block QS_BR_LEAF=ORIGINAL QS_BR_MAINLINE=develop QS_BR_PROTECTED='main master develop'
 	QS_BR_SEGMENT='^[A-Za-z0-9][A-Za-z0-9_-]*$' QS_BR_LEAF_MERGE=merge QS_BR_REQUIRE_CHILDREN=1
+	QS_BR_FLOW=squash QS_BR_OT_TAG='ot/{version}/{ot}' QS_BR_TESTING=TESTING
 	QS_BR_TAG='{version}' QS_BR_TAG_LEVEL=1 QS_BR_LEVELS=2 QS_BR_ALLOW=0
 	QS_BR_RELEASE_LEAF=RELEASE QS_BR_ARCHIVE=unmerged
 	QS_BR_VERSION_FILE=VERSION QS_BR_CHANGELOG=CHANGELOG.md QS_BR_README=README.md QS_BR_POM=update
