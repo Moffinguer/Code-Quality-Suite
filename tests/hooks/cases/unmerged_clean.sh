@@ -55,7 +55,7 @@ run_unmerged() {
 refs() { git for-each-ref --format='%(refname) %(objectname)'; }
 
 # --- U1 alias and manual
-case_sandbox
+case_sandbox ""
 git config alias.limpiar-unmerged >/dev/null && ok "U1 alias exists" || fail "U1 alias"
 bash "$SUITE/scripts/qs-help.sh" limpiar-unmerged | grep -q 'git limpiar-unmerged \[-n\]' &&
 	ok "U1 manual entry" || fail "U1 manual entry"
@@ -108,7 +108,7 @@ grep -q '^pending: unmerged/readme2$' <<<"$OUT" && grep -A1 '^pending: unmerged/
 grep -A1 '^pending: unmerged/p$' <<<"$OUT" | grep -q 'p.txt' && ok "U6 pending lists its file" || fail "U6 pending: $OUT"
 
 # --- U6 conflict and no merge base
-case_sandbox
+case_sandbox ""
 printf 'one\n' >f.txt
 git add f.txt && git commit -q -m "chore: f" && git push -q origin develop
 mkbranch unmerged/conf f.txt branch-version
@@ -125,7 +125,7 @@ grep -q '^pending: unmerged/conf$' <<<"$OUT" && grep -q 'conflicts' <<<"$OUT" &&
 	ok "U6 conflict and no merge base are pending" || fail "U6 conflict: $OUT"
 
 # --- U5 superseded
-case_sandbox
+case_sandbox ""
 git checkout -q -b unmerged/4.0.2/RELEASE develop
 printf 'one\n' >r.txt
 printf 'dropped later\n' >z.txt
@@ -151,7 +151,7 @@ grep -q '^superseded by 3.0.0: unmerged/tt$' <<<"$OUT" && ok "U5 same content as
 grep -q '^pending: unmerged/old$' <<<"$OUT" && ok "U5 unproven branch pending" || fail "U5 pending: $OUT"
 
 # --- U8 confirmation and deletion
-case_sandbox
+case_sandbox ""
 mkbranch unmerged/a a.txt A
 mkbranch unmerged/p p.txt P
 squash unmerged/a
@@ -171,7 +171,7 @@ git rev-parse -q --verify refs/heads/unmerged/p >/dev/null && git ls-remote orig
 git branch unmerged/a "$sha_a" && ok "U8 restore with git branch" || fail "U8 restore"
 
 # --- U10 different local and origin tips
-case_sandbox
+case_sandbox ""
 mkbranch unmerged/d d.txt D
 squash unmerged/d
 git checkout -q unmerged/d
@@ -183,7 +183,7 @@ grep -q '^pending: unmerged/d$' <<<"$OUT" && git rev-parse -q --verify refs/head
 	git ls-remote origin refs/heads/unmerged/d | grep -q . && ok "U10 divergent tips stay pending" || fail "U10: $OUT"
 
 # --- U11 checked out in a worktree
-case_sandbox
+case_sandbox ""
 mkbranch unmerged/w w.txt W
 squash unmerged/w
 git worktree add -q "$T/wt-u11" unmerged/w
@@ -193,7 +193,7 @@ run_unmerged --yes
 git worktree remove --force "$T/wt-u11"
 
 # --- U9 atomic push with leases
-case_sandbox
+case_sandbox ""
 mkbranch unmerged/m1 m1.txt M1
 mkbranch unmerged/m2 m2.txt M2
 squash unmerged/m1
@@ -201,23 +201,37 @@ squash unmerged/m2
 other="$T/other-u9"
 git clone -q "$CASE_REPO.git" "$other"
 (cd "$other" && git config user.email o@example.com && git config user.name other)
-# why: the pause hook runs between the fetch and the confirmation, so there is no sleep and no race
-export QS_UNMERGED_PAUSE_CMD="cd '$other' && git checkout -q unmerged/m2 && printf 'moved\n' >moved.txt && git add moved.txt && git commit -q -m 'chore: moved' && git push -q origin unmerged/m2"
+# why: the pause hook runs between the fetch and the confirmation, so there is no sleep and no race;
+# it only runs under QS_TEST=1 (checked in the next block)
+export QS_TEST=1 QS_UNMERGED_PAUSE_CMD="cd '$other' && git checkout -q unmerged/m2 && printf 'moved\n' >moved.txt && git add moved.txt && git commit -q -m 'chore: moved' && git push -q origin unmerged/m2"
 RC=0
 OUT="$(echo y | git limpiar-unmerged 2>&1)" || RC=$?
-unset QS_UNMERGED_PAUSE_CMD
+unset QS_UNMERGED_PAUSE_CMD QS_TEST
 [ "$RC" = 1 ] && git ls-remote origin refs/heads/unmerged/m1 | grep -q . && git ls-remote origin refs/heads/unmerged/m2 | grep -q . &&
 	git rev-parse -q --verify refs/heads/unmerged/m1 >/dev/null && grep -q 'rejected' <<<"$OUT" &&
 	ok "U9 lease failure deletes nothing, exit 1" || fail "U9: $RC $OUT"
 
+# --- the pause hook runs only under QS_TEST=1: without it the marker must not appear
+case_sandbox ""
+mkbranch unmerged/q q.txt Q
+squash unmerged/q
+marker="$T/pause-marker-q"
+rm -f "$marker"
+# why: env -u clears QS_TEST even when the developer's shell exports it; echo n keeps the branch
+echo n | env -u QS_TEST QS_UNMERGED_PAUSE_CMD="touch '$marker'" git limpiar-unmerged >/dev/null 2>&1
+[ ! -e "$marker" ] && git rev-parse -q --verify refs/heads/unmerged/q >/dev/null &&
+	ok "pause hook ignored without QS_TEST=1" || fail "pause hook ran without QS_TEST=1"
+echo n | env QS_TEST=1 QS_UNMERGED_PAUSE_CMD="touch '$marker'" git limpiar-unmerged >/dev/null 2>&1
+[ -e "$marker" ] && ok "pause hook runs with QS_TEST=1" || fail "pause hook did not run with QS_TEST=1"
+
 # --- hook: a stamped archive branch (prefix taken) passes pre-push
-case_sandbox
+case_sandbox ""
 mkbranch unmerged-20261102101500/s s.txt S
 git ls-remote origin refs/heads/unmerged-20261102101500/s | grep -q . &&
 	ok "stamped archive branch pushes through the hooks" || fail "stamped archive push"
 
 # --- dependency bumps are real changes, not release lines
-case_sandbox
+case_sandbox ""
 cat >pom.xml <<'XML'
 <project>
   <modelVersion>4.0.0</modelVersion>
@@ -260,7 +274,7 @@ grep -q '^pending: unmerged/dep$' <<<"$OUT" && grep -q '^pending: unmerged/npmde
 grep -q '^integrated: unmerged/ownver$' <<<"$OUT" && ok "project version bump is a release line" || fail "own version: $OUT"
 
 # --- a squash that exists only locally proves nothing
-case_sandbox
+case_sandbox ""
 mkbranch unmerged/loc l.txt L
 squash_local unmerged/loc
 run_unmerged --yes
@@ -269,7 +283,7 @@ run_unmerged --yes
 	ok "local-only squash deletes nothing" || fail "local-only squash: $RC $OUT"
 
 # --- without origin the local develop is used, and the output says so
-case_sandbox
+case_sandbox ""
 git checkout -q -b unmerged/n develop
 printf 'N\n' >n.txt
 git add n.txt && git commit -q -m "chore: n"

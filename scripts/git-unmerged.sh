@@ -4,8 +4,8 @@
 #   git limpiar-unmerged [-n] [--yes]
 #   -n     preview: print the state of every branch and the plan; nothing is fetched or changed
 #   --yes  do not ask for confirmation
-# Test-only: QS_UNMERGED_PAUSE_CMD, when set, is run with bash -c between the fetch and the
-# confirmation (never use it outside the test suite).
+# Test-only: QS_UNMERGED_PAUSE_CMD is run with bash -c between the fetch and the confirmation, and
+# only when QS_TEST=1 is also set; otherwise it is ignored silently (never use it outside the suite).
 # The mainline is judged as origin/develop when origin has it (local develop must be contained in
 # it); without origin the local develop is used and the output says so.
 # States: integrated (a simulated merge with the mainline changes nothing but release files),
@@ -272,8 +272,11 @@ main() {
 	git remote | grep -qx origin && has_origin=1
 	if [ "$has_origin" = 1 ] && [ "$DRY" = 0 ]; then
 		git fetch -q --prune origin || die "fetch from origin failed"
-		# why: test-only hook (see the header) so a test can move origin between fetch and push
-		[ -z "${QS_UNMERGED_PAUSE_CMD:-}" ] || bash -c "$QS_UNMERGED_PAUSE_CMD" </dev/null || die "QS_UNMERGED_PAUSE_CMD failed"
+		# why: test-only hook (see the header) so a test can move origin between fetch and push;
+		# QS_TEST=1 is required so a stray variable in a user's environment cannot run code here
+		if [ "${QS_TEST:-0}" = 1 ] && [ -n "${QS_UNMERGED_PAUSE_CMD:-}" ]; then
+			bash -c "$QS_UNMERGED_PAUSE_CMD" </dev/null || die "QS_UNMERGED_PAUSE_CMD failed"
+		fi
 	fi
 	MAIN_REF="$QS_BR_MAINLINE"
 	if [ "$has_origin" = 1 ] && git rev-parse -q --verify "refs/remotes/origin/$QS_BR_MAINLINE" >/dev/null; then
