@@ -682,5 +682,15 @@ class RegistryIntegrity(unittest.TestCase):
                 )
 
 
+def load_tests(loader, tests, pattern):
+    """Also run every sibling tests/unit/test_*.py module (the file name is not a pattern)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    own = os.path.basename(__file__)
+    for name in sorted(os.listdir(here)):
+        if name.startswith("test_") and name.endswith(".py") and name != own:
+            tests.addTests(loader.loadTestsFromName(name[:-3]))
+    return tests
+
+
 if __name__ == "__main__":
     unittest.main()
