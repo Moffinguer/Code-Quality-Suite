@@ -32,8 +32,11 @@ mkforeign() {
 
 # squash_local BRANCH: bring the changes of BRANCH into local develop as one new commit (a squash).
 squash_local() {
-	git merge --squash "$1" >/dev/null || fail "squash $1"
-	git commit -q -m "feat: squash $1" || fail "commit squash of $1"
+	local tree commit
+	# why: plumbing; the sandbox pins merge.ff=false, which 'git merge --squash' rejects
+	tree="$(git merge-tree --write-tree develop "$1" | head -1)" || fail "squash $1"
+	commit="$(git commit-tree "$tree" -p develop -m "feat: squash $1")" || fail "commit squash of $1"
+	git reset -q --hard "$commit" || fail "move develop to the squash of $1"
 }
 
 # squash BRANCH: squash_local, then publish develop (the command judges against origin/develop).
