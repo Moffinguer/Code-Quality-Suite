@@ -272,3 +272,23 @@ git integra -m "feat(RF2): requirement" >/dev/null 2>&1 && [ "$(parents_of HEAD)
 git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && add_commit g.py 'G = 1' "feat: add g" &&
 	git checkout -q 9.1.0/600/ORIGINAL && git merge -q --no-ff -m "chore: merge g" 9.1.0/600/g >/dev/null 2>&1 &&
 	ok "merge: git merge <child> into its ORIGINAL still allowed (I7)" || fail "merge: manual merge refused"
+
+# --- the Files: fallback of git-rama.sh (no commit-files-lib.sh) quotes spaced paths -----------
+# why: the function is taken from the script itself, and commit-files-lib.sh is not sourced, so
+# the fallback is the code that runs
+case_sandbox
+declare -F qs_files_block >/dev/null && fail "fallback: qs_files_block is loaded; the fallback is not forced"
+fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/git-rama.sh")"
+[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/git-rama.sh"
+eval "$fallback_fn"
+printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "fallback: commit a b"
+base="$(git rev-parse HEAD)"
+printf 'x\n' >"sp ace.txt" && printf 'y\n' >plain.txt && git add "sp ace.txt" plain.txt &&
+	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "fallback: commit spaced paths"
+want='Files:
+R "a b" -> "c d"
+A plain.txt
+A "sp ace.txt"'
+got="$(squash_files_block "$base" HEAD)"
+[ "$got" = "$want" ] && ok "fallback: spaced paths and renames are quoted like qs_files_block" ||
+	fail "fallback: quoting: $got"

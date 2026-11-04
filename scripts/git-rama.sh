@@ -358,9 +358,10 @@ compose_message() { # $1 = source branch, $2 = target, $3 = file
 # --- git integra with branches.flow = squash ---------------------------------------------------
 
 # squash_files_block <base> <rev>: print the "Files:" block of base..rev: one "<status> <path>"
-# line per file (renames "R <old> -> <new>", non-ASCII paths escaped by core.quotePath), or
-# "(none)" when nothing changed. Uses qs_files_block of commit-files-lib.sh when it is loaded,
-# otherwise renders the same format. Returns 0.
+# line per file (renames "R <old> -> <new>", non-ASCII paths escaped by core.quotePath, a path
+# with a space quoted: 'A "sp ace.txt"', 'R "a b" -> "c d"'), or "(none)" when nothing changed.
+# Uses qs_files_block of commit-files-lib.sh when it is loaded, otherwise renders the same
+# format. Returns 0.
 squash_files_block() {
 	local base="$1" rev="$2" out
 	if declare -F qs_files_block >/dev/null; then
@@ -375,6 +376,8 @@ squash_files_block() {
 	fi
 	printf '%s\n' "$out" | awk -F '\t' '{
 		s = substr($1, 1, 1)
+		# why: a path with a space is quoted the way git quotes (renames are ambiguous otherwise)
+		for (i = 2; i <= NF; i++) if (index($i, " ") > 0 && substr($i, 1, 1) != "\"") $i = "\"" $i "\""
 		if ((s == "R" || s == "C") && NF >= 3) print s " " $2 " -> " $3
 		else print s " " $2
 	}'
