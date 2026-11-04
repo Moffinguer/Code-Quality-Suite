@@ -12,8 +12,12 @@ import codecs
 import contextlib
 import copy
 import fnmatch
+import json
 import os
 import re
+import shutil
+import sys
+import tempfile
 
 # level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
 # no '-' or '_', so it never collides with the leaf names of the branch model
@@ -46,6 +50,7 @@ DEFAULTS = {
         ],
         "subject_max": 50,
         "conventional": True,
+        "files": "block",  # block | warn | off: the 'Files:' block in every commit message
     },
     "branches": {
         "enforce": "block",  # block | warn | off
@@ -61,10 +66,14 @@ DEFAULTS = {
         ],
         "segment": r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
         "allow": [],
-        "leaf_merge": "merge",  # merge (--no-ff) | squash
+        "model": 5,  # marker of the one-time migration to the 5.x branch model (migrate)
+        "flow": "squash",  # squash (5.x) | merge (4.x, deprecated)
+        "ot_tag": "ot/{version}/{ot}",  # annotated tag at the OT release; '' = none
+        "testing_leaf": "TESTING",  # reserved leaf of the TESTING sandbox '<level>/TESTING'
+        "leaf_merge": "merge",  # merge (--no-ff) | squash; only used with flow = merge
         "require_children_merged": True,
         "tag": "{version}",
-        "tag_level": 1,  # tag when a level-N ORIGINAL is integrated (0 = never)
+        "tag_level": 1,  # tag when a level-N ORIGINAL is integrated (0 = never); flow = merge only
         "release_leaf": "RELEASE",  # git release: '<version>/ORIGINAL' becomes '<version>/RELEASE'
         "archive_prefix": "unmerged",  # git release: branches not integrated -> 'unmerged/<name>'
         "version_file": "VERSION",  # committed on '<version>/ORIGINAL' when the tree is created
@@ -77,6 +86,45 @@ DEFAULTS = {
 }
 SECTIONS = tuple(DEFAULTS)
 BOM_UTF8 = codecs.BOM_UTF8
+MODEL = DEFAULTS["branches"]["model"]
+OLD_OT_RX = r"^[0-9]+$"  # level 2 default before 4.2.1 (numeric OTs only)
+FLOW_NOTICE = (
+    "existing rules file: `branches.flow` set to `merge` to keep the 4.x behaviour; "
+    "set `branches.flow` to `squash` in .quality-rules.json to adopt the 5.x flow"
+)
+
+
+def migrate(data):
+    """One-time migration of a rules file to the 5.x branch model. Run before populate.
+
+    When `branches.model` is missing or below 5: `branches.levels[1]` equal to the old default
+    `^[0-9]+$` becomes OT_RX (any other value is kept), `branches.flow` is added as `merge`
+    (4.x behaviour kept; new files get `squash` from populate) and `branches.model` is set to 5.
+    A second run changes nothing. Never weakens a rule.
+
+    Args:
+        data: the parsed rules file (dict), changed in place.
+
+    Returns:
+        list[str]: one message per change (the log lines); the flow notice is the last one.
+    """
+    br = data.get("branches") if isinstance(data, dict) else None
+    if not isinstance(br, dict):
+        return []
+    model = br.get("model")
+    if isinstance(model, int) and not isinstance(model, bool) and model >= MODEL:
+        return []
+    msgs = []
+    levels = br.get("levels")
+    if isinstance(levels, list) and len(levels) > 1 and levels[1] == OLD_OT_RX:
+        levels[1] = OT_RX
+        msgs.append(f"migrated branches.levels[1]: {OLD_OT_RX} -> {OT_RX}")
+    if "flow" not in br:
+        br["flow"] = "merge"
+        msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
+    br["model"] = MODEL
+    msgs.append(f"migrated branches.model: {MODEL}")
+    return msgs
 
 
 def populate(data):
@@ -212,6 +260,8 @@ def _validate_commit(com):
     errors = []
     if com.get("charset") not in ("ascii", "utf-8", "any"):
         errors.append("commit.charset: must be ascii, utf-8 or any")
+    if com.get("files") not in ("block", "warn", "off"):
+        errors.append("commit.files: must be block, warn or off")
     if not (
         isinstance(com.get("types"), list)
         and all(isinstance(t, str) and re.fullmatch(r"[a-z][a-z0-9-]*", t) for t in com["types"])
@@ -236,11 +286,20 @@ def _validate_branches(br):
         errors.append("branches.enforce: must be block, warn or off")
     if br.get("leaf_merge") not in ("merge", "squash"):
         errors.append("branches.leaf_merge: must be merge or squash")
-    for key in ("parent_leaf", "release_leaf", "archive_prefix"):
+    if br.get("flow") not in ("squash", "merge"):
+        errors.append("branches.flow: must be squash or merge")
+    ot_tag = br.get("ot_tag")
+    if not isinstance(ot_tag, str) or (ot_tag != "" and "{ot}" not in ot_tag):
+        errors.append("branches.ot_tag: must be '' or contain {ot}")
+    if not isinstance(br.get("model"), int) or isinstance(br.get("model"), bool):
+        errors.append("branches.model: must be an integer")
+    for key in ("parent_leaf", "release_leaf", "archive_prefix", "testing_leaf"):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", str(br.get(key, ""))):
             errors.append(f"branches.{key}: letters, digits, '-' or '_' only")
     if len({br.get("parent_leaf"), br.get("release_leaf")}) < 2:
         errors.append("branches.release_leaf: must differ from parent_leaf")
+    if br.get("testing_leaf") in (br.get("parent_leaf"), br.get("release_leaf")):
+        errors.append("branches.testing_leaf: must differ from parent_leaf and release_leaf")
     if br.get("pom_version") not in ("update", "snapshot", "check", "off"):
         errors.append("branches.pom_version: must be update, snapshot, check or off")
     errors += _validate_branch_paths(br)
@@ -316,12 +375,16 @@ def shell_env(data):
         "QS_COMMIT_TYPES": "|".join(com["types"]),
         "QS_COMMIT_SUBJECT_MAX": com["subject_max"],
         "QS_COMMIT_CONVENTIONAL": "1" if com.get("conventional", True) else "0",
+        "QS_COMMIT_FILES": com["files"],
         "QS_BR_ENFORCE": br["enforce"],
         "QS_BR_LEAF": br["parent_leaf"],
         "QS_BR_MAINLINE": br["mainline"],
         "QS_BR_PROTECTED": " ".join(br["protected"]),
         "QS_BR_SEGMENT": br["segment"],
         "QS_BR_LEAF_MERGE": br["leaf_merge"],
+        "QS_BR_FLOW": br["flow"],
+        "QS_BR_OT_TAG": br["ot_tag"],
+        "QS_BR_TESTING": br["testing_leaf"],
         "QS_BR_REQUIRE_CHILDREN": "1" if br.get("require_children_merged", True) else "0",
         "QS_BR_TAG": br["tag"],
         "QS_BR_TAG_LEVEL": br["tag_level"],
@@ -897,3 +960,61 @@ def repair(raw, old_raw=None):
             notes.append(f"{restored} line(s) took their accents back from the previous version")
     left = [describe(f) for f in mojibake(text)[0]]
     return (BOM_UTF8 if bom else b"") + text.encode("utf-8"), notes, left
+
+
+def _migrate_file(path):
+    """Migrate a rules file on disk (host-side, no engine image needed).
+
+    The new text goes to a uniquely named temporary file (`mkstemp`) in the same directory;
+    the permission bits of the original are copied to it and it is then moved over the
+    original (`os.replace`). Its line endings (LF or CRLF) are kept. If the write or the
+    replace fails, the temporary file is removed and the OSError propagates; the original is
+    left unchanged. A file with a BOM or that is not UTF-8 is skipped with a warning.
+
+    Args:
+        path: the rules file; a missing, empty or unreadable file is left alone.
+
+    Returns:
+        int: 0 (also when nothing changed or the file is not usable).
+
+    Raises:
+        OSError: when the temporary file cannot be written, copied or moved over the file.
+    """
+    name = os.path.basename(path)
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0
+    if raw.startswith(BOM_UTF8):
+        print(f"[quality-suite] WARN {name}: UTF-8 BOM, not migrated", file=sys.stderr)
+        return 0
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        print(f"[quality-suite] WARN {name}: not UTF-8, not migrated", file=sys.stderr)
+        return 0
+    except ValueError:
+        return 0
+    msgs = migrate(data)
+    if msgs:
+        eol = "\r\n" if b"\r\n" in raw else "\n"
+        text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+                fh.write(text)
+            shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        finally:
+            # after a successful replace the temp name is gone; otherwise drop the leftover
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        for m in msgs:
+            print(f"[quality-suite] {name}: {m}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_migrate_file(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "migrate" else 2)

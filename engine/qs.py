@@ -13,7 +13,9 @@
   qs.py version-get        versions declared in VERSION / pom.xml / package.json (JSON)
   qs.py version-align WINNER FILE...   give FILEs the version of WINNER
                            (pom.xml / package.json merge driver)
-  qs.py release-notes --version V --tip REV --base REV [--date D] [--previous V] [--write]
+  qs.py release-notes --version V --tip REV --base REV [--date D] [--previous V] [--ot OT]
+                      [--write]
+  qs.py release-notes --version V --union FILE... [--date D] [--write]
                            Common Changelog entry of a release (stdout);
                            --write merges it into CHANGELOG.md
   qs.py release-docs --version V [--date D]   README version badge and CITATION.cff
@@ -255,7 +257,10 @@ class App:
             list[str]: what the suite changed (policy, global, language ids, detected versions).
         """
         changed_by_suite = []
+        migrated = self._migrate()
         added = policy.populate(self.data)
+        if migrated:
+            changed_by_suite.append("policy")
         if added and not getattr(self, "_created", False):
             changed_by_suite.append("policy")
             qslog.log(
@@ -306,6 +311,19 @@ class App:
                 )
                 self._created = False
         return changed_by_suite
+
+    def _migrate(self):
+        """Run the one-time policy migration (policy.migrate) on the loaded rules, logging it.
+
+        Returns:
+            list[str]: the migration messages (empty when nothing changed).
+        """
+        msgs = policy.migrate(self.data)
+        for m in msgs:
+            qslog.log("INFO", "rules", m, os.path.basename(self.rules_path), "migrate", "SUCCESS")
+        if any(policy.FLOW_NOTICE in m for m in msgs):
+            print(f"[quality-suite] {policy.FLOW_NOTICE}", file=sys.stderr)
+        return msgs
 
     def export_tests(self):
         """Plain list of test commands for the host hook (it has no JSON parser on Git Bash)."""
@@ -476,6 +494,7 @@ class App:
         """
         if not self.load_rules():
             return 2
+        self._migrate()
         policy.populate(self.data)
         cls = self.classify(files)
         self.encoding_gate(cls)
@@ -1332,29 +1351,44 @@ def _tool_release_notes(ap, argv, where):
         where: namespace with root, data, br and git.
 
     Returns:
-        int: 0. With --write the entry is merged into the changelog file.
+        int: 0. With --write the entry is merged into the changelog file. --ot gives the OT
+        of every change; --union FILE... builds the entry from the sections of those files
+        instead of from git (no --tip needed).
 
     Raises:
         RuntimeError: git failed.
     """
     br, git = where.br, where.git
     for opt in ("--version", "--tip", "--base"):
-        ap.add_argument(opt, required=opt != "--base", default="")
+        ap.add_argument(opt, required=opt == "--version", default="")
+    ap.add_argument("--ot", default="")
+    ap.add_argument("--union", nargs="+", default=[])
     ap.add_argument("--date", default=datetime.date.today().isoformat())
     ap.add_argument("--previous", default="")
     ap.add_argument("--tag", default="")
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
+    if not a.union and not a.tip:
+        ap.error("--tip is required unless --union is given")
     origin = repofiles._git(git, "config", "--get", "remote.origin.url").strip()
     tag_t, commit_t = repofiles.link_templates(
         origin, br.get("tag_url", ""), br.get("commit_url", "")
     )
     levels = br.get("levels") or []
     ot_rx = levels[1] if len(levels) > 1 else policy.OT_RX
-    items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx)
     link = tag_t.replace("{tag}", a.tag or a.version) if tag_t else ""
-    block = changelog.render(a.version, a.date, items, link)
+    if a.union:
+        block = changelog.union(a.version, a.date, [read_text(f) for f in a.union], link)
+        items, omitted = [], []
+    else:
+        items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx, ot=a.ot)
+        block = changelog.render(a.version, a.date, items, link)
     sys.stdout.write(block)
+    for c in changelog.without_ot(items):
+        print(
+            f"[quality-suite] WARN: change without OT: {c['hash'][:7]} {c['subject']}",
+            file=sys.stderr,
+        )
     if omitted:
         print(
             f"[quality-suite] left out of the notes ({len(omitted)}: "
