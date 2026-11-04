@@ -313,7 +313,7 @@ grep -q '^#### 7.1.0/300100/RF1/login' cl.out && grep -q 'fix(login): check user
 	cat cl.out
 	fail "changelog"
 }
-grep -q '^- Login page (.*OT 300100, JDA-SEG-010' cl.out && ok "git changelog: CHANGELOG.md entry in Common Changelog format" ||
+grep -q '^- Login page (.*; 300100)' cl.out && ok "git changelog: CHANGELOG.md entry in Common Changelog format" ||
 	{
 		cat cl.out
 		fail "release notes preview"
@@ -520,7 +520,7 @@ combine_checks() {
 		fail "combinar $c changelog"
 	}
 	for f in "$@"; do
-		[ "$(grep -c "^- .*${f%.py} (.*OT " <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
+		[ "$(grep -c "^- .*${f%.py} (.*; [A-Za-z0-9]*)$" <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
 			echo "$cl"
 			fail "combinar $c: $f once in the changelog with its OT, and in the tree"
 		}
