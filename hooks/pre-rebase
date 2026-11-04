@@ -7,7 +7,8 @@
 #                  rewriting them breaks every branch built on them
 # git passes: $1 = upstream, $2 = branch being rebased (empty = current).
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
@@ -17,22 +18,23 @@ qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 [ "${QUALITY_ALLOW_REBASE:-0}" = 1 ] && exit 0
 
-upstream="${1:-}"; branch="${2:-$(current_branch || true)}"
+upstream="${1:-}"
+branch="${2:-$(current_branch || true)}"
 [ -n "$upstream" ] && [ -n "$branch" ] || exit 0
 valid_branch_name "$branch" >/dev/null 2>&1 || exit 0
 up="$(git rev-parse -q --verify "${upstream}^{commit}" 2>/dev/null)" || exit 0
 # onto (an ancestor of) its own remote: the 'git pull --rebase' case
-if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 \
-   && git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
+if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 &&
+	git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
 if is_parent_branch "$branch" || is_mainline "$branch"; then
-  echo "[pre-rebase] '$branch' is shared (others build on it): never rebase it; merge instead (git subir)." >&2
-  echo "             Bypass once: QUALITY_ALLOW_REBASE=1 git rebase ..." >&2
+	echo "[pre-rebase] '$branch' is shared (others build on it): never rebase it; merge instead (git subir)." >&2
+	echo "             Bypass once: QUALITY_ALLOW_REBASE=1 git rebase ..." >&2
 else
-  parent="$(parent_branch "$branch")"
-  ptip="$(best_ref "$parent" || true)"
-  [ -z "$ptip" ] && exit 0
-  git merge-base --is-ancestor "$ptip" "$up" && exit 0
-  echo "[pre-rebase] '$branch' rebases onto its parent '$parent' (tried '$upstream'). Use: git subir" >&2
+	parent="$(parent_branch "$branch")"
+	ptip="$(best_ref "$parent" || true)"
+	[ -z "$ptip" ] && exit 0
+	git merge-base --is-ancestor "$ptip" "$up" && exit 0
+	echo "[pre-rebase] '$branch' rebases onto its parent '$parent' (tried '$upstream'). Use: git subir" >&2
 fi
 [ "$QS_BR_ENFORCE" = warn ] && exit 0
 exit 1
