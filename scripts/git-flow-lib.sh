@@ -234,6 +234,9 @@ configure_repo() {
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
 	done
+	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
+	# QS_AMEND=1 tells prepare-commit-msg it is an amend
+	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir
