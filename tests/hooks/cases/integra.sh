@@ -198,6 +198,61 @@ git checkout -q "$V/ORIGINAL" && add_commit v.txt 'v' "chore: version note" &&
 	git checkout -q "$OT/ORIGINAL" && git merge -q --no-ff -m "chore: sync" "$V/ORIGINAL" >/dev/null 2>&1 &&
 	ok "squash: parent -> ORIGINAL sync merges still allowed" || fail "squash: sync merge refused"
 
+# --- rebased branch kept, --force under pending children, Norms: none, siblings on one file ------
+# why: confirm reads /dev/tty; the cases run without a terminal, so every prompt answers "no"
+case_sandbox squash
+git np 9.2.0 >/dev/null && git np 700 >/dev/null || fail "squash2: tree"
+OT2=9.2.0/700
+git nr p >/dev/null && add_commit p.py 'P = 1' "feat: add p" || fail "squash2: p"
+git push -q origin "$OT2/p" 2>/dev/null || fail "squash2: push p"
+git checkout -q "$OT2/ORIGINAL" && git nr q >/dev/null && add_commit q.py 'Q = 1' "feat: add q" || fail "squash2: q"
+git integra --yes -m "feat(q): module q" >/dev/null 2>&1 || fail "squash2: integra q"
+[ "$(git log -1 --format='%(trailers:key=Norms,valueonly)' | sed '/^$/d')" = "none" ] &&
+	ok "squash: no Norms: in the commits gives 'Norms: none'" || fail "squash2: Norms none: $(body_of HEAD)"
+
+# declined deletion of a rebased branch: warn, print the safe command, never push by force silently
+git checkout -q "$OT2/p"
+otip="$(git rev-parse "origin/$OT2/p")"
+out="$(git integra -m "feat(p): module p" 2>&1)" || fail "squash2: integra p: $out"
+git rev-parse -q --verify "refs/heads/$OT2/p" >/dev/null && ! git merge-base --is-ancestor "origin/$OT2/p" "$OT2/p" &&
+	grep -q "WARNING.*rebased" <<<"$out" && grep -q "git push --force-with-lease origin $OT2/p" <<<"$out" &&
+	[ "$(git rev-parse "origin/$OT2/p")" = "$otip" ] && [ "$(git ls-remote origin "refs/heads/$OT2/p" | cut -f1)" = "$otip" ] &&
+	ok "squash: a kept, rebased child warns and prints force-with-lease; origin untouched" || fail "squash2: kept: $out"
+git push -q origin "$OT2/p" 2>/dev/null && fail "squash2: a plain push of the rebased branch was accepted"
+QUALITY_SKIP_PARENT_CHECK=1 git push -q --force-with-lease origin "$OT2/p" >/dev/null 2>&1 && [ "$(git ls-remote origin "refs/heads/$OT2/p" | cut -f1)" = "$(git rev-parse "$OT2/p")" ] &&
+	ok "squash: the printed force-with-lease command updates origin" || fail "squash2: force-with-lease"
+
+# --force over pending children that a rebase would orphan: listed and confirmed
+git checkout -q "$OT2/ORIGINAL" && git np RF4 >/dev/null && add_commit r.py 'R = 1' "feat: r on RF4" || fail "squash2: RF4"
+git nr k >/dev/null && add_commit k.py 'K = 1' "feat: add k" || fail "squash2: k"
+git checkout -q "$OT2/ORIGINAL" && git nr m >/dev/null && add_commit m.py 'M = 1' "feat: add m" || fail "squash2: m"
+git integra --yes -m "feat(m): module m" >/dev/null 2>&1 || fail "squash2: integra m"
+git checkout -q "$OT2/RF4/ORIGINAL"
+before="$(state)"
+out="$(git integra --force -m "feat(RF4): requirement" 2>&1)" && fail "squash2: --force without confirmation went through"
+grep -q "$OT2/RF4/k" <<<"$out" && grep -q 'git subir' <<<"$out" && [ "$(state)" = "$before" ] &&
+	ok "squash: --force lists the orphaned children and stops without confirmation" || fail "squash2: force decline: $out"
+out="$(git integra --force --yes -m "feat(RF4): requirement" 2>&1)" || fail "squash2: --force --yes: $out"
+grep -q "WARNING.*$OT2/RF4/k" <<<"$out" && [ "$(git branch --show-current)" = "$OT2/ORIGINAL" ] &&
+	ok "squash: --force --yes warns about the children and goes on" || fail "squash2: force yes: $out"
+
+# two siblings on the SAME file: disjoint edits rebase cleanly, overlapping edits abort untouched
+git checkout -q "$OT2/ORIGINAL"
+printf 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\n' >same.txt && git add same.txt && git commit -q -m "chore: same.txt" || fail "squash2: same.txt"
+for s in s1 s2 s3; do git checkout -q "$OT2/ORIGINAL" && git nr "$s" >/dev/null || fail "squash2: nr $s"; done
+git checkout -q "$OT2/s1" && sed -i 's/^l1$/s1/' same.txt && git commit -qam "feat: s1 edits l1"
+git checkout -q "$OT2/s2" && sed -i 's/^l8$/s2/' same.txt && git commit -qam "feat: s2 edits l8"
+git checkout -q "$OT2/s3" && sed -i 's/^l1$/s3/' same.txt && git commit -qam "feat: s3 edits l1"
+git checkout -q "$OT2/s1" && git integra --yes -m "feat(s1): first" >/dev/null 2>&1 || fail "squash2: integra s1"
+git checkout -q "$OT2/s2" && git integra --yes -m "feat(s2): second" >/dev/null 2>&1 || fail "squash2: integra s2 (disjoint edits)"
+[ "$(sed -n '1p;8p' same.txt | tr '\n' ' ')" = "s1 s2 " ] && gone "$OT2/s2" &&
+	ok "squash: siblings editing different lines of one file integrate cleanly" || fail "squash2: same file clean"
+git checkout -q "$OT2/s3"
+before="$(state)"
+out="$(git integra --yes -m "feat(s3): third" 2>&1)" && fail "squash2: overlapping edit integrated"
+grep -q 'nothing was changed' <<<"$out" && [ "$(state)" = "$before" ] &&
+	ok "squash: siblings editing the same line of one file conflict; nothing changed" || fail "squash2: same file conflict: $out"
+
 # --- I7: flow = merge keeps the 4.x behaviour ---------------------------------------------------
 case_sandbox merge
 git np 9.1.0 >/dev/null && git np 600 >/dev/null && git np RF2 >/dev/null && git nr f >/dev/null || fail "merge: tree"
@@ -217,3 +272,23 @@ git integra -m "feat(RF2): requirement" >/dev/null 2>&1 && [ "$(parents_of HEAD)
 git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && add_commit g.py 'G = 1' "feat: add g" &&
 	git checkout -q 9.1.0/600/ORIGINAL && git merge -q --no-ff -m "chore: merge g" 9.1.0/600/g >/dev/null 2>&1 &&
 	ok "merge: git merge <child> into its ORIGINAL still allowed (I7)" || fail "merge: manual merge refused"
+
+# --- the Files: fallback of git-rama.sh (no commit-files-lib.sh) quotes spaced paths -----------
+# why: the function is taken from the script itself, and commit-files-lib.sh is not sourced, so
+# the fallback is the code that runs
+case_sandbox
+declare -F qs_files_block >/dev/null && fail "fallback: qs_files_block is loaded; the fallback is not forced"
+fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/git-rama.sh")"
+[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/git-rama.sh"
+eval "$fallback_fn"
+printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "fallback: commit a b"
+base="$(git rev-parse HEAD)"
+printf 'x\n' >"sp ace.txt" && printf 'y\n' >plain.txt && git add "sp ace.txt" plain.txt &&
+	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "fallback: commit spaced paths"
+want='Files:
+R "a b" -> "c d"
+A plain.txt
+A "sp ace.txt"'
+got="$(squash_files_block "$base" HEAD)"
+[ "$got" = "$want" ] && ok "fallback: spaced paths and renames are quoted like qs_files_block" ||
+	fail "fallback: quoting: $got"
