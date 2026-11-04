@@ -415,13 +415,14 @@ squash_norms() {
 # compose_squash_message <source> <target> <file> [text]: write the squash commit message
 # template of <source> (already rebased onto <target>) into <file>: placeholder subject and
 # body, Commits: and Files: of target..source, then the trailers Norms: (union, also of the
-# 'Norms:' lines of text), 'Refs: <source> -> <target>' (read by the changelog engine) and
+# 'Norms:' lines of text; 'Norms: none' when no commit names any), 'Refs: <source> -> <target>' (read by the changelog engine) and
 # 'Squashed: <source> <full sha>' (read by the integrated checks). Returns 0.
 compose_squash_message() {
 	local src="$1" dst="$2" out="$3" text="${4:-}" scope norms
 	scope="$(branch_node "$src")"
 	scope="${scope##*/}"
 	norms="$(squash_norms "$dst" "$src" "$text")"
+	norms="${norms:-none}"
 	{
 		echo "feat($scope): DESCRIPCION_BREVE"
 		echo ""
@@ -430,7 +431,7 @@ compose_squash_message() {
 		squash_commits_block "$dst" "$src"
 		squash_files_block "$dst" "$src"
 		echo ""
-		[ -z "$norms" ] || echo "Norms: $norms"
+		echo "Norms: $norms"
 		echo "Refs: $src -> $dst"
 		echo "Squashed: $src $(git rev-parse "$src^{commit}")"
 		echo ""
@@ -485,12 +486,22 @@ integra_rebase() {
 
 # squash_drop_child <branch>: delete the integrated <branch> locally and on origin (-D: a squashed
 # branch is not an ancestor of its parent). Asks first unless --yes; when the answer is no (or
-# there is no terminal) it keeps the branch and prints the commands. Returns 0.
+# there is no terminal) it keeps the branch and prints the commands. A kept branch that was
+# rebased no longer descends from its origin copy: it warns, prints the safe update command
+# (git push --force-with-lease origin <branch>) and offers to run it after a confirmation (never
+# silently, never with --yes, which deletes instead). Returns 0.
 squash_drop_child() {
 	local b="$1" where="locally"
 	exists_ref "refs/remotes/origin/$b" && where="locally and on origin"
 	if ! confirm "delete the integrated '$b' $where?" 2>/dev/null; then
 		say "kept '$b'. Delete it: git branch -D $b$(exists_ref "refs/remotes/origin/$b" && echo " && git push origin --delete $b")"
+		if exists_ref "refs/remotes/origin/$b" && ! git merge-base --is-ancestor "refs/remotes/origin/$b" "$b"; then
+			say "WARNING: '$b' was rebased and now diverges from origin/$b: a plain push is rejected."
+			say "Update origin safely: git push --force-with-lease origin $b"
+			if confirm "run it now (force-with-lease)?" 2>/dev/null; then
+				git push -q --force-with-lease origin "$b" || say "could not update '$b' on origin"
+			fi
+		fi
 		return 0
 	fi
 	git branch -q -D "$b" || say "could not delete '$b' locally (checked out in another worktree?)"
@@ -517,6 +528,10 @@ integra_squash() {
 			[ "$FORCE" = 1 ] || [ "$QS_BR_REQUIRE_CHILDREN" != 1 ] ||
 				die "children not integrated yet: $pending  (integrate them first, or --force)"
 			bypass=1
+			if ! git merge-base --is-ancestor "$parent" "$cur"; then
+				say "WARNING: rebasing '$cur' onto '$parent' leaves these children orphaned (each must run git subir afterwards): $pending"
+				confirm "rebase '$cur' under them anyway?" 2>/dev/null || die "cancelled; nothing was changed"
+			fi
 		fi
 	fi
 	for m in "$cur" "$parent"; do
