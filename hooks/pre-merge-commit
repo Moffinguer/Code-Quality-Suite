@@ -44,6 +44,13 @@ for h in $heads; do
 		sed -e 's#^refs/heads/##' -e 's#^refs/remotes/origin/##' | { grep -v '^HEAD$' || true; })"$'\n'
 done
 srcs="$(printf '%s' "$srcs" | sed '/^$/d' | sort -u)"
+# --- TESTING sandbox guard (never merged, either direction) ---
+if testing_blocks_merge "$target" "$srcs"; then
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	testing_undo_merge
+	exit 1
+fi
+# --- end TESTING sandbox guard ---
 [ -n "$srcs" ] || exit 0 # merging a bare commit: no opinion
 valid_branch_name "$target" >/dev/null 2>&1 || exit 0
 
