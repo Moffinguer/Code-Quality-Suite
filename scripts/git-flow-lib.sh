@@ -74,9 +74,10 @@ is_release_branch() {
 	case "$1" in */*/* | */) return 1 ;; */"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
 	printf '%s' "${1%%/*}" | grep -qE -- "$(_br_level_re 1)"
 }
-# 'unmerged/<name>': a branch set aside by 'git release' because it was never integrated
+# 'unmerged/<name>' or 'unmerged-<stamp>/<name>' (prefix taken): a branch set aside by 'git release'
+# because it was never integrated
 is_archived_branch() {
-	case "$1" in "$QS_BR_ARCHIVE"/?*) return 0 ;; esac
+	case "$1" in "$QS_BR_ARCHIVE"/?* | "$QS_BR_ARCHIVE"-*/?*) return 0 ;; esac
 	return 1
 }
 # node path: '<F>' for '<F>/ORIGINAL', the branch itself for a final branch
@@ -237,6 +238,7 @@ configure_repo() {
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
 	# QS_AMEND=1 tells prepare-commit-msg it is an amend
 	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
+	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir
