@@ -321,6 +321,36 @@ def render(version, date, items, tag_url="", notice=""):
     return "\n".join(lines) + "\n"
 
 
+_REFS = re.compile(
+    r"^(?P<subj>- .*?) \((?P<hashes>[0-9a-f]{4,40}(?:, [0-9a-f]{4,40})*)(?P<ot>; [^;()]+)?\)$"
+)
+
+
+def _add_line(items, item):
+    """Add one '- Subject (hash; OT)' line to items, merging same subject and OT.
+
+    Args:
+        items: the lines of one group so far; modified in place.
+        item: the new line.
+
+    Returns:
+        None. An identical line is skipped; a line with the same subject (the breaking mark
+        is part of it) and OT but other hashes extends the hash list of the existing line.
+    """
+    if item in items:
+        return
+    new = _REFS.match(item)
+    if new:
+        for i, old in enumerate(items):
+            m = _REFS.match(old)
+            if m and m["subj"] == new["subj"] and m["ot"] == new["ot"]:
+                hs = m["hashes"].split(", ")
+                hs += [h for h in new["hashes"].split(", ") if h not in hs]
+                items[i] = f"{m['subj']} ({', '.join(hs)}{m['ot'] or ''})"
+                return
+    items.append(item)
+
+
 def union(version, date, sections, tag_url=""):
     """One release block from several release sections.
 
@@ -332,7 +362,10 @@ def union(version, date, sections, tag_url=""):
 
     Returns:
         str: the block like render(); groups in Common Changelog order, items in section
-        order, '**Breaking:**' items first, identical lines once. With no change at all the
+        order, '**Breaking:**' items first, identical lines once. Lines of one group with
+        the same subject and the same OT but different hashes become one line listing every
+        hash in first-seen order, '- Fix x (aaa1111, ccc3333; git)'; a different OT, or a
+        breaking against a non-breaking line, stays separate. With no change at all the
         maintenance notice is written.
     """
     found = {g: [] for g in GROUPS}
@@ -342,9 +375,7 @@ def union(version, date, sections, tag_url=""):
             if ln.startswith("### "):
                 group = ln[4:].strip()
             elif group in found and re.match(r"^[-*] \S", ln):
-                item = "- " + ln[2:].rstrip()
-                if item not in found[group]:
-                    found[group].append(item)
+                _add_line(found[group], "- " + ln[2:].rstrip())
     head = f"## [{version}] - {date}" if tag_url else f"## {version} - {date}"
     lines = [head, ""]
     if not any(found.values()):
@@ -354,6 +385,10 @@ def union(version, date, sections, tag_url=""):
             its = sorted(found[g], key=lambda ln: not ln.startswith("- **Breaking:**"))
             lines += [f"### {g}", ""] + its + [""]
     return "\n".join(lines) + "\n"
+
+
+# 4.x line tail: '(hash, OT 100; Author)' or '(hash; Two Word Author)'.
+OLD_LINE = re.compile(r"\([^()]*(?:, OT \w+|; [^;()]*\s[^;()]*|; [^;()]*;[^()]*)\)\s*$")
 
 
 def _split(text):
@@ -433,8 +468,19 @@ def section(text, version):
 # ---------------------------------------------------------------- validation
 
 
-def validate(text):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machine
-    """(errors, warnings): Common Changelog rules, with line numbers."""
+def validate(text, new=None):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machine
+    """(errors, warnings): Common Changelog rules, with line numbers.
+
+    Args:
+        text: the CHANGELOG.md content.
+        new: version of the entry being written (the topmost section, or the one a release
+            writes); its lines get a warning when they use the 4.x format (an author after
+            ';' or an 'OT <n>' prefix). None checks no section, so released history stays
+            silent.
+
+    Returns:
+        tuple[list[str], list[str]]: the errors and the warnings.
+    """
     errors, warnings = [], []
     lines = (text or "").splitlines()
     first = next(((i, ln) for i, ln in enumerate(lines, 1) if ln.strip()), (1, ""))
@@ -554,6 +600,11 @@ def validate(text):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machin
                     warnings.append(
                         f"line {n}: change without references; add the commit and the OT, "
                         "e.g. (abc1234; git)"
+                    )
+                elif rel["version"] == new and OLD_LINE.search(s):
+                    warnings.append(
+                        f"line {n}: 4.x format (author or 'OT <n>'); use the new form "
+                        "'- Subject (abc1234; OT)'"
                     )
             elif re.match(r"^\s+\S", ln):
                 errors.append(f"line {n}: a change must fit on one line")

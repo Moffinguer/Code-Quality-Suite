@@ -73,6 +73,37 @@ class Lines(unittest.TestCase):
             self.assertEqual(changelog.validate(fh.read()), ([], []))
 
 
+class OldFormat(unittest.TestCase):
+    """validate() warns about 4.x lines only in the new entry."""
+
+    OLD = "- Old (3b6f5f0, OT 100; Fernando Mateos)\n- Older (38b35cb; Fernando Mateos)\n"
+
+    def _text(self, top, low):
+        return (
+            f"# Changelog\n\n## 5.0.0 - 2026-11-02\n\n### Added\n\n{top}\n"
+            f"## 4.2.1 - 2026-11-01\n\n### Added\n\n{low}"
+        )
+
+    def test_top_section_warns(self):
+        errs, warns = changelog.validate(self._text(self.OLD, "- Ok (abc1234; git)\n"), "5.0.0")
+        self.assertEqual(errs, [])
+        self.assertEqual(len(warns), 2)
+        self.assertIn("(abc1234; OT)", warns[0])
+        self.assertIn("Old", warns[0] + self.OLD)
+
+    def test_older_section_silent(self):
+        text = self._text("- New (abc1234; git)\n", self.OLD)
+        self.assertEqual(changelog.validate(text, "5.0.0"), ([], []))
+
+    def test_new_form_silent(self):
+        text = self._text("- New (abc1234, def5678; git)\n- Bare (abc1234)\n", "- X (abc1234)\n")
+        self.assertEqual(changelog.validate(text, "5.0.0"), ([], []))
+
+    def test_repo_4_2_1_changelog_silent(self):
+        text = _run(ROOT, "show", "4.2.1:CHANGELOG.md")
+        self.assertEqual(changelog.validate(text), ([], []))
+
+
 class Union(unittest.TestCase):
     """union() merges release sections."""
 
@@ -91,6 +122,19 @@ class Union(unittest.TestCase):
         )
         self.assertEqual(block, want)
         self.assertEqual(changelog.validate("# Changelog\n\n" + block), ([], []))
+
+    def test_same_subject_and_ot_merge_hashes(self):
+        a = "### Fixed\n\n- Fix x (aaa1111; git)\n- Fix x (bbb2222; log)\n- Fix y (ddd4444; git)\n"
+        b = "### Fixed\n\n- Fix x (ccc3333; git)\n- Fix x (aaa1111; git)\n"
+        block = changelog.union("5.0.0", "2026-11-02", [a, b])
+        self.assertIn("- Fix x (aaa1111, ccc3333; git)\n- Fix x (bbb2222; log)\n", block)
+        self.assertEqual(block.count("Fix x"), 2)
+        self.assertEqual(block.count("aaa1111"), 1)
+
+    def test_breaking_never_merges_with_plain(self):
+        a = "### Fixed\n\n- Fix x (aaa1111; git)\n- **Breaking:** Fix x (bbb2222; git)\n"
+        block = changelog.union("5.0.0", "2026-11-02", [a])
+        self.assertIn("- **Breaking:** Fix x (bbb2222; git)\n- Fix x (aaa1111; git)\n", block)
 
     def test_linked_heading_and_empty(self):
         block = changelog.union("5.0.0", "2026-11-02", [""], "https://x/5.0.0")
