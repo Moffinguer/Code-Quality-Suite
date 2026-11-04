@@ -36,6 +36,8 @@ qs_files_block() {
 	fi
 	printf '%s\n' "$out" | awk -F '\t' '{
 		s = substr($1, 1, 1)
+		# why: a path with a space is quoted the way git quotes (renames are ambiguous otherwise)
+		for (i = 2; i <= NF; i++) if (index($i, " ") > 0 && substr($i, 1, 1) != "\"") $i = "\"" $i "\""
 		if ((s == "R" || s == "C") && NF >= 3) print s " " $2 " -> " $3
 		else print s " " $2
 	}'
@@ -44,11 +46,14 @@ qs_files_block() {
 # qs_commit_is_amend SOURCE ARG3: succeed when the commit being prepared is an amend. SOURCE and
 # ARG3 are the 2nd and 3rd arguments of prepare-commit-msg (empty in commit-msg). git passes
 # "commit HEAD" for --amend, but only "message" for `--amend -m`, so the parent process command
-# line (/proc, best effort) is also checked.
+# line (/proc, best effort) is also checked. Where /proc does not exist (Git Bash on Windows)
+# `git amend` (alias that exports QS_AMEND=1) is the reliable signal. QS_TEST_NO_PROC=1 together
+# with QS_TEST=1 simulates a host without /proc (tests only).
 qs_commit_is_amend() {
 	local source="${1:-}" arg3="${2:-}" cmd
 	{ [ "$source" = commit ] && [ "$arg3" = HEAD ]; } && return 0
-	if [ -r "/proc/$PPID/cmdline" ]; then
+	[ "${QS_AMEND:-}" = 1 ] && return 0
+	if { [ "${QS_TEST:-}" != 1 ] || [ "${QS_TEST_NO_PROC:-}" != 1 ]; } && [ -r "/proc/$PPID/cmdline" ]; then
 		cmd="$(tr '\0' ' ' <"/proc/$PPID/cmdline" 2>/dev/null || true)"
 		case " $cmd" in *" commit "*" --amend "* | *" commit --amend "*) return 0 ;; esac
 	fi
@@ -65,6 +70,15 @@ qs_commit_files_block() {
 		base="$(git rev-parse -q --verify HEAD 2>/dev/null || qs_empty_tree)"
 	fi
 	qs_files_block "$base"
+}
+
+# qs_head_files_block: print the Files block HEAD should have: HEAD^ (first parent; the empty
+# tree for a root commit) against HEAD, rendered like qs_files_block. Same rules as
+# qs_commit_files_block, so a merge lists the changes against its first parent.
+qs_head_files_block() {
+	local base
+	base="$(git rev-parse -q --verify HEAD^ 2>/dev/null || qs_empty_tree)"
+	qs_files_block "$base" HEAD
 }
 
 # qs_files_store BLOCK: remember BLOCK in .git/quality-suite/FILES_BLOCK, tagged with the index

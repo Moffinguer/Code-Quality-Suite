@@ -87,8 +87,8 @@ link_hook() { # $1 = hook name: .git/hooks/<name> -> $COMMON/<name>
 	fi
 }
 HOOK_STUBS=0
-for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout; do
-	case "$h" in prepare-commit-msg | post-checkout) write_common "$h" 0 ;; *) write_common "$h" 1 ;; esac
+for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout post-commit; do
+	case "$h" in prepare-commit-msg | post-checkout | post-commit) write_common "$h" 0 ;; *) write_common "$h" 1 ;; esac
 	# why: keep a hook that is not ours (e.g. Gerrit's Change-Id commit-msg) instead of overwriting it
 	if [ -e "${HOOK_DIR}/$h" ] || [ -L "${HOOK_DIR}/$h" ]; then
 		if ! { readlink "${HOOK_DIR}/$h" 2>/dev/null | grep -q 'code-quality-suite'; } &&
@@ -150,10 +150,10 @@ if [ -f "$REPO_TOP/.quality-rules.json" ]; then
 fi
 
 echo "[install] Hooks: pre-commit, pre-push, prepare-commit-msg, commit-msg, pre-rebase, pre-merge-commit,"
-echo "          post-checkout -> $([ "$HOOK_STUBS" = 1 ] && echo "stubs running" || echo "symbolic links to") ${COMMON}"
+echo "          post-checkout, post-commit -> $([ "$HOOK_STUBS" = 1 ] && echo "stubs running" || echo "symbolic links to") ${COMMON}"
 echo "[install] Rules file: .quality-rules.json (created on the first commit; schema: ${SCRIPT_DIR}/schema/)"
 echo "[install] Branch commands (git aliases): git np | nr | convertir-padre | subir | integra | arbol | estructura (es) | changelog | release | publicar"
-echo "[install] Other aliases: git encoding [--fix] | git repo-files"
+echo "[install] Other aliases: git amend | git encoding [--fix] | git repo-files"
 echo "[install] Config: ${ENV_FILE}"
 echo "[install] Image:  ${IMAGE} (one image per suite version, shared by every repository)"
 

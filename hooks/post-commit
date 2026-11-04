@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# code-quality-suite hook
+# post-commit - warn when the "Files:" block of the new commit does not match its real files
+# (e.g. `git commit --amend -m` on a host without /proc, where the amend is not detected).
+# It never rewrites anything and never fails the commit; commit.files = off disables it.
+# Fix it with: git commit --amend --no-edit   (or: git amend --no-edit)
+set -uo pipefail
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
+[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+
+LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
+FILES_LIB="${QUALITY_SUITE_DIR:-}/scripts/commit-files-lib.sh"
+{ [ -f "$LIB" ] && [ -f "$FILES_LIB" ]; } || exit 0
+# shellcheck disable=SC1090
+. "$LIB"
+QS_POLICY_NO_DOCKER=1 qs_policy_load
+[ "${QS_COMMIT_FILES:-block}" != off ] || exit 0
+# shellcheck disable=SC1090
+. "$FILES_LIB"
+
+tmp="$(mktemp)"
+git log -1 --format=%B HEAD >"$tmp" 2>/dev/null || true
+have="$(qs_message_get_files "$tmp")"
+rm -f "$tmp"
+[ -n "$have" ] || exit 0
+want="$(qs_head_files_block)"
+if [ "$have" != "$want" ]; then
+	{
+		echo "[post-commit] WARNING: the Files: block of this commit does not match its files."
+		echo "              Rebuild it with:  git commit --amend --no-edit   (or: git amend --no-edit)"
+	} >&2
+fi
+exit 0
