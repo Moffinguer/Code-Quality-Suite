@@ -497,9 +497,9 @@ squash_drop_child() {
 		say "kept '$b'. Delete it: git branch -D $b$(exists_ref "refs/remotes/origin/$b" && echo " && git push origin --delete $b")"
 		if exists_ref "refs/remotes/origin/$b" && ! git merge-base --is-ancestor "refs/remotes/origin/$b" "$b"; then
 			say "WARNING: '$b' was rebased and now diverges from origin/$b: a plain push is rejected."
-			say "Update origin safely: git push --force-with-lease origin $b"
+			say "Update origin safely (pre-push needs the bypass: the branch is behind its parent now): QUALITY_SKIP_PARENT_CHECK=1 git push --force-with-lease origin $b"
 			if confirm "run it now (force-with-lease)?" 2>/dev/null; then
-				git push -q --force-with-lease origin "$b" || say "could not update '$b' on origin"
+				QUALITY_SKIP_PARENT_CHECK=1 git push -q --force-with-lease origin "$b" || say "could not update '$b' on origin"
 			fi
 		fi
 		return 0
