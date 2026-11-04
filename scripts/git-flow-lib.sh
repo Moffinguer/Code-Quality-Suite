@@ -247,3 +247,41 @@ configure_repo() {
 		grep -qxF "$f merge=qs-version" "$attrs" || printf '%s merge=qs-version\n' "$f" >>"$attrs"
 	done
 }
+
+# --- flow squash: is a child integrated into its ORIGINAL? -----------------------------------
+# why: a squash commit has one parent, so ancestry no longer proves a child is in; git integra
+# records 'Refs: <child> -> <ORIGINAL>' and 'Squashed: <child> <full sha>' in the squash commit.
+
+# branch_integrated <child> <original>: succeed when <child> is in <original>: its tip is an
+# ancestor of <original>, or a commit of <original> has the line 'Refs: <child> -> <original>'
+# and (when that commit also has 'Squashed: <child> <sha>') the child tip is contained in <sha>,
+# i.e. the child did not move after its squash. A child that does not exist counts as in.
+# Arguments: $1 child branch, $2 ORIGINAL branch name. Returns: 0 in, 1 pending.
+branch_integrated() {
+	local c="$1" p="$2" cref tip bodies sha found=0 squashed=0
+	cref="$(best_ref "$c" || true)"
+	[ -n "$cref" ] || return 0
+	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 0
+	tip="$(git rev-parse "$cref^{commit}")"
+	bodies="$(git log -F --grep="Refs: $c -> $p" --format='%B' "$p" -- 2>/dev/null || true)"
+	grep -qxF "Refs: $c -> $p" <<<"$bodies" || return 1
+	while IFS= read -r sha; do
+		[ -n "$sha" ] || continue
+		squashed=1
+		if [ "$sha" = "$tip" ] || git merge-base --is-ancestor "$tip" "$sha" 2>/dev/null; then found=1; fi
+	done < <(awk -v c="$c" '$1 == "Squashed:" && $2 == c { print $3 }' <<<"$bodies")
+	# why: a 'Refs:' line without 'Squashed:' (hand-written squash) is taken as recorded
+	[ "$squashed" = 0 ] || [ "$found" = 1 ]
+}
+
+# children_pending <original>: print, space separated, the direct children of <original> that
+# are not integrated into it (branch_integrated). Arguments: $1 the '<F>/ORIGINAL' branch.
+# Returns: 0; prints nothing when every child is in.
+children_pending() {
+	local p="$1" c out=""
+	while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		branch_integrated "$c" "$p" || out="$out $c"
+	done < <(branch_children "$p")
+	printf '%s' "${out# }"
+}
