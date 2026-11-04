@@ -4,6 +4,10 @@
 #   git limpiar-unmerged [-n] [--yes]
 #   -n     preview: print the state of every branch and the plan; nothing is fetched or changed
 #   --yes  do not ask for confirmation
+# Test-only: QS_UNMERGED_PAUSE_CMD is run with bash -c between the fetch and the confirmation, and
+# only when QS_TEST=1 is also set; otherwise it is ignored silently (never use it outside the suite).
+# The mainline is judged as origin/develop when origin has it (local develop must be contained in
+# it); without origin the local develop is used and the output says so.
 # States: integrated (a simulated merge with the mainline changes nothing but release files),
 # superseded by <ref> (proved: ancestor of, or same content as, an integrated archived branch or a
 # release tag), pending (anything else; never deleted).
@@ -14,6 +18,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DRY=0
 YES=0
+MAIN_REF=""
 declare -A STATE REASON TIPS LOCAL_TIP REMOTE_TIP
 INTEGRATED=()
 
@@ -35,13 +40,88 @@ is_release_file() {
 	return 1
 }
 
-# strip_release_lines FILE: filter stdin removing the release lines inside README (the version
-# badge), pom.xml (<version> lines) and package.json ("version" lines).
+# POM_AWK: awk program that walks a pom.xml tracking the element path (comments skipped). With
+# mode=art it prints the project artifactId. With mode=strip it drops the lines that only hold the
+# project's own version: project/version, project/properties/revision and project/parent/version
+# when the parent artifactId is listed in "ours" ("|a|b|"). Anything else is kept.
+# why: awk variables such as $0 must reach awk unexpanded
+# shellcheck disable=SC2016
+POM_AWK='
+function top(   i, p) { p = ""; for (i = 1; i <= n; i++) p = p "/" st[i]; return substr(p, 2) }
+{
+	line = $0; rest = line; full = 0
+	if (line ~ /^[ \t\r]*<(version|revision)>[^<]*<\/(version|revision)>[ \t\r]*$/) full = 1
+	drop = 0
+	while (rest != "") {
+		if (incom) {
+			i = index(rest, "-->")
+			if (!i) break
+			rest = substr(rest, i + 3); incom = 0; continue
+		}
+		if (substr(rest, 1, 4) == "<!--") { incom = 1; rest = substr(rest, 5); continue }
+		if (match(rest, /^<[^>]*>/)) {
+			tag = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+			if (tag ~ /^<[?!]/ || tag ~ /\/>$/) continue
+			if (tag ~ /^<\//) {
+				name = substr(tag, 3, length(tag) - 3); sub(/[ \t\r].*/, "", name)
+				p = top()
+				if (full && n > 0 && st[n] == name && txt != "") {
+					if (p == "project/version" || p == "project/properties/revision") drop = 1
+					else if (p == "project/parent/version" && index(ours, "|" parent "|")) drop = 1
+				}
+				if (p == "project/artifactId" && mode == "art") print txt
+				if (p == "project/parent/artifactId") parent = txt
+				if (n > 0) n--
+				txt = ""
+			} else {
+				name = substr(tag, 2, length(tag) - 2); sub(/[ \t\r\n\/].*/, "", name)
+				st[++n] = name; txt = ""
+			}
+			continue
+		}
+		if (match(rest, /^[^<]+/)) { txt = txt substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1); continue }
+		break
+	}
+	gsub(/^[ \t\r]+|[ \t\r]+$/, "", txt)
+	if (mode == "strip" && !drop) print line
+}'
+
+# JSON_AWK: awk program that drops the top-level "version" line of a package.json (depth 1, whole
+# line `"version": "..."`). Dependencies and any nested "version" key are kept.
+# shellcheck disable=SC2016
+JSON_AWK='
+{
+	line = $0
+	if (depth == 1 && line ~ /^[ \t\r]*"version"[ \t]*:[ \t]*"([^"\\]|\\.)*"[ \t]*,?[ \t\r]*$/) next
+	print line
+	ins = 0
+	for (i = 1; i <= length(line); i++) {
+		c = substr(line, i, 1)
+		if (ins) { if (c == "\\") i++; else if (c == "\"") ins = 0; continue }
+		if (c == "\"") ins = 1
+		else if (c == "{" || c == "[") depth++
+		else if (c == "}" || c == "]") depth--
+	}
+}'
+
+# pom_artifacts REF: print "|a|b|", the artifactIds of every pom.xml in the tree of REF.
+pom_artifacts() {
+	local f out="|"
+	while IFS= read -r f; do
+		out+="$(git show "$1:$f" 2>/dev/null | awk -v mode=art "$POM_AWK" | head -1)|"
+	done < <(git ls-tree -r --name-only "$1" 2>/dev/null | grep -E '(^|/)pom\.xml$' || true)
+	printf '%s' "$out"
+}
+
+# strip_release_lines FILE REF: filter stdin removing the release lines of FILE as found in REF:
+# the README version badge, the project's own <version> in pom.xml (and the <parent> version when
+# the parent lives in this repository) and the top-level "version" of package.json. Dependency,
+# plugin and external parent versions are never removed: a false "pending" is safe.
 strip_release_lines() {
 	case "$1" in
 	"$QS_BR_README") sed -e 's|<!-- qs:version -->.*<!-- /qs:version -->||' | grep -v '^[[:space:]]*$' || true ;;
-	*pom.xml) grep -v '<version>' || true ;;
-	*package.json) grep -v '"version"' || true ;;
+	*pom.xml) awk -v mode=strip -v ours="$(pom_artifacts "$2")" "$POM_AWK" ;;
+	*package.json) awk "$JSON_AWK" ;;
 	*) cat ;;
 	esac
 }
@@ -55,8 +135,8 @@ real_changes() {
 		is_release_file "$f" && continue
 		case "$f" in
 		"$QS_BR_README" | *pom.xml | *package.json)
-			if [ "$st" = M ] && cmp -s <(git show "$1:$f" 2>/dev/null | strip_release_lines "$f") \
-				<(git show "$2:$f" 2>/dev/null | strip_release_lines "$f"); then
+			if [ "$st" = M ] && cmp -s <(git show "$1:$f" 2>/dev/null | strip_release_lines "$f" "$1") \
+				<(git show "$2:$f" 2>/dev/null | strip_release_lines "$f" "$2"); then
 				continue
 			fi
 			;;
@@ -70,16 +150,16 @@ real_changes() {
 # line starting with '!' giving the reason) and returns 1.
 check_integrated() {
 	local tip="$1" fork t out
-	fork="$(git merge-base "$tip" "$QS_BR_MAINLINE" 2>/dev/null)" || {
-		echo "! no merge base with $QS_BR_MAINLINE"
+	fork="$(git merge-base "$tip" "$MAIN_REF" 2>/dev/null)" || {
+		echo "! no merge base with $MAIN_REF"
 		return 1
 	}
-	out="$(git merge-tree --write-tree --merge-base "$fork" "$QS_BR_MAINLINE" "$tip" 2>/dev/null)" || {
-		echo "! merge with $QS_BR_MAINLINE conflicts"
+	out="$(git merge-tree --write-tree --merge-base "$fork" "$MAIN_REF" "$tip" 2>/dev/null)" || {
+		echo "! merge with $MAIN_REF conflicts"
 		return 1
 	}
 	t="$(head -1 <<<"$out")"
-	out="$(real_changes "$QS_BR_MAINLINE" "$t")"
+	out="$(real_changes "$MAIN_REF" "$t")"
 	[ -z "$out" ] && return 0
 	echo "$out"
 	return 1
@@ -179,7 +259,7 @@ main() {
 		-n) DRY=1 ;;
 		--yes) YES=1 ;;
 		-h | --help)
-			sed -n '2,10p' "${BASH_SOURCE[0]}"
+			sed -n '2,13p' "${BASH_SOURCE[0]}"
 			return 0
 			;;
 		*) die "unknown argument '$1' (usage: git limpiar-unmerged [-n] [--yes])" ;;
@@ -192,6 +272,20 @@ main() {
 	git remote | grep -qx origin && has_origin=1
 	if [ "$has_origin" = 1 ] && [ "$DRY" = 0 ]; then
 		git fetch -q --prune origin || die "fetch from origin failed"
+		# why: test-only hook (see the header) so a test can move origin between fetch and push;
+		# QS_TEST=1 is required so a stray variable in a user's environment cannot run code here
+		if [ "${QS_TEST:-0}" = 1 ] && [ -n "${QS_UNMERGED_PAUSE_CMD:-}" ]; then
+			bash -c "$QS_UNMERGED_PAUSE_CMD" </dev/null || die "QS_UNMERGED_PAUSE_CMD failed"
+		fi
+	fi
+	MAIN_REF="$QS_BR_MAINLINE"
+	if [ "$has_origin" = 1 ] && git rev-parse -q --verify "refs/remotes/origin/$QS_BR_MAINLINE" >/dev/null; then
+		git merge-base --is-ancestor "$QS_BR_MAINLINE" "origin/$QS_BR_MAINLINE" ||
+			die "local $QS_BR_MAINLINE is not contained in origin/$QS_BR_MAINLINE (push or sync it first): a local-only merge does not prove integration"
+		MAIN_REF="origin/$QS_BR_MAINLINE"
+		say "judging against $MAIN_REF"
+	else
+		say "no origin/$QS_BR_MAINLINE: judging against the local $QS_BR_MAINLINE only"
 	fi
 	mapfile -t names < <(archived_names)
 	if [ "${#names[@]}" -eq 0 ]; then

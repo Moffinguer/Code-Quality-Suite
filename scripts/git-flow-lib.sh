@@ -73,9 +73,10 @@ is_release_branch() {
 	case "$1" in */*/* | */) return 1 ;; */"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
 	printf '%s' "${1%%/*}" | grep -qE -- "$(_br_level_re 1)"
 }
-# 'unmerged/<name>': a branch set aside by 'git release' because it was never integrated
+# 'unmerged/<name>' or 'unmerged-<stamp>/<name>' (prefix taken): a branch set aside by 'git release'
+# because it was never integrated
 is_archived_branch() {
-	case "$1" in "$QS_BR_ARCHIVE"/?*) return 0 ;; esac
+	case "$1" in "$QS_BR_ARCHIVE"/?* | "$QS_BR_ARCHIVE"-*/?*) return 0 ;; esac
 	return 1
 }
 # node path: '<F>' for '<F>/ORIGINAL', the branch itself for a final branch
