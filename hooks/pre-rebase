@@ -25,6 +25,12 @@ branch="${2:-$(current_branch || true)}"
 [ -n "$upstream" ] && [ -n "$branch" ] || exit 0
 valid_branch_name "$branch" >/dev/null 2>&1 || exit 0
 up="$(git rev-parse -q --verify "${upstream}^{commit}" 2>/dev/null)" || exit 0
+# --- TESTING sandbox guard (never rebased, either direction) ---
+if testing_blocks_rebase "$branch" "$upstream"; then
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
+# --- end TESTING sandbox guard ---
 # onto (an ancestor of) its own remote: the 'git pull --rebase' case
 if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 &&
 	git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi

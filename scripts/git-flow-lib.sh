@@ -109,6 +109,7 @@ parent_branch() {
 		return 0
 	fi
 	is_archived_branch "$b" && return 0 # set aside: no parent
+	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
@@ -151,6 +152,11 @@ valid_branch_name() {
 	while IFS= read -r seg; do
 		i=$((i + 1))
 		if [ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ]; then break; fi
+		if [ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ]; then break; fi
+		if testing_reserved_segment "$seg"; then
+			echo "'$seg' is reserved for the TESTING sandbox (git testing crear)"
+			return 1
+		fi
 		if [ "$seg" = "$QS_BR_LEAF" ]; then
 			echo "'$QS_BR_LEAF' can only be the last segment"
 			return 1
@@ -176,9 +182,9 @@ branch_children() {
 		git for-each-ref --format='%(refname:short)' "refs/heads/$f/"
 		git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/origin/$f/"
 	} 2>/dev/null |
-		awk -v f="$f/" -v leaf="$QS_BR_LEAF" -v me="$p" '
+		awk -v f="$f/" -v leaf="$QS_BR_LEAF" -v me="$p" -v tst="${QS_BR_TESTING:-TESTING}" '
         index($0, f) == 1 { r = substr($0, length(f) + 1); n = split(r, a, "/");
-          if ($0 != me && (n == 1 || (n == 2 && a[2] == leaf))) print $0 }' | sort -u
+          if ($0 != me && a[1] != tst && (n == 1 || (n == 2 && a[2] == leaf))) print $0 }' | sort -u
 }
 
 # branch ref to use as a base: origin/<b> when it exists and is ahead of (or equal to) the local one
@@ -240,6 +246,7 @@ configure_repo() {
 	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
 	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
+	git config alias.testing "!bash '$suite/scripts/git-testing.sh'" # TESTING sandbox
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir
 	git config merge.qs-version.name "code-quality-suite: version files keep the branch version"
@@ -289,4 +296,118 @@ children_pending() {
 		branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
+}
+
+# ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
+
+# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf).
+# Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
+is_testing_branch() {
+	case "$1" in */"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
+	return 1
+}
+
+# Whether a branch-name segment is the reserved TESTING leaf, ignoring case.
+# Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
+testing_reserved_segment() {
+	local a b
+	a="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+	b="$(printf '%s' "${QS_BR_TESTING:-TESTING}" | tr '[:upper:]' '[:lower:]')"
+	[ "$a" = "$b" ]
+}
+
+# Print the refusal shown whenever a TESTING branch would be merged, rebased or integrated.
+# Arguments: none. Returns: 0; the message goes to stderr.
+testing_message() {
+	echo "TESTING is a sandbox: it cannot be merged, rebased or integrated. Move its new commits to their source branches with 'git testing repartir'." >&2
+}
+
+# Refuse a command that runs on a TESTING branch (integra, subir).
+# Arguments: $1 branch. Returns: 0 (message printed) when the branch is TESTING and the command
+# must stop; 1 when the branch is not a sandbox.
+testing_refused() {
+	is_testing_branch "$1" || return 1
+	testing_message
+	return 0
+}
+
+# Hook guard for a merge: refused when the target or any source is a TESTING branch.
+# Arguments: $1 target branch, $2 newline-separated names of the branches being merged.
+# Returns: 0 (message printed) when the merge must be refused; 1 when it is not a sandbox merge.
+testing_blocks_merge() {
+	local s
+	if is_testing_branch "$1"; then
+		testing_message
+		return 0
+	fi
+	while IFS= read -r s; do
+		[ -n "$s" ] || continue
+		if is_testing_branch "$s"; then
+			testing_message
+			return 0
+		fi
+	done <<<"$2"
+	return 1
+}
+
+# After pre-merge-commit refused an automatic merge, git leaves the merge result staged. Put back
+# exactly the paths the merge staged (git started the merge only if none of them had local
+# changes), so a refused merge changes nothing. Does nothing while a merge is in progress (a
+# conflicted merge being concluded by 'git commit').
+# Arguments: none. Returns: 0.
+testing_undo_merge() {
+	local p
+	[ -e "$(git rev-parse --git-path MERGE_HEAD)" ] && return 0
+	while IFS= read -r -d '' p; do
+		if git cat-file -e "HEAD:$p" 2>/dev/null; then
+			git checkout -q HEAD -- "$p"
+		else
+			git rm -q -f --cached -- "$p"
+			rm -f -- "$p"
+		fi
+	done < <(git diff --cached --name-only -z HEAD)
+	return 0
+}
+
+# Hook guard for a rebase: refused when the rebased branch or the upstream is a TESTING branch.
+# Arguments: $1 branch being rebased, $2 upstream as typed. Returns: 0 (message printed) when
+# refused; 1 otherwise.
+testing_blocks_rebase() {
+	local up
+	up="$(git rev-parse -q --symbolic-full-name "$2" 2>/dev/null || true)"
+	up="${up#refs/heads/}"
+	up="${up#refs/remotes/origin/}"
+	if is_testing_branch "$1" || { [ -n "$up" ] && is_testing_branch "$up"; }; then
+		testing_message
+		return 0
+	fi
+	return 1
+}
+
+# Hook guard for a push: a TESTING branch may only be pushed to its own name.
+# Arguments: $1 local ref as git gives it (refs/heads/x or HEAD), $2 remote ref.
+# Returns: 0 (message printed) when refused; 1 otherwise.
+testing_blocks_push() {
+	local b
+	case "$1" in
+	refs/heads/*) b="${1#refs/heads/}" ;;
+	HEAD) b="$(current_branch || true)" ;;
+	*) return 1 ;;
+	esac
+	is_testing_branch "$b" || return 1
+	case "$2" in refs/heads/*) is_testing_branch "$2" && return 1 ;; *) return 1 ;; esac
+	testing_message
+	return 0
+}
+
+# Release helper: whether a TESTING branch can be deleted with its tree (no undistributed
+# commits). A TESTING branch with undistributed commits is not "ok": the caller sets it aside as
+# unmerged and a warning names the commits. Loads scripts/git-testing.sh on demand.
+# Arguments: $1 branch. Returns: 0 when it is a TESTING branch that is safe to delete; 1 when it
+# is not a TESTING branch or has undistributed commits.
+testing_release_ok() {
+	is_testing_branch "$1" || return 1
+	# shellcheck source=scripts/git-testing.sh
+	. "$(dirname "${BASH_SOURCE[0]}")/git-testing.sh"
+	tst_release_ok "${1%/*}"
 }
