@@ -200,7 +200,7 @@ git checkout -q "$V/ORIGINAL" && add_commit v.txt 'v' "chore: version note" &&
 
 # --- rebased branch kept, --force under pending children, Norms: none, siblings on one file ------
 # why: confirm reads /dev/tty; the cases run without a terminal, so every prompt answers "no"
-case_sandbox squash2
+case_sandbox squash
 git np 9.2.0 >/dev/null && git np 700 >/dev/null || fail "squash2: tree"
 OT2=9.2.0/700
 git nr p >/dev/null && add_commit p.py 'P = 1' "feat: add p" || fail "squash2: p"
