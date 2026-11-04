@@ -4,6 +4,8 @@
 #   into '<F>/ORIGINAL'  its direct children ('<F>/x', '<F>/x/ORIGINAL') or its parent (sync down)
 #   into develop         a '<version>/ORIGINAL' or '<version>/RELEASE' (git release), or main/master
 #   into a final branch  never: final branches are rebased onto their ORIGINAL (git subir)
+#   flow squash          child -> ORIGINAL and version -> develop merge commits are refused too
+#                        (git integra squashes, git publicar lands one commit)
 # 'git integra' merges with --no-commit (this hook does not fire; it applies the same rules).
 # Policy: .quality-rules.json -> branches.enforce (block | warn | off).
 set -euo pipefail
@@ -44,6 +46,25 @@ done
 srcs="$(printf '%s' "$srcs" | sed '/^$/d' | sort -u)"
 [ -n "$srcs" ] || exit 0 # merging a bare commit: no opinion
 valid_branch_name "$target" >/dev/null 2>&1 || exit 0
+
+# --- flow squash: children go up as one squash commit, versions as one commit on develop ------
+# why: a merge commit of a child into its ORIGINAL (or of a version into develop) is exactly
+# what the squash flow replaces; parent -> child sync merges stay allowed (checked below).
+if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+	sq_msg=""
+	while IFS= read -r s; do
+		if is_parent_branch "$target" && [ "$(parent_branch "$s")" = "$target" ]; then
+			sq_msg="[pre-merge-commit] '$s' goes up into '$target' as one squash commit (branches.flow = squash): use 'git integra' from '$s'."
+		elif [ "$target" = "$QS_BR_MAINLINE" ] && { is_release_branch "$s" ||
+			{ is_parent_branch "$s" && [ "$(parent_branch "$s")" = "$QS_BR_MAINLINE" ]; }; }; then
+			sq_msg="[pre-merge-commit] '$s' reaches '$target' as one commit (branches.flow = squash): use 'git publicar'."
+		fi
+	done <<<"$srcs"
+	if [ -n "$sq_msg" ]; then
+		echo "$sq_msg" >&2
+		[ "$QS_BR_ENFORCE" = warn ] || exit 1
+	fi
+fi
 
 ok=0
 while IFS= read -r s; do
