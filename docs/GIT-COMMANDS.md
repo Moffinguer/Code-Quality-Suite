@@ -35,6 +35,7 @@ again after moving the suite; `git actualizar-suite` runs it for you after an up
 | delete archived `unmerged/...` branches already integrated | `git limpiar-unmerged -n`, then without `-n` |
 | hand my finished branch to its parent | `git integra` |
 | see where everything stands | `git arbol` |
+| try several branches together | `git testing crear <branch...>` |
 | check / repair the encoding of my changes | `git encoding` / `git encoding --fix` |
 | a test copy of a version (SNAPSHOT, rc) | `git nv <version> --from <branch>` |
 | see what a release will contain | `git changelog` |
@@ -222,6 +223,30 @@ printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
 
 ```bash
 git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate login"
+```
+
+### git testing
+
+- **Syntax:** `git testing crear <branch...> [--nivel <F>] [--recrear [--force]]`,
+  `git testing estado [<F>]`,
+  `git testing repartir [<F>] [--map <commit>=<branch>]... [--on-applied skip|apply]`
+- **Does:** `crear` builds the sandbox `<F>/TESTING` from `<F>/ORIGINAL` with the branches you
+  name (any branches) merged in; a marker commit records them (`Sources:`). You commit on
+  TESTING. `estado` lists the sources and the commits made on TESTING. `repartir` goes commit by
+  commit (numbered menu: the sources first, `o` other branch, `s` skip, `q` quit; `--map` answers
+  without questions) and `cherry-pick -x`s each one onto the branch you choose. A change already
+  in the target is skipped after asking; a failed pick leaves the target untouched. Nothing is
+  pushed. To pick up changes of the sources, `crear --recrear` (refused while commits are not
+  distributed, unless `--force`). TESTING can never be merged, rebased or integrated, in either
+  direction (`git integra`, `git subir`, `git merge`, `git rebase` and a push to an `ORIGINAL` or
+  `RELEASE` are refused). At release it is deleted, or set aside as `unmerged/...` when commits
+  are still undistributed.
+- **Use it when:** you want to try branches together before integrating any of them.
+- **Who:** anyone.
+
+```bash
+git testing crear 6.22.7/188858/login 6.22.7/188858/menu
+git testing repartir --map 3f2a1c9=6.22.7/188858/login
 ```
 
 ## 7. Releases
