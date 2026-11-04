@@ -5,6 +5,8 @@
 #                  of its own commits (an upstream that already contains the ORIGINAL tip)
 #   ORIGINAL/develop/main  only onto their own remote ('git pull'); they are shared, and
 #                  rewriting them breaks every branch built on them
+#   flow squash    also '<F>/ORIGINAL' below the OT onto its parent ORIGINAL once all its
+#                  children are integrated (git integra)
 # git passes: $1 = upstream, $2 = branch being rebased (empty = current).
 set -euo pipefail
 HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
@@ -26,6 +28,20 @@ up="$(git rev-parse -q --verify "${upstream}^{commit}" 2>/dev/null)" || exit 0
 # onto (an ancestor of) its own remote: the 'git pull --rebase' case
 if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 &&
 	git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
+# --- flow squash: '<F>/ORIGINAL' goes up by rebase onto its parent + squash (git integra) ----
+# Only below the OT ('<v>/<ot>/ORIGINAL' and '<v>/ORIGINAL' go up through git release), only
+# onto (a descendant of) its parent ORIGINAL, and only when every child is integrated.
+if [ "${QS_BR_FLOW:-merge}" = squash ] && is_parent_branch "$branch" && [ "$(branch_depth "$branch")" -ge 3 ]; then
+	sq_parent="$(parent_branch "$branch")"
+	sq_ptip="$(best_ref "$sq_parent" || true)"
+	if [ -n "$sq_ptip" ] && git merge-base --is-ancestor "$sq_ptip" "$up"; then
+		sq_pending="$(children_pending "$branch")"
+		[ -z "$sq_pending" ] && exit 0
+		echo "[pre-rebase] '$branch' still has children not integrated: $sq_pending (git integra them first)." >&2
+		[ "$QS_BR_ENFORCE" = warn ] && exit 0
+		exit 1
+	fi
+fi
 if is_parent_branch "$branch" || is_mainline "$branch"; then
 	echo "[pre-rebase] '$branch' is shared (others build on it): never rebase it; merge instead (git subir)." >&2
 	echo "             Bypass once: QUALITY_ALLOW_REBASE=1 git rebase ..." >&2
