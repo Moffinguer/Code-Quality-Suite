@@ -4,10 +4,13 @@
 #   into '<F>/ORIGINAL'  its direct children ('<F>/x', '<F>/x/ORIGINAL') or its parent (sync down)
 #   into develop         a '<version>/ORIGINAL' or '<version>/RELEASE' (git release), or main/master
 #   into a final branch  never: final branches are rebased onto their ORIGINAL (git subir)
+#   flow squash          child -> ORIGINAL and version -> develop merge commits are refused too
+#                        (git integra squashes, git publicar lands one commit)
 # 'git integra' merges with --no-commit (this hook does not fire; it applies the same rules).
 # Policy: .quality-rules.json -> branches.enforce (block | warn | off).
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
@@ -22,46 +25,67 @@ target="$(current_branch)" || exit 0
 gd="$(git rev-parse --git-dir)"
 heads=""
 if [ -s "$gd/MERGE_HEAD" ]; then
-  heads="$(cat "$gd/MERGE_HEAD")"
+	heads="$(cat "$gd/MERGE_HEAD")"
 else
-  case "${GIT_REFLOG_ACTION:-}" in
-    merge\ *)
-      for r in ${GIT_REFLOG_ACTION#merge }; do
-        case "$r" in -*) continue ;; esac
-        c="$(git rev-parse -q --verify "$r^{commit}" 2>/dev/null || true)"; heads="$heads $c"
-      done ;;
-    pull*) heads="$(grep -v 'not-for-merge' "$gd/FETCH_HEAD" 2>/dev/null | cut -f1 || true)" ;;
-  esac
+	case "${GIT_REFLOG_ACTION:-}" in
+	merge\ *)
+		for r in ${GIT_REFLOG_ACTION#merge }; do
+			case "$r" in -*) continue ;; esac
+			c="$(git rev-parse -q --verify "$r^{commit}" 2>/dev/null || true)"
+			heads="$heads $c"
+		done
+		;;
+	pull*) heads="$(grep -v 'not-for-merge' "$gd/FETCH_HEAD" 2>/dev/null | cut -f1 || true)" ;;
+	esac
 fi
 srcs=""
 for h in $heads; do
-  srcs="$srcs$(git for-each-ref --points-at="$h" --format='%(refname)' refs/heads refs/remotes/origin \
-    | sed -e 's#^refs/heads/##' -e 's#^refs/remotes/origin/##' | { grep -v '^HEAD$' || true; })"$'\n'
+	srcs="$srcs$(git for-each-ref --points-at="$h" --format='%(refname)' refs/heads refs/remotes/origin |
+		sed -e 's#^refs/heads/##' -e 's#^refs/remotes/origin/##' | { grep -v '^HEAD$' || true; })"$'\n'
 done
 srcs="$(printf '%s' "$srcs" | sed '/^$/d' | sort -u)"
-[ -n "$srcs" ] || exit 0                      # merging a bare commit: no opinion
+[ -n "$srcs" ] || exit 0 # merging a bare commit: no opinion
 valid_branch_name "$target" >/dev/null 2>&1 || exit 0
+
+# --- flow squash: children go up as one squash commit, versions as one commit on develop ------
+# why: a merge commit of a child into its ORIGINAL (or of a version into develop) is exactly
+# what the squash flow replaces; parent -> child sync merges stay allowed (checked below).
+if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+	sq_msg=""
+	while IFS= read -r s; do
+		if is_parent_branch "$target" && [ "$(parent_branch "$s")" = "$target" ]; then
+			sq_msg="[pre-merge-commit] '$s' goes up into '$target' as one squash commit (branches.flow = squash): use 'git integra' from '$s'."
+		elif [ "$target" = "$QS_BR_MAINLINE" ] && { is_release_branch "$s" ||
+			{ is_parent_branch "$s" && [ "$(parent_branch "$s")" = "$QS_BR_MAINLINE" ]; }; }; then
+			sq_msg="[pre-merge-commit] '$s' reaches '$target' as one commit (branches.flow = squash): use 'git publicar'."
+		fi
+	done <<<"$srcs"
+	if [ -n "$sq_msg" ]; then
+		echo "$sq_msg" >&2
+		[ "$QS_BR_ENFORCE" = warn ] || exit 1
+	fi
+fi
 
 ok=0
 while IFS= read -r s; do
-  [ "$s" = "$target" ] && ok=1                                  # its own remote (pull)
-  if is_parent_branch "$target"; then
-    [ "$(parent_branch "$s")" = "$target" ] && ok=1             # a direct child
-    [ "$(parent_branch "$target")" = "$s" ] && ok=1             # its parent (sync down)
-  elif [ "$target" = "$QS_BR_MAINLINE" ]; then
-    { is_parent_branch "$s" && [ "$(parent_branch "$s")" = "$QS_BR_MAINLINE" ]; } && ok=1
-    is_release_branch "$s" && ok=1                              # git release
-    case "$s" in main|master) ok=1 ;; esac
-  elif is_mainline "$target"; then
-    [ "$s" = "$QS_BR_MAINLINE" ] && ok=1                       # release into main/master
-  fi
-done <<< "$srcs"
+	[ "$s" = "$target" ] && ok=1 # its own remote (pull)
+	if is_parent_branch "$target"; then
+		[ "$(parent_branch "$s")" = "$target" ] && ok=1 # a direct child
+		[ "$(parent_branch "$target")" = "$s" ] && ok=1 # its parent (sync down)
+	elif [ "$target" = "$QS_BR_MAINLINE" ]; then
+		{ is_parent_branch "$s" && [ "$(parent_branch "$s")" = "$QS_BR_MAINLINE" ]; } && ok=1
+		is_release_branch "$s" && ok=1 # git release
+		case "$s" in main | master) ok=1 ;; esac
+	elif is_mainline "$target"; then
+		[ "$s" = "$QS_BR_MAINLINE" ] && ok=1 # release into main/master
+	fi
+done <<<"$srcs"
 [ "$ok" = 1 ] && exit 0
 msg="[pre-merge-commit] merging '$(head -n1 <<<"$srcs")' into '$target' breaks the branch model."
 if is_parent_branch "$target" || is_mainline "$target"; then
-  msg="$msg Use 'git integra' from the child branch."
+	msg="$msg Use 'git integra' from the child branch."
 else
-  msg="$msg Final branches are rebased onto their ORIGINAL: git subir"
+	msg="$msg Final branches are rebased onto their ORIGINAL: git subir"
 fi
 echo "$msg" >&2
 [ "$QS_BR_ENFORCE" = warn ] && exit 0
