@@ -219,8 +219,8 @@ git rev-parse -q --verify "refs/heads/$OT2/p" >/dev/null && ! git merge-base --i
 	[ "$(git rev-parse "origin/$OT2/p")" = "$otip" ] && [ "$(git ls-remote origin "refs/heads/$OT2/p" | cut -f1)" = "$otip" ] &&
 	ok "squash: a kept, rebased child warns and prints force-with-lease; origin untouched" || fail "squash2: kept: $out"
 git push -q origin "$OT2/p" 2>/dev/null && fail "squash2: a plain push of the rebased branch was accepted"
-git push -q --force-with-lease origin "$OT2/p" 2>/dev/null && [ "$(git ls-remote origin "refs/heads/$OT2/p" | cut -f1)" = "$(git rev-parse "$OT2/p")" ] &&
-	ok "squash: the printed force-with-lease command updates origin" || fail "squash2: force-with-lease"
+git push -q --force-with-lease origin "$OT2/p" 2>&1 && [ "$(git ls-remote origin "refs/heads/$OT2/p" | cut -f1)" = "$(git rev-parse "$OT2/p")" ] &&
+	ok "squash: the printed force-with-lease command updates origin" || fail "squash2: force-with-lease: $(git push --force-with-lease origin "$OT2/p" 2>&1)"
 
 # --force over pending children that a rebase would orphan: listed and confirmed
 git checkout -q "$OT2/ORIGINAL" && git np RF4 >/dev/null && add_commit r.py 'R = 1' "feat: r on RF4" || fail "squash2: RF4"
