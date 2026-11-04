@@ -138,30 +138,30 @@ set_files block
 export QS_TEST=1 QS_TEST_NO_PROC=1
 echo p >p.txt
 git add p.txt
-git commit -q -m "feat: p" 2>err.txt
-[ ! -s err.txt ] || ! grep -q WARNING err.txt && ok "L8 normal commit: no warning" || fail "L8 warning on normal commit: $(cat err.txt)"
+git commit -q -m "feat: p" 2>"$CASE_REPO.err"
+[ ! -s "$CASE_REPO.err" ] || ! grep -q WARNING "$CASE_REPO.err" && ok "L8 normal commit: no warning" || fail "L8 warning on normal commit: $(cat "$CASE_REPO.err")"
 echo q >q.txt
 git add q.txt
-git amend -q -m "feat: p" 2>err.txt
+git amend -q -m "feat: p" 2>"$CASE_REPO.err"
 m="$(msg)"
 grep -qE '^A.p\.txt$' <<<"$m" && grep -qE '^A.q\.txt$' <<<"$m" && ok "L8 git amend -m: block is HEAD^..index" || fail "L8 git amend: $m"
-! grep -q WARNING err.txt && ok "L8 git amend: no warning" || fail "L8 amend warned: $(cat err.txt)"
+! grep -q WARNING "$CASE_REPO.err" && ok "L8 git amend: no warning" || fail "L8 amend warned: $(cat "$CASE_REPO.err")"
 echo r >r2.txt
 git add r2.txt
-git commit -q --amend -m "feat: p" 2>err.txt
+git commit -q --amend -m "feat: p" 2>"$CASE_REPO.err"
 m="$(msg)"
 ! grep -qE '^A.p\.txt$' <<<"$m" && ok "L8 plain --amend -m reproduces the bug without /proc" || fail "L8 expected the bug: $m"
-grep -q WARNING err.txt && grep -q 'git commit --amend --no-edit' err.txt && ok "L8 post-commit WARNING with the fix" || fail "L8 no warning: $(cat err.txt)"
-git commit -q --amend --no-edit 2>err.txt
+grep -q WARNING "$CASE_REPO.err" && grep -q 'git commit --amend --no-edit' "$CASE_REPO.err" && ok "L8 post-commit WARNING with the fix" || fail "L8 no warning: $(cat "$CASE_REPO.err")"
+git commit -q --amend --no-edit 2>"$CASE_REPO.err"
 m="$(msg)"
 grep -qE '^A.p\.txt$' <<<"$m" && grep -qE '^A.r2\.txt$' <<<"$m" && ok "L8 the fix rebuilds the block" || fail "L8 fix: $m"
-! grep -q WARNING err.txt && ok "L8 fixed: silent" || fail "L8 still warns: $(cat err.txt)"
+! grep -q WARNING "$CASE_REPO.err" && ok "L8 fixed: silent" || fail "L8 still warns: $(cat "$CASE_REPO.err")"
 # off: no warning at all
 set_files off
 echo r3 >r3.txt
 git add r3.txt
-git commit -q --amend -m "feat: p" 2>err.txt
-! grep -q WARNING err.txt && ok "L8 off: silent" || fail "L8 off warned"
+git commit -q --amend -m "feat: p" 2>"$CASE_REPO.err"
+! grep -q WARNING "$CASE_REPO.err" && ok "L8 off: silent" || fail "L8 off warned"
 set_files block
 
 # L9: paths with spaces are quoted like git does
