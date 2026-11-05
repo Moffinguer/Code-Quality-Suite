@@ -5,7 +5,8 @@
 #   into develop         a '<version>/ORIGINAL' or '<version>/RELEASE' (git release), or main/master
 #   into a final branch  never: final branches are rebased onto their ORIGINAL (git subir)
 #   flow squash          child -> ORIGINAL and version -> develop merge commits are refused too
-#                        (git integra squashes, git publicar lands one commit)
+#                        (git integra squashes, git publicar lands one commit); develop is
+#                        never merged into '<version>/RELEASE' (git subir / publicar rebase it)
 # 'git integra' merges with --no-commit (this hook does not fire; it applies the same rules).
 # Policy: .quality-rules.json -> branches.enforce (block | warn | off).
 set -euo pipefail
@@ -65,6 +66,8 @@ if [ "${QS_BR_FLOW:-merge}" = squash ]; then
 		elif [ "$target" = "$QS_BR_MAINLINE" ] && { is_release_branch "$s" ||
 			{ is_parent_branch "$s" && [ "$(parent_branch "$s")" = "$QS_BR_MAINLINE" ]; }; }; then
 			sq_msg="[pre-merge-commit] '$s' reaches '$target' as one commit (branches.flow = squash): use 'git publicar'."
+		elif is_release_branch "$target" && [ "$s" = "$QS_BR_MAINLINE" ]; then
+			sq_msg="[pre-merge-commit] '$target' is rebased onto '$s', never merged (branches.flow = squash): use 'git subir' (or 'git publicar')."
 		fi
 	done <<<"$srcs"
 	if [ -n "$sq_msg" ]; then
