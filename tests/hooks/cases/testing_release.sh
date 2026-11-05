@@ -6,7 +6,7 @@
 set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
-case_sandbox merge
+case_sandbox squash
 
 V=7.2.0
 A=$V/300200/RF1 # the requirement whose TESTING keeps an undistributed commit
