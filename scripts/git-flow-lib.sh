@@ -411,3 +411,41 @@ testing_release_ok() {
 	. "$(dirname "${BASH_SOURCE[0]}")/git-testing.sh"
 	tst_release_ok "${1%/*}"
 }
+
+# Find a TESTING commit inside a range of commits: a marker commit (trailers 'Testing-Create:' and
+# 'Sources:') or a commit made on a local TESTING branch after its marker. This is how TESTING
+# content is detected when it reached a non-TESTING branch without a merge hook (fast-forward).
+# Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref:
+# 'remotes' (history not on any remote) or 'branches:<name>' (history not on any other local
+# branch; <name> is the updated branch, already moved). TESTING branches never count as "other".
+# Returns: 0 and prints the offending sha when there is one; 1 when the range is clean.
+testing_leak_in_range() {
+	local new="$1" old="${2:-}" scope="${3:-remotes}" leaf="${QS_BR_TESTING:-TESTING}"
+	local range=() hit t m
+	if [ -n "$old" ] && [ -n "${old//0/}" ] && git cat-file -e "${old}^{commit}" 2>/dev/null; then
+		range=("$new" "^$old")
+	else
+		case "$scope" in
+		branches:*) range=("$new" --not --exclude="${scope#branches:}" --exclude="*/$leaf" --branches) ;;
+		*) range=("$new" --not --exclude="*/$leaf" --remotes) ;;
+		esac
+	fi
+	hit="$(git log -n1 --format=%H --all-match --grep='^Testing-Create: ' --grep='^Sources:$' "${range[@]}" 2>/dev/null || true)"
+	if [ -n "$hit" ]; then
+		printf '%s' "$hit"
+		return 0
+	fi
+	# commits made on a TESTING branch after its marker, found in the range (marker already shipped)
+	[ -n "$(git rev-list -n1 "${range[@]}" 2>/dev/null)" ] || return 1
+	while IFS= read -r t; do
+		m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$t" 2>/dev/null || true)"
+		[ -n "$m" ] || continue
+		hit="$(comm -12 <(git rev-list -n 2000 "${range[@]}" 2>/dev/null | sort) \
+			<(git rev-list -n 2000 "$m..$t" 2>/dev/null | sort) | head -n1)"
+		if [ -n "$hit" ]; then
+			printf '%s' "$hit"
+			return 0
+		fi
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/*/$leaf")
+	return 1
+}

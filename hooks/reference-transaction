@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# code-quality-suite hook
+# reference-transaction - TESTING content must never reach another branch except through
+# 'git testing repartir' (cherry-pick -x). A fast-forward (git merge --ff-only <F>/TESTING) fires
+# no merge hook, so this hook watches every update of refs/heads/*: when a non-TESTING branch
+# moves to a commit whose NEW history includes a TESTING marker commit (or a commit made on
+# TESTING), it prints the error and how to undo it.
+# Why state 'committed' and not 'prepared': at 'prepared' a refusal would abort the update, but a
+# fast-forward merge has already switched the index and work tree to the new tree by then, so the
+# refusal would leave a half-applied merge. At 'committed' the repository is consistent and
+# 'git reset --hard <old sha>' restores everything; the pre-push guard still blocks the push.
+# Fast: only refs/heads/* of non-TESTING branches are looked at, and only the new commits
+# (new ^old) are searched. Stdin lines: <old sha> <new sha> <ref>. Argument 1: the state.
+set -uo pipefail
+[ "${1:-}" = committed ] || exit 0
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
+[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
+# why: a hook must never break a ref update because of its own problem: any doubt -> allow
+# shellcheck disable=SC1090
+[ -f "$LIB" ] && . "$LIB" || exit 0
+qs_policy_load 2>/dev/null || exit 0
+[ "$QS_BR_ENFORCE" = off ] && exit 0
+
+Z40="0000000000000000000000000000000000000000"
+while read -r old new ref; do
+	case "$ref" in refs/heads/*) b="${ref#refs/heads/}" ;; *) continue ;; esac
+	[ "$new" = "$Z40" ] && continue # deleted
+	is_testing_branch "$b" && continue
+	leak="$(testing_leak_in_range "$new" "$old" "branches:$b")" || continue
+	{
+		echo "[quality-suite] reference-transaction: '$b' now contains TESTING commit ${leak:0:10}."
+		echo "  TESTING content can only reach other branches through 'git testing repartir'."
+		if [ "$old" = "$Z40" ]; then
+			echo "  Undo: git branch -D $b"
+		else
+			echo "  Undo: git reset --hard $old   (or, when $b is not checked out: git branch -f $b $old)"
+		fi
+		echo "  Pushing it is refused by the pre-push hook in any case."
+	} >&2
+done
+exit 0

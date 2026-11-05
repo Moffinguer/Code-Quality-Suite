@@ -321,6 +321,15 @@ cmd_crear() {
 				while IFS= read -r c; do echo "  $(git log -n1 --format='%h %s' "$c")" >&2; done <<<"$pend"
 				exit 1
 			fi
+		else
+			# why: --force destroys the undistributed commits; say which ones and how to get them back
+			pend="$(tst_undistributed "$f" 2>/dev/null || true)"
+			tip="$(git rev-parse "$(tst_ref "$f")")"
+			if [ -n "$pend" ]; then
+				echo "[testing] --force: dropping undistributed commits of $tref (old tip $tip):" >&2
+				while IFS= read -r c; do echo "  $(git log -n1 --format='%h %s' "$c")" >&2; done <<<"$pend"
+				echo "[testing] recover them with: git branch <name> $tip   (or git reflog show $tref)" >&2
+			fi
 		fi
 		tst_worktree_of "$tref" >/dev/null && tst_die "$tref is checked out: switch to another branch first"
 	fi

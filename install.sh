@@ -87,8 +87,8 @@ link_hook() { # $1 = hook name: .git/hooks/<name> -> $COMMON/<name>
 	fi
 }
 HOOK_STUBS=0
-for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout post-commit; do
-	case "$h" in prepare-commit-msg | post-checkout | post-commit) write_common "$h" 0 ;; *) write_common "$h" 1 ;; esac
+for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout post-commit reference-transaction; do
+	case "$h" in prepare-commit-msg | post-checkout | post-commit | reference-transaction) write_common "$h" 0 ;; *) write_common "$h" 1 ;; esac
 	# why: keep a hook that is not ours (e.g. Gerrit's Change-Id commit-msg) instead of overwriting it
 	if [ -e "${HOOK_DIR}/$h" ] || [ -L "${HOOK_DIR}/$h" ]; then
 		if ! { readlink "${HOOK_DIR}/$h" 2>/dev/null | grep -q 'code-quality-suite'; } &&
