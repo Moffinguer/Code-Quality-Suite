@@ -214,11 +214,11 @@ grep -q "contains TESTING commit" <<<"$out" && grep -q "git reset --hard $leak_o
 	ok "L1 reference-transaction detects the ff-only merge and says how to undo it" || fail "L1: no detection: $out"
 out="$(git push origin "$ORIG" 2>&1)" && fail "L1: the fast-forwarded ORIGINAL was pushed"
 grep -q "TESTING" <<<"$out" && ok "L1 pre-push refuses the fast-forwarded ORIGINAL" || fail "L1: push message: $out"
+git reset -q --hard "$leak_old"
 # a new branch cut from TESTING is a leak too (the new ref has no old value)
 out="$(git branch "$F/leak" "$TST" 2>&1)" || fail "L1: branch creation failed"
 grep -q "git branch -D $F/leak" <<<"$out" && ok "L1 a branch created on TESTING is reported" || fail "L1: new branch: $out"
 git branch -q -D "$F/leak"
-git reset -q --hard "$leak_old"
 
 # --- L2: no false positives
 a_tip="$(git rev-parse "$F/a")"
