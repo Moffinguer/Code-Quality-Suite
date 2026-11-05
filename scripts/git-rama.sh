@@ -1861,7 +1861,8 @@ ot_release_notes() {
 # (ot_changelog_subject). Skipped when there is no changelog file in the policy or when RELEASE
 # already has commits of its own (a resumed release, AC O6).
 # Arguments: none; reads REL_TIP REL_CL_BASE REL_OT REL_VERSION REL_TAG. Returns: 0; exits through
-# die when the engine cannot write the file or a hook rejects the commit.
+# die when the engine cannot write the file or a hook rejects the commit; the changelog file is then
+# restored (removed when new) so the rerun finds a clean tree.
 ot_changelog_commit() {
 	[ -n "$QS_BR_CHANGELOG" ] || return 0
 	if [ -n "$(git rev-list -n1 "$REL_TIP..HEAD")" ]; then
@@ -1871,7 +1872,9 @@ ot_changelog_commit() {
 	if ! { ot_release_notes --write >/dev/null 2>&1 && ot_changelog_try_commit; }; then
 		# why: a dirty changelog would make the rerun die in require_clean
 		git reset -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
-		git checkout -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		if git cat-file -e "HEAD:$QS_BR_CHANGELOG" 2>/dev/null; then
+			git checkout -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		else rm -f -- "$QS_BR_CHANGELOG"; fi # why: a file the engine created has nothing to restore
 		die "the changelog commit of $REL_RELEASE failed (see the hook message above); $QS_BR_CHANGELOG was restored. Fix the cause, then run git release again (it resumes)"
 	fi
 }
