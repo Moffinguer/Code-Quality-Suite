@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(ROOT, "engine"))
@@ -101,7 +102,10 @@ class OldFormat(unittest.TestCase):
         self.assertEqual(changelog.validate(text, "5.0.0"), ([], []))
 
     def test_repo_4_2_1_changelog_silent(self):
-        text = _run(ROOT, "show", "4.2.1:CHANGELOG.md")
+        try:
+            text = _run(ROOT, "show", "4.2.1:CHANGELOG.md")
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("needs the git repository with tag 4.2.1 (not a git archive export)")
         self.assertEqual(changelog.validate(text), ([], []))
 
 
@@ -131,6 +135,25 @@ class Union(unittest.TestCase):
         self.assertIn("- Fix x (aaa1111, ccc3333; git)\n- Fix x (bbb2222; log)\n", block)
         self.assertEqual(block.count("Fix x"), 2)
         self.assertEqual(block.count("aaa1111"), 1)
+
+    def test_linked_hashes_merge(self):
+        a = (
+            "### Fixed\n\n- Fix x ([aaa1111](http://h/1); git)\n"
+            "- Fix x ([bbb2222](http://h/2); log)\n"
+        )
+        b = (
+            "### Fixed\n\n- Fix x ([ccc3333](http://h/3); git)\n"
+            "- Fix x ([aaa1111](http://h/1); git)\n"
+        )
+        block = changelog.union("5.0.0", "2026-11-02", [a, b])
+        self.assertIn("- Fix x ([aaa1111](http://h/1), [ccc3333](http://h/3); git)\n", block)
+        self.assertIn("- Fix x ([bbb2222](http://h/2); log)\n", block)
+        self.assertEqual(block.count("Fix x"), 2)
+
+    def test_linked_and_plain_mix(self):
+        a = "### Fixed\n\n- Fix x ([aaa1111](http://h/1); git)\n- Fix x (bbb2222; git)\n"
+        block = changelog.union("5.0.0", "2026-11-02", [a])
+        self.assertIn("- Fix x ([aaa1111](http://h/1), bbb2222; git)\n", block)
 
     def test_breaking_never_merges_with_plain(self):
         a = "### Fixed\n\n- Fix x (aaa1111; git)\n- **Breaking:** Fix x (bbb2222; git)\n"
@@ -205,12 +228,38 @@ class GateLevel(unittest.TestCase):
         self.assertEqual(errs, [])
         return warns
 
-    def test_new_top_section_warns(self):
+    def _init_repo(self, *tags):
+        """Make the folder a git repository with the given tags.
+
+        Args:
+            *tags: tag names to create.
+        """
+        _run(self.dir, "init", "-q")
+        _run(self.dir, "add", "VERSION")
+        _run(self.dir, "commit", "-q", "-m", "init")
+        for t in tags:
+            _run(self.dir, "tag", t)
+
+    def test_untagged_top_section_warns(self):
+        self._init_repo("4.2.1")
         warns = self._check("5.0.0")
         self.assertTrue(any("4.x format" in w for w in warns), warns)
 
-    def test_released_top_section_silent(self):
+    def test_untagged_top_equal_to_version_warns(self):
+        self._init_repo()
+        warns = self._check("4.2.1")
+        self.assertTrue(any("4.x format" in w for w in warns), warns)
+
+    def test_tagged_top_section_silent(self):
+        self._init_repo("4.2.1")
         self.assertEqual(self._check("4.2.1"), [])
+
+    def test_no_git_silent(self):
+        self.assertFalse([w for w in self._check("5.0.0") if "4.x format" in w])
+
+    def test_git_missing_silent(self):
+        with mock.patch.object(repofiles.subprocess, "run", side_effect=OSError):
+            self.assertFalse([w for w in self._check("5.0.0") if "4.x format" in w])
 
 
 if __name__ == "__main__":

@@ -205,7 +205,7 @@ def check(root, rel, data=None, branch=""):
     elif rel == "pom.xml" and vfile and br["pom_version"] != "off":
         _check_pom(root, vfile, errors)
     elif cfile and rel == cfile:
-        _check_changelog(root, text, vfile, errors, warnings)
+        _check_changelog(root, text, br, errors, warnings)
     elif rfile and rel == rfile:
         _check_readme(root, text, cfile, errors, warnings)
     elif rel == "CITATION.cff":
@@ -240,28 +240,51 @@ def _check_pom(root, vfile, errors):
         )
 
 
-def _check_changelog(root, text, vfile, errors, warnings):
+def _unreleased(root, version, br):
+    """Tell whether no git tag exists yet for a version.
+
+    Args:
+        root: repository root.
+        version: the version to look for.
+        br: the branches policy (key `tag`, default `{version}`).
+
+    Returns:
+        bool: True only when git works in root and no tag of that version exists; False when
+        it is tagged, and False too (silent) without git, a repository or on any error.
+    """
+    git = ["git", "-C", root]
+    if not _git(git, "rev-parse", "--git-dir").strip():
+        return False
+    names = {(br.get("tag") or "{version}").replace("{version}", version)}
+    custom = _git(git, "config", f"qs.release.{version}.tag").strip()
+    if custom:
+        names.add(custom)
+    return not names & set(_git(git, "tag", "-l").split())
+
+
+def _check_changelog(root, text, br, errors, warnings):
     """Validate CHANGELOG.md, flagging 4.x-format lines in the entry being written.
 
-    The entry being written is the topmost section when its version is newer than the one in the
-    version file: the file records the last released version, so a newer top section is not
-    released yet. Older sections are released history and stay silent (the 4.x lines of 4.2.1
-    are legitimate there). Without a valid version file nothing counts as new.
+    The entry being written is the topmost section when its version has no git tag yet (tag
+    name from policy `branches.tag`, default `{version}`, or `qs.release.<v>.tag`). Tagged
+    sections are released history and stay silent (the 4.x lines of 4.2.1 are legitimate
+    there). Without git, a repository or on a git error nothing counts as new.
 
     Args:
         root: repository root.
         text: the CHANGELOG.md content.
-        vfile: name of the version file, or empty.
         errors: list the errors are appended to.
         warnings: list the warnings are appended to.
+        br: the branches policy (version file name, tag template).
     """
     top = (CL.versions(text) or [None])[0]
+    vfile = br["version_file"]
     v = (_read(root, vfile) or "").strip() if vfile else ""
-    newer = bool(top and SV.valid(v) and SV.valid(top) and SV.compare(top, v) > 0)
-    e, w = CL.validate(text, top if newer else None)
+    new = bool(top and _unreleased(root, top, br))
+    e, w = CL.validate(text, top if new else None)
     errors += e
     warnings += w
-    if newer:
+    if top and SV.valid(v) and SV.valid(top) and SV.compare(top, v) > 0:
         warnings.append(f"the last release ({top}) is newer than {vfile} ({v})")
 
 

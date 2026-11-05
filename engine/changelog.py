@@ -321,8 +321,10 @@ def render(version, date, items, tag_url="", notice=""):
     return "\n".join(lines) + "\n"
 
 
+# One commit reference: a bare hash or a linked '[hash](url)'.
+_REF = r"(?:[0-9a-f]{4,40}|\[[0-9a-f]{4,40}\]\([^()\s]+\))"
 _REFS = re.compile(
-    r"^(?P<subj>- .*?) \((?P<hashes>[0-9a-f]{4,40}(?:, [0-9a-f]{4,40})*)(?P<ot>; [^;()]+)?\)$"
+    r"^(?P<subj>- .*?) \((?P<hashes>" + _REF + r"(?:, " + _REF + r")*)(?P<ot>; [^;()]+)?\)$"
 )
 
 
@@ -364,7 +366,8 @@ def union(version, date, sections, tag_url=""):
         str: the block like render(); groups in Common Changelog order, items in section
         order, '**Breaking:**' items first, identical lines once. Lines of one group with
         the same subject and the same OT but different hashes become one line listing every
-        hash in first-seen order, '- Fix x (aaa1111, ccc3333; git)'; a different OT, or a
+        hash in first-seen order, '- Fix x (aaa1111, ccc3333; git)' (linked hashes '[aaa1111](url)'
+        merge the same way); a different OT, or a
         breaking against a non-breaking line, stays separate. With no change at all the
         maintenance notice is written.
     """
