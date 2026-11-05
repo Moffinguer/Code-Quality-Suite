@@ -232,10 +232,15 @@ git checkout -q -b "$F/plain" "$ORIG"
 mk plain.txt plain "feat: plain"
 git checkout -q "$ORIG"
 mk o2.txt o2 "feat: o2"
-# why: under squash pre-merge-commit refuses a child merged into its ORIGINAL (git integra makes the
-# squash commit); --no-verify skips only that hook: the reference-transaction and pre-push checks
-# under test still run, and a normal merge must not be taken for a TESTING merge
-out="$(git merge --no-verify --no-edit "$F/plain" 2>&1)" || fail "L2: normal merge failed: $out"
+# why: a merge of the child into its ORIGINAL built by plumbing (merge-tree + commit-tree, then
+# update-ref), so no hook runs; under squash such a merge is refused by hand only, and the check is
+# that the reference-transaction and pre-push checks do not take a normal merge for a TESTING merge
+orig_tip="$(git rev-parse "$ORIG")"
+plain_tip="$(git rev-parse "$F/plain")"
+tree="$(git merge-tree --write-tree "$orig_tip" "$plain_tip")" || fail "L2: merge-tree of the child"
+mc="$(git commit-tree "$tree" -p "$orig_tip" -p "$plain_tip" -m "Merge branch '$F/plain' into $ORIG")"
+out="$(git update-ref "refs/heads/$ORIG" "$mc" "$orig_tip" 2>&1)" || fail "L2: update-ref: $out"
+git reset -q --hard "$mc" || fail "L2: work tree of the merge"
 grep -q "TESTING commit" <<<"$out" && fail "L2: false positive on a merge: $out"
 out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push after a normal merge refused: $out"
 ok "L2 a normal merge and its push are not affected"
