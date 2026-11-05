@@ -74,6 +74,52 @@ is_release_branch() {
 	case "$1" in */*/* | */) return 1 ;; */"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
 	printf '%s' "${1%%/*}" | grep -qE -- "$(_br_level_re 1)"
 }
+# Whether a branch is the RELEASE of one OT: '<version>/<ot>/RELEASE', exactly three segments, the
+# version and the OT matching branches.levels (made by git release inside the OT, flow = squash).
+# Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
+is_ot_release_branch() {
+	local node
+	case "$1" in */*/*/* | */) return 1 ;; */*/"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
+	node="${1%/*}"
+	printf '%s' "${node%%/*}" | grep -qE -- "$(_br_level_re 1)" &&
+		printf '%s' "${node#*/}" | grep -qE -- "$(_br_level_re 2)"
+}
+
+# Whether a segment is one of the reserved leaves (branches.parent_leaf, release_leaf and
+# testing_leaf), ignoring case: on Windows 'release' and 'RELEASE' are the same ref file.
+# Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
+reserved_leaf_segment() {
+	local s l
+	s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+	for l in "$QS_BR_LEAF" "$QS_BR_RELEASE_LEAF" "${QS_BR_TESTING:-TESTING}"; do
+		[ -n "$l" ] && [ "$s" = "$(printf '%s' "$l" | tr '[:upper:]' '[:lower:]')" ] && return 0
+	done
+	return 1
+}
+
+# Check the reserved leaves of a branch name: the parent leaf only as the exact last segment, the
+# TESTING leaf only as the exact last segment of '<F>/TESTING', no other segment equal to a
+# reserved leaf in any case (the RELEASE branches are accepted earlier by their own checks).
+# Arguments: $1 branch. Returns: 0 when fine; 1 and prints the reason otherwise.
+reserved_segments_ok() {
+	local b="$1" n i=0 seg
+	n="$(awk -F/ '{print NF}' <<<"$b")"
+	while IFS= read -r seg; do
+		i=$((i + 1))
+		[ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ] && continue
+		[ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ] && continue
+		if [ "$seg" = "$QS_BR_LEAF" ]; then
+			echo "'$QS_BR_LEAF' can only be the last segment"
+			return 1
+		fi
+		if reserved_leaf_segment "$seg"; then
+			echo "'$seg' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF and ${QS_BR_TESTING:-TESTING}, in any case)"
+			return 1
+		fi
+	done < <(tr '/' '\n' <<<"$b")
+	return 0
+}
+
 # 'unmerged/<name>' or 'unmerged-<stamp>/<name>' (prefix taken): a branch set aside by 'git release'
 # because it was never integrated
 is_archived_branch() {
@@ -104,6 +150,11 @@ parent_branch() {
 		return 0
 	fi
 	is_mainline "$b" && return 0
+	# why: an OT RELEASE goes into the version RELEASE, which starts at the version ORIGINAL
+	if is_ot_release_branch "$b"; then
+		echo "${b%%/*}/$QS_BR_LEAF"
+		return 0
+	fi
 	if is_release_branch "$b"; then
 		echo "$QS_BR_MAINLINE"
 		return 0
@@ -127,7 +178,7 @@ valid_branch_name() {
 	local b="$1" i=0 seg rx n last
 	qs_policy_load
 	is_mainline "$b" && return 0
-	{ is_release_branch "$b" || is_archived_branch "$b"; } && return 0
+	{ is_release_branch "$b" || is_ot_release_branch "$b" || is_archived_branch "$b"; } && return 0
 	for ((i = 1; i <= ${QS_BR_ALLOW:-0}; i++)); do
 		rx="QS_BR_ALLOW_$i"
 		printf '%s' "$b" | grep -qE -- "${!rx}" && return 0
@@ -136,6 +187,7 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;
 	*)
