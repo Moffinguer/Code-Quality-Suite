@@ -108,7 +108,6 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
 		[ "$QS_BR_ENFORCE" = off ] && break
 		[ "$local_sha" = "$Z40" ] && continue
-		is_testing_branch "${remote_ref#refs/heads/}" && continue
 		if is_testing_branch "${local_ref#refs/heads/}"; then
 			# TESTING is recreated, never merged into: a merge after the marker is refused
 			if mrg="$(testing_merged_into "$local_sha")"; then
@@ -121,6 +120,7 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 			fi
 			continue
 		fi
+		is_testing_branch "${remote_ref#refs/heads/}" && continue
 		if leak="$(testing_leak_in_range "$local_sha" "$remote_sha" remotes)"; then
 			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} contains TESTING commit ${leak:0:10}." >&2
 			testing_message

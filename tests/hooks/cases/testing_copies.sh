@@ -45,7 +45,7 @@ mk t1.txt t1 "feat: t1"
 
 # --- C1: squash of the TESTING work (one commit: its patch-id is the squash patch-id)
 git checkout -q -b "$F/sq" "$ORIG"
-git merge -q --squash "$TST" || fail "C1: squash failed"
+git -c merge.ff=true merge -q --squash "$TST" || fail "C1: squash failed"
 git commit -q -m "feat: squashed t1" || fail "C1: squash commit"
 refused_push "$F/sq" "C1 squash"
 ok "C1 squash merge of TESTING refused at push"

@@ -463,7 +463,7 @@ testing_leak_in_range() {
 			printf '%s' "$hit"
 			return 0
 		fi
-	done < <(git for-each-ref --format='%(refname)' "refs/heads/*/$leaf")
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
 	return 1
 }
 
@@ -501,7 +501,7 @@ testing_copy_in_range() {
 	rng="$(mktemp)"
 	while IFS= read -r t; do
 		testing_patch_ids "$(git rev-parse "$t")" >>"$all"
-	done < <(git for-each-ref --format='%(refname)' "refs/heads/*/$leaf")
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
 	if [ -s "$all" ]; then
 		testing_range "$1" "${2:-}" "${3:-remotes}"
 		git log --no-merges -p -n 500 --format='commit %H' "${TST_RANGE[@]}" 2>/dev/null |
