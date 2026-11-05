@@ -109,12 +109,33 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 		[ "$QS_BR_ENFORCE" = off ] && break
 		[ "$local_sha" = "$Z40" ] && continue
 		is_testing_branch "${remote_ref#refs/heads/}" && continue
-		is_testing_branch "${local_ref#refs/heads/}" && continue
+		if is_testing_branch "${local_ref#refs/heads/}"; then
+			# TESTING is recreated, never merged into: a merge after the marker is refused
+			if mrg="$(testing_merged_into "$local_sha")"; then
+				echo "[quality-suite] pre-push: ${local_ref#refs/heads/} has a merge made into it (${mrg:0:10})." >&2
+				echo "  TESTING must be recreated: git testing crear --recrear" >&2
+				if [ "$QS_BR_ENFORCE" = block ]; then
+					echo "[quality-suite] pre-push: push aborted (merge into TESTING)." >&2
+					exit 1
+				fi
+			fi
+			continue
+		fi
 		if leak="$(testing_leak_in_range "$local_sha" "$remote_sha" remotes)"; then
 			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} contains TESTING commit ${leak:0:10}." >&2
 			testing_message
 			if [ "$QS_BR_ENFORCE" = block ]; then
 				echo "[quality-suite] pre-push: push aborted (TESTING content)." >&2
+				exit 1
+			fi
+		fi
+		# why: a squash, a cherry-pick without -x or a rebase leaves no ancestry; the patch-id of the
+		# commit still equals the one of a commit made on TESTING (repartir's -x line excuses it)
+		if copy="$(testing_copy_in_range "$local_sha" "$remote_sha" remotes)"; then
+			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} has commit ${copy%% *} (copy of TESTING commit ${copy##* })." >&2
+			testing_message
+			if [ "$QS_BR_ENFORCE" = block ]; then
+				echo "[quality-suite] pre-push: push aborted (copy of TESTING content)." >&2
 				exit 1
 			fi
 		fi
