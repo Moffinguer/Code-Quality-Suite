@@ -22,13 +22,6 @@ else
 fi
 
 MSG_FILE="$1"
-# TESTING never reaches another branch through 'git merge --squash' (SQUASH_MSG lists its commits)
-if [ "${QS_BR_ENFORCE:-block}" != off ] && declare -F testing_squash_hit >/dev/null 2>&1 &&
-	sq="$(testing_squash_hit)"; then
-	echo "commit-msg: the squash merge contains TESTING commit ${sq:0:10}." >&2
-	echo "  TESTING content can only reach other branches through 'git testing repartir'." >&2
-	[ "${QS_BR_ENFORCE:-block}" = warn ] || exit 1
-fi
 # Files: block (commit.files block|warn|off): restored when missing or edited
 FILES_LIB="${QUALITY_SUITE_DIR:-}/scripts/commit-files-lib.sh"
 # shellcheck disable=SC1090
@@ -45,6 +38,14 @@ subject="$(printf '%s\n' "$msg" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
 	echo "commit-msg: empty message." >&2
 	exit 1
 }
+# TESTING never reaches another branch through 'git merge --squash' (SQUASH_MSG lists its commits).
+# Only this commit's message counts: a commit made with its own message is not the squash.
+if [ "${QS_BR_ENFORCE:-block}" != off ] && declare -F testing_squash_hit >/dev/null 2>&1 &&
+	sq="$(testing_squash_hit "$msg")"; then
+	echo "commit-msg: the squash merge contains TESTING commit ${sq:0:10}." >&2
+	echo "  TESTING content can only reach other branches through 'git testing repartir'." >&2
+	[ "${QS_BR_ENFORCE:-block}" = warn ] || exit 1
+fi
 
 # to_ascii: stdin -> stdout, replace common non-ASCII characters by ASCII ones (suggestion text).
 # shellcheck disable=SC1112  # the unicode quotes are the characters being replaced

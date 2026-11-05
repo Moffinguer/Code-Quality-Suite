@@ -301,10 +301,22 @@ children_pending() {
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
 
 # Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf).
+# A branch named just the leaf has no level and is an ordinary branch.
 # Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
 is_testing_branch() {
-	case "$1" in */"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
+	case "$1" in ?*/"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
 	return 1
+}
+
+# The local TESTING sandboxes as full ref names. The glob 'refs/heads/**/<leaf>' also matches a
+# branch named just <leaf>, so every match is checked with is_testing_branch.
+# Arguments: none. Returns: 0; prints one 'refs/heads/...' line per sandbox (possibly none).
+testing_local_refs() {
+	local leaf="${QS_BR_TESTING:-TESTING}" ref
+	while IFS= read -r ref; do
+		is_testing_branch "${ref#refs/heads/}" && printf '%s\n' "$ref"
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
+	return 0
 }
 
 # Whether a branch-name segment is the reserved TESTING leaf, ignoring case.
@@ -535,26 +547,43 @@ testing_merged_into() {
 	printf '%s' "$hit"
 }
 
-# Find TESTING work in the pending squash merge ('git merge --squash' leaves .git/SQUASH_MSG with
-# 'commit <sha>' lines): a TESTING marker commit or a commit made on a local TESTING branch
+# Find TESTING work in the squash commit being made. 'git merge --squash' leaves .git/SQUASH_MSG:
+# the header 'Squashed commit of the following:' and one 'commit <sha>' line per squashed commit.
+# A commit is that squash only when its message uses SQUASH_MSG: the header line and every listed
+# sha are in the message. A commit with its own message ('git commit -m') is not the squash. A
+# SQUASH_MSG that lists TESTING work but is not used by this commit is stale (left by an aborted
+# squash): it is ignored and a one-line note says it can be deleted. The listed commits are
+# TESTING work when one is a TESTING marker commit or a commit made on a local TESTING branch
 # (first-parent, after its marker).
-# Arguments: none. Returns: 0 and prints the first offending sha; 1 when there is no pending
-# squash or it lists no TESTING commit.
+# Arguments: $1 the commit message as it will be stored. Returns: 0 and prints the first offending
+# listed sha when this commit is the squash of TESTING work; 1 otherwise.
 testing_squash_hit() {
-	local f sha t m own=""
+	local f t m sha own="" hit="" uses=0 msg="$1"
 	f="$(git rev-parse --git-path SQUASH_MSG)"
 	[ -f "$f" ] || return 1
 	while IFS= read -r t; do
 		m="$(testing_marker_of "$t")" || continue
 		own="$own $(git rev-list --first-parent --no-merges "$m..$t" 2>/dev/null | tr '\n' ' ')"
-	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/${QS_BR_TESTING:-TESTING}")
-	while read -r _ sha _; do
-		[[ $sha =~ ^[0-9a-f]{40}$ ]] || continue
+	done < <(testing_local_refs)
+	while IFS= read -r sha; do
 		if git log -n1 --format=%B "$sha" 2>/dev/null | grep -q '^Testing-Create: ' ||
 			grep -qw "$sha" <<<"$own"; then
-			printf '%s' "$sha"
-			return 0
+			hit="$sha"
+			break
 		fi
-	done < <(grep '^commit ' "$f")
+	done < <(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$f")
+	[ -n "$hit" ] || return 1
+	# why: the message must be the squash's own: the header and every listed sha are in it
+	if grep -qxF 'Squashed commit of the following:' <<<"$msg"; then
+		uses=1
+		while IFS= read -r sha; do
+			grep -qF "$sha" <<<"$msg" || uses=0
+		done < <(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$f")
+	fi
+	if [ "$uses" = 1 ]; then
+		printf '%s' "$hit"
+		return 0
+	fi
+	echo "commit-msg: .git/SQUASH_MSG is stale (this commit does not use it): rm .git/SQUASH_MSG" >&2
 	return 1
 }
