@@ -42,7 +42,10 @@
 #                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first),
 #                         version, CHANGELOG.md (union of the OT sections) and badge commits, local
 #                         tag on its tip, one atomic push, OT RELEASEs and '<v>/ORIGINAL' deleted
-#                         (resumable; after a conflict: git rebase --continue, then git release)
+#                         (resumable; after a conflict: git rebase --continue, then git release).
+#                         --reset --version <v> [--yes]: forgets the resume state of a version
+#                         release given up (refused while '<v>/RELEASE' exists); a release whose
+#                         '<v>/RELEASE' was deleted by hand is also forgotten by the next git release
 #   git publicar [tag]    step 2: '<version>/RELEASE' merged into develop, tagged (annotated with its
 #                         CHANGELOG.md entry), pushed, and deleted. --version <v>, --yes, --no-push
 #   git nueva-version <v> new version tree '<v>/ORIGINAL' next to the others, from any branch
@@ -1144,14 +1147,15 @@ release_subject() {
 }
 
 # release_args <argument>...: read the options of git changelog / release / publicar.
-# Sets REL_TAG REL_TAG_GIVEN REL_VERSION REL_OT REL_OUT REL_PUSH REL_PREVIEW REL_TAG_AT. REL_OT
-# ('<v>/<ot>', flow = squash only) comes from --ot or, without --version, from a current branch
-# inside an OT ('<v>/<ot>/...'); empty means the version release.
+# Sets REL_TAG REL_TAG_GIVEN REL_VERSION REL_OT REL_OUT REL_PUSH REL_PREVIEW REL_RESET REL_TAG_AT.
+# REL_OT ('<v>/<ot>', flow = squash only) comes from --ot or, without --version, from a current branch
+# inside an OT ('<v>/<ot>/...'); empty means the version release. REL_RESET is 1 with --reset.
 # Returns: 0; exits through die on a bad option, version, OT or tag.
 release_args() {
-	REL_TAG="" REL_TAG_GIVEN=0 REL_VERSION="" REL_OT="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0
+	REL_TAG="" REL_TAG_GIVEN=0 REL_VERSION="" REL_OT="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0 REL_RESET=0
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
+		--reset) REL_RESET=1 ;;
 		--version)
 			REL_VERSION="${2:?--version needs a version}"
 			shift
@@ -1203,6 +1207,7 @@ release_args() {
 
 cmd_changelog() { # preview: changelog + release notes + checks + plan; changes nothing
 	release_args "$@"
+	[ "$REL_RESET" = 0 ] || die "--reset belongs to git release (it changes state)"
 	if [ -n "$REL_OT" ]; then
 		ot_changelog_preview
 		return
@@ -1263,6 +1268,12 @@ commit_files() {
 cmd_release() { # step 1: RELEASE branch with version, changelog and README badge; tree deleted
 	local root
 	release_args "$@"
+	if [ "$REL_RESET" = 1 ]; then
+		[ "$REL_TAG_GIVEN" = 0 ] || die "--reset takes no tag: git release --reset --version <v>"
+		[ -z "$REL_OT" ] || die "--reset clears a version release: drop --ot"
+		version_reset
+		return 0
+	fi
 	[ "$REL_PREVIEW" = 1 ] && {
 		cmd_changelog "$@"
 		return
@@ -1334,6 +1345,7 @@ cmd_publicar() { # step 2: RELEASE merged into develop, tagged, pushed, deleted
 		die "there are $(grep -c . <<<"$rels") RELEASE branches (${rels//$'\n'/ }); publish one at a time: git publicar --version <v>  (or join them first: git combinar)"
 	fi
 	release_args "$@"
+	[ "$REL_RESET" = 0 ] || die "--reset belongs to git release (it changes state)"
 	REL_RELEASE="$REL_VERSION/$QS_BR_RELEASE_LEAF"
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
@@ -2060,7 +2072,8 @@ ot_release() {
 # branches.tag on the RELEASE tip, local until git publicar; ONE atomic push (RELEASE, branches set
 # aside, deletions); the OT RELEASEs and '<v>/ORIGINAL' deleted, '<v>/ORIGINAL' last. Progress is
 # kept in git config qs.release.<v>.plan / .ots / .current, so any failure is resumed by running
-# git release again.
+# git release again. The tag name (qs.release.<v>.tag) stays until git publicar; it and the progress
+# are forgotten when '<v>/RELEASE' is gone (version_forget_stale) or by git release --reset.
 
 # version_cfg <key> [<value>]: read (one argument) or write a progress key qs.release.<v>.<key> of
 # REL_VERSION. Arguments: $1 key, $2 value to store. Returns: 0; prints the value when reading
@@ -2073,11 +2086,85 @@ version_cfg() {
 	fi
 }
 
-# version_cfg_clear: forget the progress of the version release of REL_VERSION (the tag stays for
-# git publicar). Arguments: none. Returns: 0.
+# version_state_keys: print the set git config keys qs.release.<v>.<key> of REL_VERSION, one per
+# line. The subsection must end right after <v>: version 5 never matches the keys of 5.0.0-RC1.
+# Arguments: none. Returns: 0 (nothing printed when the version has no state).
+version_state_keys() {
+	git config --local --name-only --list 2>/dev/null | LC_ALL=C sort -u |
+		awk -v p="qs.release.$REL_VERSION." 'index($0, p) == 1 && substr($0, length(p) + 1) !~ /\./' || true
+	return 0
+}
+
+# version_state_names: the key names of version_state_keys without the prefix (plan ots current
+# tag), space separated. Arguments: none. Returns: 0.
+version_state_names() {
+	local k names=""
+	while IFS= read -r k; do
+		if [ -n "$k" ]; then names="$names ${k##*.}"; fi
+	done < <(version_state_keys)
+	printf '%s' "${names# }"
+	return 0
+}
+
+# version_cfg_clear: forget the whole resume state of REL_VERSION: plan, ots, current and the tag
+# name (qs.release.<v>.tag). Used when <v>/RELEASE is gone (an abandoned release) and by git release
+# --reset. The tag itself (refs/tags) is never deleted here. Arguments: none. Returns: 0.
 version_cfg_clear() {
 	local k
-	for k in plan ots current; do git config --unset "qs.release.$REL_VERSION.$k" 2>/dev/null || true; done
+	while IFS= read -r k; do
+		if [ -n "$k" ]; then git config --unset-all "$k" 2>/dev/null || true; fi
+	done < <(version_state_keys)
+	return 0
+}
+
+# version_progress_clear: forget the progress of a version release (plan, ots, current) once
+# <v>/RELEASE is prepared. The tag name stays: git publicar reads it and clears it on success.
+# Arguments: none. Returns: 0.
+version_progress_clear() {
+	local k
+	for k in plan ots current; do git config --unset-all "qs.release.$REL_VERSION.$k" 2>/dev/null || true; done
+	return 0
+}
+
+# version_forget_stale: when '<v>/RELEASE' does not exist and no rebase is stopped, the resume state
+# left by an abandoned release (its RELEASE deleted by hand) is stale: it is cleared, the tag name
+# too, and the tag name is computed again unless it was given on the command line. Says so when it
+# clears something. Arguments: none; reads REL_VERSION REL_TAG_GIVEN. Returns: 0.
+version_forget_stale() {
+	local names
+	exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF" && return 0
+	rebase_in_progress && return 0
+	names="$(version_state_names)"
+	[ -n "$names" ] || return 0
+	version_cfg_clear
+	if [ "$REL_TAG_GIVEN" = 0 ]; then
+		REL_TAG="$(render_tag "$REL_VERSION/$QS_BR_LEAF")"
+		REL_TAG_AT=""
+		if exists_ref "refs/tags/$REL_TAG"; then REL_TAG_AT="$(git rev-parse "refs/tags/$REL_TAG^{commit}")"; fi
+	fi
+	say "$REL_VERSION/$QS_BR_RELEASE_LEAF is gone: the stale release state of $REL_VERSION is cleared ($names)"
+	return 0
+}
+
+# version_reset: git release --reset --version <v>: forget the release state of REL_VERSION
+# (version_cfg_clear) after a confirmation (--yes skips it). Refused, nothing changed, while a rebase
+# is stopped or '<v>/RELEASE' exists: that branch is the release in progress or prepared, and git
+# publicar needs the tag name it keeps. A local tag is kept (git tag -d deletes it).
+# Arguments: none; reads REL_VERSION REL_TAG. Returns: 0; exits through die when refused or cancelled.
+version_reset() {
+	local names
+	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort) first"
+	! exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF" ||
+		die "'$REL_VERSION/$QS_BR_RELEASE_LEAF' exists: the release is in progress or prepared; publish it (git publicar --version $REL_VERSION) or delete that branch by hand first; nothing was changed"
+	names="$(version_state_names)"
+	if [ -z "$names" ]; then
+		say "nothing to reset: no release state for $REL_VERSION"
+		return 0
+	fi
+	confirm "Forget the release state of $REL_VERSION ($names)?" || die "cancelled; nothing was changed"
+	version_cfg_clear
+	say "release state of $REL_VERSION forgotten ($names)"
+	if exists_ref "refs/tags/$REL_TAG"; then say "tag $REL_TAG is kept (git tag -d $REL_TAG deletes it)"; fi
 	return 0
 }
 
@@ -2098,7 +2185,8 @@ version_ot_order() {
 # REL_TOP REL_RELEASE REL_TIP REL_BASE REL_CL_BASE REL_ERRORS REL_OK REL_ARCHIVE REL_DELETE_LOCAL
 # REL_DELETE_REMOTE REL_PLANNED REL_RESUME like release_analyse, plus REL_VOTS (the OTs, in rebase
 # order) and REL_MISSING (the OTs that block the release, '<ot>: <why>'). On a resumed release
-# (qs.release.<v>.plan set) the OT list comes from the plan, because the OT RELEASEs may be gone.
+# ('<v>/RELEASE' exists and qs.release.<v>.plan is set) the OT list comes from the plan, because the
+# OT RELEASEs may be gone; a plan without '<v>/RELEASE' is stale and ignored.
 # Errors: no or diverged '<v>/ORIGINAL', develop missing, diverged or not inside it, an OT without
 # RELEASE or with other branches, no OT at all, a stale '<v>/RELEASE', the tag on another commit, a
 # branch of the version checked out in another worktree. Branches directly under '<v>/' (finals,
@@ -2125,7 +2213,9 @@ version_release_analyse() {
 		git merge-base --is-ancestor "$REL_BASE" "$REL_TIP" ||
 			REL_ERRORS+=("$QS_BR_MAINLINE has $(git rev-list --count "$REL_TIP..$REL_BASE") commit(s) that $REL_TOP lacks; bring them in first: git checkout $REL_TOP && git subir")
 	fi
-	plan="$(version_cfg plan)"
+	# why: the plan is the state of a release in progress; without '<v>/RELEASE' it is stale
+	plan=""
+	exists_branch "$REL_RELEASE" && plan="$(version_cfg plan)" || true
 	if [ -n "$plan" ]; then
 		REL_RESUME=1
 		read -r -a REL_VOTS <<<"$plan"
@@ -2450,7 +2540,8 @@ version_release_run() {
 	version_push
 	[ "${#REL_DELETE_LOCAL[@]}" -eq 0 ] || git branch -q -D "${REL_DELETE_LOCAL[@]}"
 	! exists_ref "refs/heads/$REL_TOP" || git branch -q -D "$REL_TOP"
-	version_cfg_clear
+	# why: the tag name stays for git publicar (it reads qs.release.<v>.tag and clears it)
+	version_progress_clear
 	say "$REL_VERSION prepared on $REL_RELEASE: ${#REL_VOTS[@]} OT(s), $((${#REL_DELETE_LOCAL[@]} + 1)) branch(es) deleted, ${#REL_ARCHIVE[@]} set aside"
 }
 
@@ -2464,10 +2555,11 @@ version_release() {
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
-		version_cfg_clear
+		version_progress_clear
 		say "$REL_VERSION/$QS_BR_RELEASE_LEAF is already prepared. Review $QS_BR_CHANGELOG there, then: git publicar --version $REL_VERSION"
 		return 0
 	fi
+	version_forget_stale
 	version_release_analyse
 	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
 		version_release_report >&2
