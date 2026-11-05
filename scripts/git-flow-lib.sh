@@ -489,9 +489,10 @@ testing_patch_ids() {
 # branch (this catches 'git cherry-pick' without -x, a rebase of TESTING commits, and a squash
 # of a single TESTING commit). A match is fine when the commit message names that TESTING commit
 # in a '(cherry picked from commit <sha>)' line (what repartir writes) or when the TESTING commit
-# is recorded as distributed. Limit: a squash of several TESTING commits has a combined patch-id
-# no single commit has, and is not recognised; comparing combined diffs would also flag the
-# legitimate result of a full distribution, so it is not done.
+# is recorded as distributed. A squash merge of TESTING is refused earlier, at commit time
+# (testing_squash_hit). Limit: a hand-made copy of several TESTING commits in one commit has a
+# combined patch-id no single commit has, and is not recognised; comparing combined diffs would
+# also flag the legitimate result of a full distribution, so it is not done.
 # Arguments: $1 new tip, $2 old tip, $3 scope (see testing_range).
 # Returns: 0 and prints '<commit> <TESTING commit>' for the first offender; 1 when clean.
 testing_copy_in_range() {
@@ -532,4 +533,28 @@ testing_merged_into() {
 	hit="$(git rev-list --first-parent --merges -n1 "$m..$1" 2>/dev/null || true)"
 	[ -n "$hit" ] || return 1
 	printf '%s' "$hit"
+}
+
+# Find TESTING work in the pending squash merge ('git merge --squash' leaves .git/SQUASH_MSG with
+# 'commit <sha>' lines): a TESTING marker commit or a commit made on a local TESTING branch
+# (first-parent, after its marker).
+# Arguments: none. Returns: 0 and prints the first offending sha; 1 when there is no pending
+# squash or it lists no TESTING commit.
+testing_squash_hit() {
+	local f sha t m own=""
+	f="$(git rev-parse --git-path SQUASH_MSG)"
+	[ -f "$f" ] || return 1
+	while IFS= read -r t; do
+		m="$(testing_marker_of "$t")" || continue
+		own="$own $(git rev-list --first-parent --no-merges "$m..$t" 2>/dev/null | tr '\n' ' ')"
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/${QS_BR_TESTING:-TESTING}")
+	while read -r _ sha _; do
+		[[ $sha =~ ^[0-9a-f]{40}$ ]] || continue
+		if git log -n1 --format=%B "$sha" 2>/dev/null | grep -q '^Testing-Create: ' ||
+			grep -qw "$sha" <<<"$own"; then
+			printf '%s' "$sha"
+			return 0
+		fi
+	done < <(grep '^commit ' "$f")
+	return 1
 }

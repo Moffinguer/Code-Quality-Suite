@@ -46,7 +46,10 @@ mk t1.txt t1 "feat: t1"
 # --- C1: squash of the TESTING work (one commit: its patch-id is the squash patch-id)
 git checkout -q -b "$F/sq" "$ORIG"
 git -c merge.ff=true merge -q --squash "$TST" || fail "C1: squash failed"
-git commit -q -m "feat: squashed t1" || fail "C1: squash commit"
+out="$(git commit -m "feat: squashed t1" 2>&1)" && fail "C1: squash of TESTING committed"
+grep -q "git testing repartir" <<<"$out" && ok "C1 squash of TESTING refused at commit time" || fail "C1: squash message: $out"
+# a hand-forced squash commit (no hooks) still carries the patch-id of the TESTING commit
+git commit -q --no-verify -m "feat: squashed t1" || fail "C1: forced squash commit"
 refused_push "$F/sq" "C1 squash"
 ok "C1 squash merge of TESTING refused at push"
 
@@ -83,6 +86,17 @@ ok "C1 repartir cherry-picks and normal work are not refused"
 # the patch-ids are cached once per TESTING tip
 tip="$(git rev-parse "$TST")"
 [ -f ".git/quality-suite/tst-pids-$tip" ] && ok "C1 patch-ids cached by TESTING tip" || fail "C1: no cache"
+
+# --- C3: squash of several TESTING commits is refused at commit time; a normal squash is not
+git checkout -q -b "$F/sq3" "$ORIG"
+git -c merge.ff=true merge -q --squash "$TST" || fail "C3: squash failed"
+out="$(git commit -m "feat: squash all" 2>&1)" && fail "C3: squash of several TESTING commits committed"
+grep -q "git testing repartir" <<<"$out" && ok "C3 squash of several TESTING commits refused" || fail "C3: message: $out"
+git reset -q --hard "$ORIG"
+git -c merge.ff=true merge -q --squash "$F/plain" || fail "C3: normal squash failed"
+git commit -q -m "feat: squash plain" || fail "C3: normal squash refused"
+ok "C3 squash of a normal branch is not refused"
+git checkout -q "$F/plain"
 
 # --- C2: a manual merge into TESTING
 git checkout -q -b "$F/x" "$ORIG"
