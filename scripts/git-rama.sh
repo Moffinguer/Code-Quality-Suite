@@ -228,6 +228,7 @@ version_commit() {
 cmd_nueva() {
 	local kind="$1" seg="${2:-}" cur node new base
 	[ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
+	testing_reserved_segment "$seg" && die "'$seg' is reserved for the TESTING sandbox: git testing crear"
 	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF" | "$QS_BR_RELEASE_LEAF") die "'$seg' is reserved" ;; esac
 	if [ -n "$FROM" ]; then
 		fetch_origin
@@ -302,6 +303,7 @@ cmd_convertir() {
 cmd_subir() {
 	local cur parent base
 	cur="$(current_branch)" || die "detached HEAD"
+	testing_refused "$cur" && exit 1 # TESTING sandbox guard
 	require_clean
 	parent="$(parent_branch "$cur")"
 	fetch_origin
@@ -589,6 +591,7 @@ integra_squash() {
 cmd_integra() {
 	local cur parent base mode tpl tag depth unmerged="" c cref editor subject
 	cur="$(current_branch)" || die "detached HEAD"
+	testing_refused "$cur" && exit 1 # TESTING sandbox guard
 	valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
 	is_mainline "$cur" && die "'$cur' is a mainline branch; nothing to integrate"
 	parent="$(parent_branch "$cur")"
@@ -1035,6 +1038,10 @@ release_analyse() {
 	# every branch of the tree against its nearest ORIGINAL
 	while IFS= read -r b; do
 		[ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
+		testing_release_ok "$b" && {
+			REL_OK+=("$b"$'\t'"$(nearest_original "$b")")
+			continue
+		} # TESTING sandbox (O7)
 		tb="$(branch_tip "$b")"
 		p="$(nearest_original "$b")"
 		tp="$(branch_tip "$p")"
