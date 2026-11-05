@@ -225,7 +225,7 @@ out="$(git release --yes 2>&1)" && fail "O6: release passed a refused delete"
 git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null || fail "O6 delete failure: ORIGINAL gone: $out"
 rm -f "$CASE_REPO.git/hooks/pre-receive"
 out="$(git release --yes 2>&1)" || fail "O6: resume after the delete failure: $out"
-[ "$(git for-each-ref --format='%(refname:short)' 'refs/heads/unmerged*')" = "unmerged/$OT/c" ] &&
+[ "$(git for-each-ref --format='%(refname:short)' refs/heads | grep '^unmerged')" = "unmerged/$OT/c" ] &&
 	! git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null &&
 	[ -z "$(git ls-remote --heads origin "refs/heads/$OT/c")" ] &&
 	ok "O6: a failed subtree delete is resumed; c is set aside only once" || fail "O6 delete resume: $out"
