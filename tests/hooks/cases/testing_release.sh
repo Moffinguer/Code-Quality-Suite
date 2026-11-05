@@ -9,8 +9,8 @@ set -euo pipefail
 case_sandbox
 
 V=7.2.0
-A=$V/300200 # the OT whose TESTING keeps an undistributed commit
-B=$V/300201 # the OT whose TESTING is clean
+A=$V/300200/RF1 # the requirement whose TESTING keeps an undistributed commit
+B=$V/300201/RF1 # the requirement whose TESTING is clean
 
 # develop carries a Maven project like the release case of run.sh
 printf '# Demo\n\nText.\n' >README.md
@@ -18,7 +18,7 @@ printf '<project>\n  <groupId>g</groupId>\n  <artifactId>a</artifactId>\n  <vers
 git add README.md pom.xml
 git commit -q -m "build: maven project" || fail "pom on develop"
 git push -q origin develop 2>/dev/null || fail "push develop"
-printf '%s\n  300200\n    a\n  300201\n    b\n' "$V" | git es --push >/dev/null 2>&1 || fail "release tree"
+printf '%s\n  300200\n    RF1\n      a\n  300201\n    RF1\n      b\n' "$V" | git es --push >/dev/null 2>&1 || fail "release tree"
 
 # real sandboxes, built by 'git testing crear' from one source each
 git checkout -q "$A/a"
@@ -41,10 +41,12 @@ git checkout -q "$A/a"
 git integra -m "feat(a): add a" >/dev/null 2>&1 || fail "integra a"
 git checkout -q "$B/b"
 git integra -m "feat(b): add b" >/dev/null 2>&1 || fail "integra b"
-git checkout -q "$A/ORIGINAL"
-git integra -m "feat(300200): OT 300200" >/dev/null 2>&1 || fail "integra OT A"
-git checkout -q "$B/ORIGINAL"
-git integra -m "feat(300201): OT 300201" >/dev/null 2>&1 || fail "integra OT B"
+for rf in "$A" "$B"; do
+	git checkout -q "$rf/ORIGINAL"
+	out="$(git integra -m "feat(rf1): requirement RF1" 2>&1)" || fail "integra $rf: $out"
+	git checkout -q "${rf%/*}/ORIGINAL"
+	out="$(git integra -m "feat(ot): OT ${rf%/*}" 2>&1)" || fail "integra OT of $rf: $out"
+done
 git checkout -q develop
 
 git release --version "$V" --yes >rel.out 2>&1 || {
