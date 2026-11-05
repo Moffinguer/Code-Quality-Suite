@@ -520,7 +520,7 @@ combine_checks() {
 		fail "combinar $c changelog"
 	}
 	for f in "$@"; do
-		[ "$(grep -c "^- .*${f%.py} (.*; [A-Za-z0-9]*)$" <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
+		[ "$(grep -c "^- .*${f%.py} (.*; [A-Za-z0-9][A-Za-z0-9]*)$" <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
 			echo "$cl"
 			fail "combinar $c: $f once in the changelog with its OT, and in the tree"
 		}
