@@ -131,8 +131,11 @@ git push -q origin main 2>/dev/null && ok "push verified in check mode" || fail 
 # damage already committed (and pushed) only warns: the commit and the push touch another line
 printf 'old = "Canci\303\203\302\263n"\n' >legacy.py
 git add legacy.py
-git -c core.hooksPath=/dev/null commit -q -m "feat: legacy" || fail "legacy commit"
-git push -q --no-verify origin main 2>/dev/null || fail "legacy push"
+# why plumbing: the legacy commit is made with commit-tree and update-ref (no hook runs), and the
+# bare origin gets it by a fetch from this repository, so no push hook runs either
+legacy="$(git commit-tree "$(git write-tree)" -p "$(git rev-parse HEAD)" -m "feat: legacy")" || fail "legacy commit"
+git update-ref refs/heads/main "$legacy" "$(git rev-parse HEAD)" || fail "legacy commit ref"
+git --git-dir="$T/remote.git" fetch -q "$T/repo" main:main || fail "legacy push"
 printf 'old = "Canci\303\203\302\263n"\ny = 2\n' >legacy.py
 git add legacy.py
 out="$(git commit -m 'fix: legacy' 2>&1)" || fail "pre-existing mojibake blocked the commit: $out"
@@ -144,7 +147,9 @@ grep -q 'comp=pre-push.*status=SUCCESS' .git/quality-suite/quality-suite.log && 
 # push checks the committed tree, not the working tree
 printf 'def broken(:\n  pass\n' >late.py
 git add late.py
-git commit -q --no-verify -m "feat: late"
+# why plumbing: the broken commit is made with commit-tree and update-ref, so no commit hook runs
+late="$(git commit-tree "$(git write-tree)" -p "$(git rev-parse HEAD)" -m "feat: late")" || fail "late commit"
+git update-ref refs/heads/main "$late" "$(git rev-parse HEAD)" || fail "late commit ref"
 printf 'x = 1\n' >late.py # fixed only in the working tree
 if git push -q origin main 2>/dev/null; then fail "broken commit was pushed"; else ok "push checks the committed content"; fi
 git reset -q --hard HEAD~1

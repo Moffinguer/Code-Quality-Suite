@@ -58,8 +58,13 @@ git -c merge.ff=true merge -q --squash "$TST" || fail "C1: squash failed"
 squash_msg "feat: squashed t1" "$CASE_REPO.msg"
 out="$(git commit -q -F "$CASE_REPO.msg" 2>&1)" && fail "C1: squash of TESTING committed"
 grep -q "git testing repartir" <<<"$out" && ok "C1 squash of TESTING refused at commit time" || fail "C1: squash message: $out"
-# a hand-forced squash commit (no hooks) still carries the patch-id of the TESTING commit
-git commit -q --no-verify -m "feat: squashed t1" || fail "C1: forced squash commit"
+# a hand-forced squash commit still carries the patch-id of the TESTING commit. why plumbing: the
+# staged tree is committed with commit-tree and the branch moved with update-ref, so no hook runs;
+# the squash state is cleared as git commit would clear it
+sq_head="$(git rev-parse HEAD)"
+sq="$(git commit-tree "$(git write-tree)" -p "$sq_head" -m "feat: squashed t1")" || fail "C1: forced squash commit"
+git update-ref "refs/heads/$F/sq" "$sq" "$sq_head" || fail "C1: forced squash ref"
+rm -f "$(git rev-parse --git-dir)/SQUASH_MSG"
 refused_push "$F/sq" "C1 squash"
 ok "C1 squash merge of TESTING refused at push"
 
@@ -114,7 +119,13 @@ git checkout -q -b "$F/x" "$ORIG"
 mk x.txt x "feat: x"
 x_sha="$(git rev-parse HEAD)"
 git checkout -q "$TST"
-out="$(git merge --no-verify --no-ff -m "merge x" "$F/x" 2>&1)" || fail "C2: forced merge failed: $out"
+# why plumbing: the merge commit is built with merge-tree and commit-tree and the branch moved with
+# update-ref, so no hook runs; the reference-transaction check still sees the ref move
+tst_tip="$(git rev-parse HEAD)"
+mx="$(git merge-tree --write-tree "$tst_tip" "$x_sha")" || fail "C2: merge-tree of x"
+mc="$(git commit-tree "$mx" -p "$tst_tip" -p "$x_sha" -m "merge x")" || fail "C2: merge commit"
+out="$(git update-ref "refs/heads/$TST" "$mc" "$tst_tip" 2>&1)" || fail "C2: forced merge failed: $out"
+git reset -q --hard "$mc" || fail "C2: work tree of the merge"
 grep -q "never merged into" <<<"$out" && ok "C2 reference-transaction reports the merge into TESTING" || fail "C2: no report: $out"
 out="$(git testing estado 2>&1)" || true
 grep -q "feat: x" <<<"$out" && fail "C2: merged source commit listed as made on TESTING: $out"
