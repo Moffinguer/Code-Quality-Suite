@@ -191,3 +191,60 @@ grep -q "$V prepared on $V/RELEASE" <<<"$out" && ! grep -q 'Version release' <<<
 	[ -n "$(git rev-list --merges "develop..$V/RELEASE")" ] &&
 	git log --format=%s "develop..$V/RELEASE" | grep -q "^docs(changelog): $V$" &&
 	ok "flow = merge: git release keeps the 4.x one-level release (no OT check, no tag)" || fail "merge flow: $out"
+
+# --- an abandoned release: stopped after the rebases (the tag cannot go), its RELEASE deleted by
+# hand, an OT added; the rerun includes every OT and ignores the stale plan and ots -------------
+V=9.6.0
+version_sandbox
+released_ot p p.txt 'from p' "feat(p): text p" "2020-01-01T10:00:00"
+released_ot q q.txt 'from q' "feat(q): text q" "2020-02-01T10:00:00"
+released_ot r r.txt 'from r' "feat(r): text r" "2020-03-01T10:00:00"
+git checkout -q develop
+git update-ref "refs/tags/$V/block" HEAD # why: a ref folder where the tag must go
+out="$(git release --version "$V" --yes 2>&1)" && fail "abandon: the release passed a failed tag"
+git update-ref -d "refs/tags/$V/block"
+grep -q "the tag $V could not be created" <<<"$out" && [ "$(git config --get "qs.release.$V.plan")" = "p q r" ] ||
+	fail "abandon: state after the stop: $out"
+git checkout -q develop && git branch -q -D "$V/RELEASE" || fail "abandon: delete $V/RELEASE"
+released_ot s s.txt 'from s' "feat(s): text s" "2020-04-01T10:00:00"
+git checkout -q develop
+before="$(state)"
+out="$(git changelog --version "$V" 2>&1)" || fail "abandon: preview: $out"
+[ "$(grep -c '^- OT ' <<<"$out")" = 4 ] && grep -q "^- OT s: $V/s/RELEASE$" <<<"$out" && [ "$(state)" = "$before" ] &&
+	ok "abandon: the preview lists p, q, r and s, ignores the stale plan, changes nothing" || fail "abandon preview: $out"
+out="$(git release --version "$V" --yes 2>&1)" || fail "abandon: rerun failed: $out"
+grep -q "stale release state of $V is cleared" <<<"$out" || fail "abandon: no note: $out"
+subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
+[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "feat(p): text p" "feat(q): text q" "feat(r): text r" \
+	"feat(s): text s" "docs(changelog): $V")" ] &&
+	[ "$(git show "$V/RELEASE:s.txt")" = 'from s' ] && [ "$(git show "$V/RELEASE:p.txt")" = 'from p' ] &&
+	[ -z "$(git config --get-regexp "^qs\.release\.$V\.(plan|ots|current)")" ] &&
+	[ "$(git config --get "qs.release.$V.tag")" = "$V" ] &&
+	[ "$(git for-each-ref --format='%(refname:short)' "refs/heads/$V/")" = "$V/RELEASE" ] &&
+	[ "$(git rev-parse "$V^{commit}")" = "$(git rev-parse "$V/RELEASE")" ] &&
+	ok "abandon: the rerun releases p, q, r and s, keeps the tag name for publicar, forgets the progress" ||
+	fail "abandon rerun: $subjects / $out"
+
+# --- git release --reset --version <v>: refused while <v>/RELEASE exists, then forgets the state -
+V=9.7.0
+version_sandbox
+released_ot p p.txt 'from p' "feat(p): text p" "2020-01-01T10:00:00"
+released_ot q q.txt 'from q' "feat(q): text q" "2020-02-01T10:00:00"
+git checkout -q develop
+git update-ref "refs/tags/$V/block" HEAD # why: as above, the release stops after the rebases
+git release --version "$V" --yes >/dev/null 2>&1 && fail "reset: the release passed a failed tag"
+git update-ref -d "refs/tags/$V/block"
+before="$(state)"
+out="$(git release --reset --version "$V" --yes 2>&1)" && fail "reset: ran while $V/RELEASE exists"
+grep -q "exists: the release is in progress or prepared" <<<"$out" && [ "$(state)" = "$before" ] ||
+	fail "reset refused while $V/RELEASE exists: $out"
+git checkout -q develop && git branch -q -D "$V/RELEASE" || fail "reset: delete $V/RELEASE"
+out="$(git release --reset --version "$V" --yes 2>&1)" || fail "reset: $out"
+grep -q "release state of $V forgotten" <<<"$out" && [ -z "$(git config --get-regexp "^qs\.release\.$V\.")" ] &&
+	ok "reset: refused while $V/RELEASE exists; with --yes it forgets plan, ots and tag, changes no branch" ||
+	fail "reset: $out / $(git config --get-regexp "^qs\.release\.")"
+out="$(git release --reset --version "$V" --yes 2>&1)" || fail "reset again: $out"
+grep -q "nothing to reset" <<<"$out" && ok "reset: nothing to reset when no state is left" || fail "reset again: $out"
+out="$(git release --version "$V" --yes 2>&1)" || fail "release after reset: $out"
+[ "$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -c '^feat(')" = 2 ] &&
+	ok "reset: the next release takes every OT of the version" || fail "release after reset: $out"
