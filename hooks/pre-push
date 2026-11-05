@@ -134,6 +134,8 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 		if copy="$(testing_copy_in_range "$local_sha" "$remote_sha" remotes)"; then
 			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} has commit ${copy%% *} (copy of TESTING commit ${copy##* })." >&2
 			testing_message
+			echo "  An independent identical change: add '(cherry picked from commit ${copy##* })' to its message (git commit --amend)," >&2
+			echo "  or record it as distributed: git testing repartir <level> --map ${copy##* }=${local_ref#refs/heads/} --on-applied skip" >&2
 			if [ "$QS_BR_ENFORCE" = block ]; then
 				echo "[quality-suite] pre-push: push aborted (copy of TESTING content)." >&2
 				exit 1

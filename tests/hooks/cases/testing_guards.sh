@@ -99,3 +99,28 @@ grep -qx "refs/heads/TESTING" <<<"$lines" && fail "G3: a bare TESTING listed as 
 grep -qx "refs/heads/$TST" <<<"$lines" || fail "G3: the level TESTING not listed: $lines"
 ok "G3 a branch named TESTING is an ordinary branch"
 git branch -q -D TESTING
+
+# --- G4: a cherry-pick without -x is refused, and the message names both ways out
+git checkout -q "$TST"
+t1="$(git log -n1 --format=%H --grep='^feat: t1$' "$TST")"
+git checkout -q -b "$F/cp" "$ORIG"
+git cherry-pick -q "$t1" >/dev/null || fail "G4: cherry-pick"
+out="$(git push origin "$F/cp" 2>&1)" && fail "G4: the copy was pushed"
+grep -qF "(cherry picked from commit $t1)" <<<"$out" && grep -q "git testing repartir" <<<"$out" &&
+	grep -qF -- "--map $t1=$F/cp --on-applied skip" <<<"$out" || fail "G4: the way out is not named: $out"
+ok "G4 the copy refusal names both ways out"
+
+# way out 1: the message says where the change comes from
+printf 'feat: t1\n\n(cherry picked from commit %s)\n' "$t1" >"$CASE_REPO.msg"
+git commit -q --amend -F "$CASE_REPO.msg" || fail "G4: amend"
+git push -q origin "$F/cp" 2>/dev/null || fail "G4: the message with the cherry-pick line was refused"
+ok "G4 way out 1: the cherry-pick line is accepted"
+
+# way out 2: the copy is recorded as distributed, with the command the refusal names
+git checkout -q -b "$F/cp2" "$ORIG"
+git cherry-pick -q "$t1" >/dev/null || fail "G4: second cherry-pick"
+out="$(git testing repartir --map "$t1=$F/cp2" --on-applied skip 2>&1)" || fail "G4: repartir: $out"
+grep -qF "already present in $F/cp2" <<<"$out" || fail "G4: repartir did not record it: $out"
+git config --get-all "qs.testing.$F.distributed" | grep -qF "$t1 $F/cp2" || fail "G4: not recorded as distributed"
+git push -q origin "$F/cp2" 2>/dev/null || fail "G4: the distributed copy was refused"
+ok "G4 way out 2: the recorded command accepts the copy"
