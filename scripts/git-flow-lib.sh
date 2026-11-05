@@ -109,6 +109,7 @@ parent_branch() {
 		return 0
 	fi
 	is_archived_branch "$b" && return 0 # set aside: no parent
+	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
@@ -151,6 +152,11 @@ valid_branch_name() {
 	while IFS= read -r seg; do
 		i=$((i + 1))
 		if [ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ]; then break; fi
+		if [ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ]; then break; fi
+		if testing_reserved_segment "$seg"; then
+			echo "'$seg' is reserved for the TESTING sandbox (git testing crear)"
+			return 1
+		fi
 		if [ "$seg" = "$QS_BR_LEAF" ]; then
 			echo "'$QS_BR_LEAF' can only be the last segment"
 			return 1
@@ -176,9 +182,9 @@ branch_children() {
 		git for-each-ref --format='%(refname:short)' "refs/heads/$f/"
 		git for-each-ref --format='%(refname:lstrip=3)' "refs/remotes/origin/$f/"
 	} 2>/dev/null |
-		awk -v f="$f/" -v leaf="$QS_BR_LEAF" -v me="$p" '
+		awk -v f="$f/" -v leaf="$QS_BR_LEAF" -v me="$p" -v tst="${QS_BR_TESTING:-TESTING}" '
         index($0, f) == 1 { r = substr($0, length(f) + 1); n = split(r, a, "/");
-          if ($0 != me && (n == 1 || (n == 2 && a[2] == leaf))) print $0 }' | sort -u
+          if ($0 != me && a[1] != tst && (n == 1 || (n == 2 && a[2] == leaf))) print $0 }' | sort -u
 }
 
 # branch ref to use as a base: origin/<b> when it exists and is ahead of (or equal to) the local one
@@ -240,6 +246,7 @@ configure_repo() {
 	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
 	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
+	git config alias.testing "!bash '$suite/scripts/git-testing.sh'" # TESTING sandbox
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir
 	git config merge.qs-version.name "code-quality-suite: version files keep the branch version"
@@ -289,4 +296,330 @@ children_pending() {
 		branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
+}
+
+# ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
+
+# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf).
+# A branch named just the leaf has no level and is an ordinary branch.
+# Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
+is_testing_branch() {
+	case "$1" in ?*/"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
+	return 1
+}
+
+# The local TESTING sandboxes as full ref names. The glob 'refs/heads/**/<leaf>' also matches a
+# branch named just <leaf>, so every match is checked with is_testing_branch.
+# Arguments: none. Returns: 0; prints one 'refs/heads/...' line per sandbox (possibly none).
+testing_local_refs() {
+	local leaf="${QS_BR_TESTING:-TESTING}" ref
+	while IFS= read -r ref; do
+		is_testing_branch "${ref#refs/heads/}" && printf '%s\n' "$ref"
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
+	return 0
+}
+
+# Whether a branch-name segment is the reserved TESTING leaf, ignoring case.
+# Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
+testing_reserved_segment() {
+	local a b
+	a="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+	b="$(printf '%s' "${QS_BR_TESTING:-TESTING}" | tr '[:upper:]' '[:lower:]')"
+	[ "$a" = "$b" ]
+}
+
+# Print the refusal shown whenever a TESTING branch would be merged, rebased or integrated.
+# Arguments: none. Returns: 0; the message goes to stderr.
+testing_message() {
+	echo "TESTING is a sandbox: it cannot be merged, rebased or integrated. Move its new commits to their source branches with 'git testing repartir'." >&2
+}
+
+# Refuse a command that runs on a TESTING branch (integra, subir).
+# Arguments: $1 branch. Returns: 0 (message printed) when the branch is TESTING and the command
+# must stop; 1 when the branch is not a sandbox.
+testing_refused() {
+	is_testing_branch "$1" || return 1
+	testing_message
+	return 0
+}
+
+# Hook guard for a merge: refused when the target or any source is a TESTING branch.
+# Arguments: $1 target branch, $2 newline-separated names of the branches being merged.
+# Returns: 0 (message printed) when the merge must be refused; 1 when it is not a sandbox merge.
+testing_blocks_merge() {
+	local s
+	if is_testing_branch "$1"; then
+		testing_message
+		return 0
+	fi
+	while IFS= read -r s; do
+		[ -n "$s" ] || continue
+		if is_testing_branch "$s"; then
+			testing_message
+			return 0
+		fi
+	done <<<"$2"
+	return 1
+}
+
+# After pre-merge-commit refused an automatic merge, git leaves the merge result staged. Put back
+# exactly the paths the merge staged (git started the merge only if none of them had local
+# changes), so a refused merge changes nothing. Does nothing while a merge is in progress (a
+# conflicted merge being concluded by 'git commit').
+# Arguments: none. Returns: 0.
+testing_undo_merge() {
+	local p
+	[ -e "$(git rev-parse --git-path MERGE_HEAD)" ] && return 0
+	while IFS= read -r -d '' p; do
+		if git cat-file -e "HEAD:$p" 2>/dev/null; then
+			git checkout -q HEAD -- "$p"
+		else
+			git rm -q -f --cached -- "$p"
+			rm -f -- "$p"
+		fi
+	done < <(git diff --cached --name-only -z HEAD)
+	return 0
+}
+
+# Hook guard for a rebase: refused when the rebased branch or the upstream is a TESTING branch.
+# Arguments: $1 branch being rebased, $2 upstream as typed. Returns: 0 (message printed) when
+# refused; 1 otherwise.
+testing_blocks_rebase() {
+	local up
+	up="$(git rev-parse -q --symbolic-full-name "$2" 2>/dev/null || true)"
+	up="${up#refs/heads/}"
+	up="${up#refs/remotes/origin/}"
+	if is_testing_branch "$1" || { [ -n "$up" ] && is_testing_branch "$up"; }; then
+		testing_message
+		return 0
+	fi
+	return 1
+}
+
+# Hook guard for a push: a TESTING branch may only be pushed to its own name.
+# Arguments: $1 local ref as git gives it (refs/heads/x or HEAD), $2 remote ref.
+# Returns: 0 (message printed) when refused; 1 otherwise.
+testing_blocks_push() {
+	local b
+	case "$1" in
+	refs/heads/*) b="${1#refs/heads/}" ;;
+	HEAD) b="$(current_branch || true)" ;;
+	*) return 1 ;;
+	esac
+	is_testing_branch "$b" || return 1
+	case "$2" in refs/heads/*) is_testing_branch "$2" && return 1 ;; *) return 1 ;; esac
+	testing_message
+	return 0
+}
+
+# Release helper: whether a TESTING branch can be deleted with its tree (no undistributed
+# commits). A TESTING branch with undistributed commits is not "ok": the caller sets it aside as
+# unmerged and a warning names the commits. Loads scripts/git-testing.sh on demand.
+# Arguments: $1 branch. Returns: 0 when it is a TESTING branch that is safe to delete; 1 when it
+# is not a TESTING branch or has undistributed commits.
+testing_release_ok() {
+	is_testing_branch "$1" || return 1
+	# shellcheck source=scripts/git-testing.sh
+	. "$(dirname "${BASH_SOURCE[0]}")/git-testing.sh"
+	tst_release_ok "${1%/*}"
+}
+
+# Build the revision arguments of a range of commits into the global array TST_RANGE.
+# Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref:
+# 'remotes' (history not on any remote) or 'branches:<name>' (history not on any other local
+# branch; <name> is the updated branch). TESTING branches never count as "other".
+# Returns: 0; sets TST_RANGE.
+testing_range() {
+	local new="$1" old="${2:-}" scope="${3:-remotes}" leaf="${QS_BR_TESTING:-TESTING}"
+	if [ -n "$old" ] && [ -n "${old//0/}" ] && git cat-file -e "${old}^{commit}" 2>/dev/null; then
+		TST_RANGE=("$new" "^$old")
+	else
+		case "$scope" in
+		branches:*) TST_RANGE=("$new" --not --exclude="${scope#branches:}" --exclude="*/$leaf" --branches) ;;
+		*) TST_RANGE=("$new" --not --exclude="*/$leaf" --remotes) ;;
+		esac
+	fi
+}
+
+# The marker commit of a TESTING history: its newest first-parent 'Testing-Create:' commit.
+# Arguments: $1 tip. Returns: 0 and prints the sha; 1 when there is no marker.
+testing_marker_of() {
+	local m
+	m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$1" 2>/dev/null || true)"
+	[ -n "$m" ] || return 1
+	printf '%s' "$m"
+}
+
+# Find a TESTING commit inside a range of commits: a marker commit (trailers 'Testing-Create:' and
+# 'Sources:') or a commit made on a local TESTING branch after its marker (first-parent, so what
+# was merged into TESTING by hand never counts as made there). This is how TESTING content is
+# detected when it reached a non-TESTING branch without a merge hook (fast-forward).
+# Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref
+# (see testing_range). Returns: 0 and prints the offending sha when there is one; 1 when clean.
+testing_leak_in_range() {
+	local hit t m
+	local TST_RANGE=()
+	testing_range "$1" "${2:-}" "${3:-remotes}"
+	hit="$(git log -n1 --format=%H --all-match --grep='^Testing-Create: ' --grep='^Sources:$' "${TST_RANGE[@]}" 2>/dev/null || true)"
+	if [ -n "$hit" ]; then
+		printf '%s' "$hit"
+		return 0
+	fi
+	# commits made on a TESTING branch after its marker, found in the range (marker already shipped)
+	[ -n "$(git rev-list -n1 "${TST_RANGE[@]}" 2>/dev/null)" ] || return 1
+	while IFS= read -r t; do
+		m="$(testing_marker_of "$t")" || continue
+		hit="$(comm -12 <(git rev-list -n 2000 "${TST_RANGE[@]}" 2>/dev/null | sort) \
+			<(git rev-list --first-parent --no-merges -n 2000 "$m..$t" 2>/dev/null | sort) | head -n1)"
+		if [ -n "$hit" ]; then
+			printf '%s' "$hit"
+			return 0
+		fi
+	done < <(testing_local_refs)
+	return 1
+}
+
+# Delete the cached patch-id lists whose tip is no longer the tip of any local TESTING branch.
+# One for-each-ref call and a look at the file names: cheap enough to run on every cache write.
+# Temporary files of a write in progress (a dot after the tip) are left alone.
+# Arguments: $1 cache folder, $2 tip just written (always kept). Returns: 0.
+testing_prune_pids() {
+	local dir="$1" live=" $2 " f tip sha ref
+	while read -r sha ref; do
+		is_testing_branch "${ref#refs/heads/}" && live="$live$sha "
+	done < <(git for-each-ref --format='%(objectname) %(refname)' refs/heads/)
+	for f in "$dir"/tst-pids-*; do
+		[ -e "$f" ] || continue
+		tip="${f##*/tst-pids-}"
+		case "$tip" in *.*) continue ;; esac
+		case "$live" in *" $tip "*) ;; *) rm -f -- "$f" ;; esac
+	done
+	return 0
+}
+
+# The stable patch-ids of the commits made on a TESTING branch (first-parent, non-merge, after its
+# marker). Cached by the tip sha in the git dir, so a push computes them once. A failed git
+# command is never cached (an empty list would then pass every copy check); a write prunes the
+# cache files of tips that are no longer a TESTING tip (testing_prune_pids).
+# Arguments: $1 tip sha. Returns: 0 and prints '<patch-id> <commit sha>' lines (possibly none);
+# 1 when git failed (nothing printed, nothing cached).
+testing_patch_ids() {
+	local tip="$1" m dir cache log tmp ok=0
+	dir="$(git rev-parse --absolute-git-dir)/quality-suite"
+	cache="$dir/tst-pids-$tip"
+	if [ -f "$cache" ]; then
+		cat "$cache"
+		return 0
+	fi
+	m="$(testing_marker_of "$tip")" || return 0
+	mkdir -p "$dir"
+	log="$cache.log.$$"
+	tmp="$cache.$$"
+	# why: a pipe would show only the status of patch-id; each command's status is checked here
+	if git log --first-parent --no-merges -p --format='commit %H' "$m..$tip" >"$log" 2>/dev/null &&
+		git patch-id --stable <"$log" >"$tmp" 2>/dev/null; then
+		ok=1
+	fi
+	rm -f -- "$log"
+	if [ "$ok" = 1 ]; then
+		mv -f "$tmp" "$cache"
+		testing_prune_pids "$dir" "$tip"
+		cat "$cache"
+		return 0
+	fi
+	rm -f -- "$tmp"
+	return 1
+}
+
+# Find a copy of TESTING work in a range of commits that did not travel through 'git testing
+# repartir': a commit whose stable patch-id equals the one of a commit made on a local TESTING
+# branch (this catches 'git cherry-pick' without -x, a rebase of TESTING commits, and a squash
+# of a single TESTING commit). A match is fine when the commit message names that TESTING commit
+# in a '(cherry picked from commit <sha>)' line (what repartir writes) or when the TESTING commit
+# is recorded as distributed. A squash merge of TESTING is refused earlier, at commit time
+# (testing_squash_hit). Limit: a hand-made copy of several TESTING commits in one commit has a
+# combined patch-id no single commit has, and is not recognised; comparing combined diffs would
+# also flag the legitimate result of a full distribution, so it is not done.
+# Arguments: $1 new tip, $2 old tip, $3 scope (see testing_range).
+# Returns: 0 and prints '<commit> <TESTING commit>' for the first offender; 1 when clean.
+testing_copy_in_range() {
+	local all rng t c cand body rc=1 hit
+	local TST_RANGE=()
+	all="$(mktemp)"
+	rng="$(mktemp)"
+	while IFS= read -r t; do
+		# why: a failed patch-id is not cached (testing_patch_ids); the other sandboxes still count
+		testing_patch_ids "$(git rev-parse "$t")" >>"$all" || true
+	done < <(testing_local_refs)
+	if [ -s "$all" ]; then
+		testing_range "$1" "${2:-}" "${3:-remotes}"
+		git log --no-merges -p -n 500 --format='commit %H' "${TST_RANGE[@]}" 2>/dev/null |
+			git patch-id --stable >"$rng" || true
+		hit="$(awk 'NR == FNR { a[$1] = a[$1] " " $2; next } $1 in a { print $2 a[$1] }' "$all" "$rng")"
+		while read -r c cand; do
+			[ -n "$c" ] || continue
+			body="$(git log -n1 --format=%B "$c")"
+			for t in $cand; do
+				grep -qF "(cherry picked from commit $t)" <<<"$body" && continue
+				git config --get-regexp '^qs\.testing\..*\.distributed$' 2>/dev/null | grep -q " $t " && continue
+				printf '%s %s' "$c" "$t"
+				rc=0
+				break 2
+			done
+		done <<<"$hit"
+	fi
+	rm -f "$all" "$rng"
+	return "$rc"
+}
+
+# Find a merge made INTO a TESTING branch after its creation (first-parent merge commit after the
+# marker). TESTING is recreated ('git testing crear --recrear'), never merged into.
+# Arguments: $1 TESTING tip. Returns: 0 and prints the merge sha when there is one; 1 otherwise.
+testing_merged_into() {
+	local m hit
+	m="$(testing_marker_of "$1")" || return 1
+	hit="$(git rev-list --first-parent --merges -n1 "$m..$1" 2>/dev/null || true)"
+	[ -n "$hit" ] || return 1
+	printf '%s' "$hit"
+}
+
+# Find TESTING work in the squash commit being made. 'git merge --squash' leaves .git/SQUASH_MSG:
+# the header 'Squashed commit of the following:' and one 'commit <sha>' line per squashed commit.
+# A commit is that squash only when its message uses SQUASH_MSG: the header line and every listed
+# sha are in the message. A commit with its own message ('git commit -m') is not the squash. A
+# SQUASH_MSG that lists TESTING work but is not used by this commit is stale (left by an aborted
+# squash): it is ignored and a one-line note says it can be deleted. The listed commits are
+# TESTING work when one is a TESTING marker commit or a commit made on a local TESTING branch
+# (first-parent, after its marker).
+# Arguments: $1 the commit message as it will be stored. Returns: 0 and prints the first offending
+# listed sha when this commit is the squash of TESTING work; 1 otherwise.
+testing_squash_hit() {
+	local f t m sha own="" hit="" uses=0 msg="$1"
+	f="$(git rev-parse --git-path SQUASH_MSG)"
+	[ -f "$f" ] || return 1
+	while IFS= read -r t; do
+		m="$(testing_marker_of "$t")" || continue
+		own="$own $(git rev-list --first-parent --no-merges "$m..$t" 2>/dev/null | tr '\n' ' ')"
+	done < <(testing_local_refs)
+	while IFS= read -r sha; do
+		if git log -n1 --format=%B "$sha" 2>/dev/null | grep -q '^Testing-Create: ' ||
+			grep -qw "$sha" <<<"$own"; then
+			hit="$sha"
+			break
+		fi
+	done < <(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$f")
+	[ -n "$hit" ] || return 1
+	# why: the message must be the squash's own: the header and every listed sha are in it
+	if grep -qxF 'Squashed commit of the following:' <<<"$msg"; then
+		uses=1
+		while IFS= read -r sha; do
+			grep -qF "$sha" <<<"$msg" || uses=0
+		done < <(sed -n 's/^commit \([0-9a-f]\{40\}\)$/\1/p' "$f")
+	fi
+	if [ "$uses" = 1 ]; then
+		printf '%s' "$hit"
+		return 0
+	fi
+	echo "commit-msg: .git/SQUASH_MSG is stale (this commit does not use it): rm .git/SQUASH_MSG" >&2
+	return 1
 }

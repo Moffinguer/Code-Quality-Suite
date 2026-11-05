@@ -6,56 +6,79 @@
 # git feeds lines on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
-if [ -f "${HOOK_DIR}/quality-suite.env" ]; then set -a; . "${HOOK_DIR}/quality-suite.env"; set +a; fi
-[ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ] && . "${QUALITY_SUITE_DIR}/log-lib.sh" || { qs_log(){ :; }; qs_result(){ :; }; }
-: "${QUALITY_LOG_FILE:=$(git rev-parse --absolute-git-dir)/quality-suite/quality-suite.log}"; export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+if [ -f "${HOOK_DIR}/quality-suite.env" ]; then
+	set -a
+	# shellcheck disable=SC1091
+	. "${HOOK_DIR}/quality-suite.env"
+	set +a
+fi
+if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
+	. "${QUALITY_SUITE_DIR}/log-lib.sh"
+else
+	qs_log() { :; }
+	qs_result() { :; }
+fi
+: "${QUALITY_LOG_FILE:=$(git rev-parse --absolute-git-dir)/quality-suite/quality-suite.log}"
+export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
 
-[ -n "${QUALITY_SUITE_DIR:-}" ] || { echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2; exit 1; }
+[ -n "${QUALITY_SUITE_DIR:-}" ] || {
+	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
+	exit 1
+}
 . "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
 REPO_ROOT="$(qs_repo_root)"
-STATE="$(qs_state_dir)"; mkdir -p "$STATE"
+STATE="$(qs_state_dir)"
+mkdir -p "$STATE"
 Z40="0000000000000000000000000000000000000000"
 EMPTY_TREE="$(git hash-object -t tree /dev/null)"
 rules="${REPO_ROOT}/.quality-rules.json"
 
 # check_ref <local_sha> <base>: check the files changed in base..local_sha, as committed.
 check_ref() {
-  local sha="$1" base="$2" tree list n
-  list="${STATE}/files.lst"
-  git diff --name-only -z --diff-filter=ACMR "$base" "$sha" > "$list"
-  qs_read_list "$list"; n="${#QS_FILES[@]}"
-  if [ "$n" -eq 0 ]; then echo "[quality-suite] pre-push: nothing new to verify."; return 0; fi
-  echo "[quality-suite] pre-push: verifying ${n} file(s) of ${sha:0:10} (check mode)..."
-  qs_log INFO pre-push "push start files=${n} commit=${sha}"
-  "${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "$QUALITY_SUITE_DIR" "${HOOK_DIR}/quality-suite.env" "$QUALITY_SUITE_IMAGE" --from "$list" \
-    || echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
-  # why: the pushed commit, not the working tree (uncommitted edits must neither hide nor cause errors)
-  tree="${STATE}/push-tree"
-  rm -rf "$tree"; mkdir -p "$tree"
-  git archive --format=tar "$sha" | tar -x -C "$tree"
-  git ls-tree -r -z "$sha" | {
-    while IFS= read -r -d '' entry; do
-      case "$entry" in 100755\ *) printf '%s\n' "${entry#*$'\t'}" ;; esac
-    done
-  } > "${STATE}/exec-files.txt"
-  local envf rc=0 rmount=()
-  [ -f "$rules" ] && rmount=(-v "$(qs_hostpath "$rules"):/qs-rules.json:ro" -e QS_RULES=/qs-rules.json)
-  envf="$(qs_env_file "${HOOK_DIR}/quality-suite.env" "${STATE}/docker.env")"
-  qs_docker_opts; qs_git_opts
-  docker run "${QS_DOCKER_OPTS[@]}" ${QS_GIT_OPTS[@]+"${QS_GIT_OPTS[@]}"} --env-file "$(qs_hostpath "$envf")" ${rmount[@]+"${rmount[@]}"} \
-    -e QUALITY_MODE=check -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
-    -e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
-    -e QS_BASE_REV="$base" -e QS_BRANCH="${PUSH_BRANCH:-}" \
-    -v "$(qs_hostpath "$tree"):/workspace:ro" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
-    "$QUALITY_SUITE_IMAGE" run || rc=$?
-  rm -f "$envf"; rm -rf "$tree"
-  if [ "$rc" -ne 0 ]; then
-    qs_result pre-push "${n} file(s)" check ERROR "push aborted"
-    echo "[quality-suite] pre-push: verification failed. Push aborted."
-    return 1
-  fi
-  qs_result pre-push "${n} file(s)" check SUCCESS
+	local sha="$1" base="$2" tree list n
+	list="${STATE}/files.lst"
+	git diff --name-only -z --diff-filter=ACMR "$base" "$sha" >"$list"
+	qs_read_list "$list"
+	n="${#QS_FILES[@]}"
+	if [ "$n" -eq 0 ]; then
+		echo "[quality-suite] pre-push: nothing new to verify."
+		return 0
+	fi
+	echo "[quality-suite] pre-push: verifying ${n} file(s) of ${sha:0:10} (check mode)..."
+	qs_log INFO pre-push "push start files=${n} commit=${sha}"
+	"${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "$QUALITY_SUITE_DIR" "${HOOK_DIR}/quality-suite.env" "$QUALITY_SUITE_IMAGE" --from "$list" ||
+		echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
+	# why: the pushed commit, not the working tree (uncommitted edits must neither hide nor cause errors)
+	tree="${STATE}/push-tree"
+	rm -rf "$tree"
+	mkdir -p "$tree"
+	git archive --format=tar "$sha" | tar -x -C "$tree"
+	git ls-tree -r -z "$sha" | {
+		while IFS= read -r -d '' entry; do
+			case "$entry" in 100755\ *) printf '%s\n' "${entry#*$'\t'}" ;; esac
+		done
+	} >"${STATE}/exec-files.txt"
+	local envf rc=0 rmount=()
+	[ -f "$rules" ] && rmount=(-v "$(qs_hostpath "$rules"):/qs-rules.json:ro" -e QS_RULES=/qs-rules.json)
+	envf="$(qs_env_file "${HOOK_DIR}/quality-suite.env" "${STATE}/docker.env")"
+	qs_docker_opts
+	qs_git_opts
+	docker run "${QS_DOCKER_OPTS[@]}" ${QS_GIT_OPTS[@]+"${QS_GIT_OPTS[@]}"} --env-file "$(qs_hostpath "$envf")" ${rmount[@]+"${rmount[@]}"} \
+		-e QUALITY_MODE=check -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
+		-e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
+		-e QS_BASE_REV="$base" -e QS_BRANCH="${PUSH_BRANCH:-}" \
+		-v "$(qs_hostpath "$tree"):/workspace:ro" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
+		"$QUALITY_SUITE_IMAGE" run || rc=$?
+	rm -f "$envf"
+	rm -rf "$tree"
+	if [ "$rc" -ne 0 ]; then
+		qs_result pre-push "${n} file(s)" check ERROR "push aborted"
+		echo "[quality-suite] pre-push: verification failed. Push aborted."
+		return 1
+	fi
+	qs_result pre-push "${n} file(s)" check SUCCESS
 }
 
 # why: read git's ref lines first, so nothing run below can consume them from stdin
@@ -66,62 +89,128 @@ while read -r local_ref local_sha remote_ref remote_sha; do REFS+=("$local_ref $
 # <version>/<ot>/.../ORIGINAL; a final branch must contain its ORIGINAL (rebased: git subir);
 # shared branches (ORIGINAL, develop, main) are never rewritten (no force-push).
 if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
-  # shellcheck disable=SC1091
-  . "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
-  qs_policy_load
-  br_fail=0
-  br_err() { echo "[quality-suite] pre-push: $*" >&2; [ "$QS_BR_ENFORCE" = block ] && br_fail=1; return 0; }
-  for ref in ${REFS[@]+"${REFS[@]}"}; do
-    [ "$QS_BR_ENFORCE" = off ] && break
-    read -r local_ref local_sha remote_ref remote_sha <<< "$ref"
-    case "$local_ref" in refs/heads/*) b="${local_ref#refs/heads/}" ;; *) continue ;; esac
-    [ "$local_sha" = "$Z40" ] && continue
-    if ! why="$(valid_branch_name "$b")"; then
-      br_err "branch '$b' does not follow <version>/<ot>/.../$QS_BR_LEAF: $why"; continue
-    fi
-    if is_parent_branch "$b" || is_mainline "$b"; then
-      if [ "$remote_sha" != "$Z40" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null \
-         && ! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
-        br_err "'$b' is shared and the push rewrites its history (force-push). Merge instead: git subir"
-      fi
-    elif [ "${QUALITY_SKIP_PARENT_CHECK:-0}" != 1 ]; then
-      p="$(parent_branch "$b")"; ptip="$(best_ref "$p" || true)"
-      if [ -n "$ptip" ] && ! git merge-base --is-ancestor "$ptip" "$local_sha"; then
-        br_err "'$b' is behind its parent '$ptip'. Rebase first: git subir (bypass once: QUALITY_SKIP_PARENT_CHECK=1)"
-      fi
-    fi
-  done
-  [ "$br_fail" = 0 ] || { echo "[quality-suite] pre-push: push aborted (branch model)." >&2; exit 1; }
+	# shellcheck disable=SC1091
+	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_policy_load
+	# --- TESTING sandbox guard (pushed only to its own name) ---
+	for ref in ${REFS[@]+"${REFS[@]}"}; do
+		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
+		if [ "$QS_BR_ENFORCE" != off ] && testing_blocks_push "$local_ref" "$remote_ref"; then
+			[ "$QS_BR_ENFORCE" = block ] && {
+				echo "[quality-suite] pre-push: push aborted (TESTING sandbox)." >&2
+				exit 1
+			}
+		fi
+	done
+	# why: a fast-forward of ORIGINAL to TESTING (merge --ff-only) fires no hook and pushes under the
+	# ORIGINAL name; so every pushed non-TESTING ref is checked for TESTING commits in its range
+	for ref in ${REFS[@]+"${REFS[@]}"}; do
+		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
+		[ "$QS_BR_ENFORCE" = off ] && break
+		[ "$local_sha" = "$Z40" ] && continue
+		if is_testing_branch "${local_ref#refs/heads/}"; then
+			# TESTING is recreated, never merged into: a merge after the marker is refused
+			if mrg="$(testing_merged_into "$local_sha")"; then
+				echo "[quality-suite] pre-push: ${local_ref#refs/heads/} has a merge made into it (${mrg:0:10})." >&2
+				echo "  TESTING must be recreated: git testing crear --recrear" >&2
+				if [ "$QS_BR_ENFORCE" = block ]; then
+					echo "[quality-suite] pre-push: push aborted (merge into TESTING)." >&2
+					exit 1
+				fi
+			fi
+			continue
+		fi
+		is_testing_branch "${remote_ref#refs/heads/}" && continue
+		if leak="$(testing_leak_in_range "$local_sha" "$remote_sha" remotes)"; then
+			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} contains TESTING commit ${leak:0:10}." >&2
+			testing_message
+			if [ "$QS_BR_ENFORCE" = block ]; then
+				echo "[quality-suite] pre-push: push aborted (TESTING content)." >&2
+				exit 1
+			fi
+		fi
+		# why: a squash, a cherry-pick without -x or a rebase leaves no ancestry; the patch-id of the
+		# commit still equals the one of a commit made on TESTING (repartir's -x line excuses it)
+		if copy="$(testing_copy_in_range "$local_sha" "$remote_sha" remotes)"; then
+			echo "[quality-suite] pre-push: ${local_ref#refs/heads/} has commit ${copy%% *} (copy of TESTING commit ${copy##* })." >&2
+			testing_message
+			echo "  An independent identical change: add '(cherry picked from commit ${copy##* })' to its message (git commit --amend)," >&2
+			echo "  or record it as distributed: git testing repartir <level> --map ${copy##* }=${local_ref#refs/heads/} --on-applied skip" >&2
+			if [ "$QS_BR_ENFORCE" = block ]; then
+				echo "[quality-suite] pre-push: push aborted (copy of TESTING content)." >&2
+				exit 1
+			fi
+		fi
+	done
+	# --- end TESTING sandbox guard ---
+	br_fail=0
+	br_err() {
+		echo "[quality-suite] pre-push: $*" >&2
+		[ "$QS_BR_ENFORCE" = block ] && br_fail=1
+		return 0
+	}
+	for ref in ${REFS[@]+"${REFS[@]}"}; do
+		[ "$QS_BR_ENFORCE" = off ] && break
+		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
+		case "$local_ref" in refs/heads/*) b="${local_ref#refs/heads/}" ;; *) continue ;; esac
+		[ "$local_sha" = "$Z40" ] && continue
+		if ! why="$(valid_branch_name "$b")"; then
+			br_err "branch '$b' does not follow <version>/<ot>/.../$QS_BR_LEAF: $why"
+			continue
+		fi
+		if is_parent_branch "$b" || is_mainline "$b"; then
+			if [ "$remote_sha" != "$Z40" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null &&
+				! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
+				br_err "'$b' is shared and the push rewrites its history (force-push). Merge instead: git subir"
+			fi
+		elif [ "${QUALITY_SKIP_PARENT_CHECK:-0}" != 1 ]; then
+			p="$(parent_branch "$b")"
+			ptip="$(best_ref "$p" || true)"
+			if [ -n "$ptip" ] && ! git merge-base --is-ancestor "$ptip" "$local_sha"; then
+				br_err "'$b' is behind its parent '$ptip'. Rebase first: git subir (bypass once: QUALITY_SKIP_PARENT_CHECK=1)"
+			fi
+		fi
+	done
+	[ "$br_fail" = 0 ] || {
+		echo "[quality-suite] pre-push: push aborted (branch model)." >&2
+		exit 1
+	}
 fi
 for ref in ${REFS[@]+"${REFS[@]}"}; do
-  read -r local_ref local_sha remote_ref remote_sha <<< "$ref"
-  [ "$local_sha" = "$Z40" ] && continue                         # deleted branch
-  if [ "$remote_sha" = "$Z40" ] || ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
-    # new branch, or a remote commit we never fetched (force-push): the commits not on any remote
-    oldest="$(git rev-list "$local_sha" --not --remotes | tail -n 1)"
-    if [ -n "$oldest" ]; then base="${oldest}^"; else base="$local_sha"; fi
-    # why: a root commit has no parent; diff against the empty tree instead
-    git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || base="$EMPTY_TREE"
-  else
-    base="$remote_sha"
-  fi
-  PUSH_BRANCH="${local_ref#refs/heads/}"
-  check_ref "$local_sha" "$base" || exit 1
+	read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
+	[ "$local_sha" = "$Z40" ] && continue # deleted branch
+	if [ "$remote_sha" = "$Z40" ] || ! git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+		# new branch, or a remote commit we never fetched (force-push): the commits not on any remote
+		oldest="$(git rev-list "$local_sha" --not --remotes | tail -n 1)"
+		if [ -n "$oldest" ]; then base="${oldest}^"; else base="$local_sha"; fi
+		# why: a root commit has no parent; diff against the empty tree instead
+		git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || base="$EMPTY_TREE"
+	else
+		base="$remote_sha"
+	fi
+	PUSH_BRANCH="${local_ref#refs/heads/}"
+	check_ref "$local_sha" "$base" || exit 1
 done
 
 # Test stage (delicate op): runs project tests if defined (.quality-tests) or
 # autodetected (QUALITY_TESTS_AUTODETECT=1). Runs on the host; blocks the push.
 if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/run-tests.sh" ]; then
-  "${QUALITY_SUITE_DIR}/scripts/run-tests.sh" "${REPO_ROOT}" \
-    || { echo "[quality-suite] pre-push: tests failed. Push aborted."; exit 1; }
+	"${QUALITY_SUITE_DIR}/scripts/run-tests.sh" "${REPO_ROOT}" ||
+		{
+			echo "[quality-suite] pre-push: tests failed. Push aborted."
+			exit 1
+		}
 fi
 
 # Optional heavy stage (real project build). Runs on the host (needs its toolchain).
 # Enable it by setting QUALITY_HEAVY_CMD in quality-suite.env, e.g. "mvn -B verify".
 if [ -n "${QUALITY_HEAVY_CMD:-}" ]; then
-  echo "[quality-suite] pre-push: heavy stage -> ${QUALITY_HEAVY_CMD}"
-  ( cd "${REPO_ROOT}" && eval "${QUALITY_HEAVY_CMD}" ) \
-    || { echo "[quality-suite] pre-push: heavy stage failed. Push aborted."; exit 1; }
+	echo "[quality-suite] pre-push: heavy stage -> ${QUALITY_HEAVY_CMD}"
+	(cd "${REPO_ROOT}" && eval "${QUALITY_HEAVY_CMD}") ||
+		{
+			echo "[quality-suite] pre-push: heavy stage failed. Push aborted."
+			exit 1
+		}
 fi
 
 echo "[quality-suite] pre-push OK"

@@ -351,6 +351,7 @@ Then `git publicar --version <version>`.
 | pre-push | branch names follow the model; a final branch contains its `ORIGINAL` (else `git subir`); shared branches (`ORIGINAL`, `develop`, `main`) are never force-pushed; then the quality gate |
 | pre-rebase | final branches rebase onto their parent (or tidy their own commits); shared branches only onto their own remote (`git pull`) |
 | pre-merge-commit | into an `ORIGINAL`: its children or its parent; into `develop`: a `<version>/ORIGINAL` or `<version>/RELEASE`; never into a final branch |
+| reference-transaction | after a ref update: a non-`TESTING` branch that now contains `TESTING` commits (e.g. `git merge --ff-only <F>/TESTING`) is reported with the command to undo it; `pre-push` refuses to push it |
 | post-checkout | refreshes the repo config and aliases; warns about off-model names |
 | commit-msg | ASCII-only message (`commit.charset`), Conventional Commits |
 
