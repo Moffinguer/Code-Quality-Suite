@@ -180,3 +180,66 @@ git push -q origin "$OT/RELEASE" 2>/dev/null &&
 case_sandbox merge
 out="$(git release --ot "$V/700" --yes 2>&1)" && fail "--ot accepted with flow = merge"
 grep -q 'merge flow' <<<"$out" && ok "flow = merge: --ot refused, 4.x release unchanged" || fail "merge flow: $out"
+
+# --- O5 under flow = merge: only the exact parent leaf is reserved, as in 4.x ---------------------
+lib valid_branch_name "$V/Release/x" >/dev/null && lib valid_branch_name "$V/Testing/x" >/dev/null &&
+	! lib valid_branch_name "$V/ORIGINAL/x" >/dev/null && lib valid_branch_name "$V/700/ORIGINAL" >/dev/null &&
+	ok "O5: flow = merge keeps the 4.x names (Release/Testing segments allowed, ORIGINAL only last)" ||
+	fail "O5 merge names"
+case_sandbox squash
+! lib valid_branch_name "$V/Release/x" >/dev/null && ! lib valid_branch_name "$V/Testing/x" >/dev/null &&
+	! lib valid_branch_name "$V/ORIGINAL/x" >/dev/null &&
+	ok "O5: flow = squash refuses ORIGINAL/RELEASE/TESTING segments in any case" || fail "O5 squash names"
+
+# small_ot: in a fresh squash sandbox build $OT with one commit of its own and a never-integrated
+# branch $OT/c on origin; leaves $OT/ORIGINAL checked out. Exits through fail on any error.
+small_ot() {
+	case_sandbox squash
+	git np "$V" >/dev/null && git push -q origin "$V/ORIGINAL" 2>/dev/null || fail "tree $V"
+	git np 700 >/dev/null && add_commit e.py 'E = 1' "feat: add e" &&
+		git push -q origin "$OT/ORIGINAL" 2>/dev/null || fail "OT $OT"
+	git nr c >/dev/null && add_commit c.py 'C = 1' "feat: add c" &&
+		git push -q origin "$OT/c" 2>/dev/null || fail "c"
+	git checkout -q "$OT/ORIGINAL"
+}
+
+# --- O6: a failed tag creation leaves a state the rerun completes ------------------------------
+small_ot
+mkdir -p .git/refs/tags && : >.git/refs/tags/ot # why: a file where the tag's folder must go
+out="$(git release --yes 2>&1)" && fail "O6: release passed a failed tag"
+rm -f .git/refs/tags/ot
+git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null && git rev-parse -q --verify "refs/heads/$OT/c" >/dev/null &&
+	[ -z "$(git ls-remote --tags origin)" ] || fail "O6 tag failure state: $out"
+out="$(git release --yes 2>&1)" || fail "O6: resume after the tag failure: $out"
+[ "$(git cat-file -t "ot/$V/700")" = tag ] && [ "$(git rev-list --count "$V/ORIGINAL..$OT/RELEASE")" = 2 ] &&
+	! git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null &&
+	ok "O6: a failed tag creation is resumed: tag created, one changelog commit" || fail "O6 tag resume: $out"
+
+# --- O6: a failed subtree delete leaves a state the rerun completes, without a second set-aside --
+small_ot
+# shellcheck disable=SC2016
+printf '#!/bin/sh\nwhile read o n r; do case "$r" in */c) [ "$n" = 0000000000000000000000000000000000000000 ] && exit 1 ;; esac; done; exit 0\n' \
+	>"$CASE_REPO.git/hooks/pre-receive"
+chmod +x "$CASE_REPO.git/hooks/pre-receive"
+out="$(git release --yes 2>&1)" && fail "O6: release passed a refused delete"
+git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null || fail "O6 delete failure: ORIGINAL gone: $out"
+rm -f "$CASE_REPO.git/hooks/pre-receive"
+out="$(git release --yes 2>&1)" || fail "O6: resume after the delete failure: $out"
+[ "$(git for-each-ref --format='%(refname:short)' refs/heads | grep '^unmerged')" = "unmerged/$OT/c" ] &&
+	! git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null &&
+	[ -z "$(git ls-remote --heads origin "refs/heads/$OT/c")" ] &&
+	ok "O6: a failed subtree delete is resumed; c is set aside only once" || fail "O6 delete resume: $out"
+
+# --- O6: a rejected changelog commit restores CHANGELOG.md; the rerun completes -----------------
+small_ot
+rm -f .git/hooks/commit-msg
+# shellcheck disable=SC2016
+printf '#!/bin/sh\ngrep -q "^docs(changelog)" "$1" && exit 1\nexit 0\n' >.git/hooks/commit-msg
+chmod +x .git/hooks/commit-msg
+out="$(git release --yes 2>&1)" && fail "O6: release passed a rejected changelog commit"
+[ -z "$(git status --porcelain)" ] && grep -q 'was restored' <<<"$out" ||
+	fail "O6 changelog commit failure: $out / $(git status --porcelain)"
+"$SUITE/install.sh" "$CASE_REPO" >/dev/null || fail "reinstall hooks"
+out="$(git release --yes 2>&1)" || fail "O6: resume after the rejected commit: $out"
+[ "$(git rev-list --count "$V/ORIGINAL..$OT/RELEASE")" = 2 ] &&
+	ok "O6: a rejected changelog commit leaves a clean tree; the rerun completes" || fail "O6 changelog resume: $out"

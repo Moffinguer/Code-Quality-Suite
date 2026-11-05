@@ -99,7 +99,9 @@ reserved_leaf_segment() {
 
 # Check the reserved leaves of a branch name: the parent leaf only as the exact last segment, the
 # TESTING leaf only as the exact last segment of '<F>/TESTING', no other segment equal to a
-# reserved leaf in any case (the RELEASE branches are accepted earlier by their own checks).
+# reserved leaf in any case (the RELEASE branches are accepted earlier by their own checks). That
+# broad refusal applies only with flow = squash; with flow = merge only the exact parent leaf is
+# reserved, as in 4.x.
 # Arguments: $1 branch. Returns: 0 when fine; 1 and prints the reason otherwise.
 reserved_segments_ok() {
 	local b="$1" n i=0 seg
@@ -112,7 +114,7 @@ reserved_segments_ok() {
 			echo "'$QS_BR_LEAF' can only be the last segment"
 			return 1
 		fi
-		if reserved_leaf_segment "$seg"; then
+		if [ "${QS_BR_FLOW:-squash}" = squash ] && reserved_leaf_segment "$seg"; then
 			echo "'$seg' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF and ${QS_BR_TESTING:-TESTING}, in any case)"
 			return 1
 		fi

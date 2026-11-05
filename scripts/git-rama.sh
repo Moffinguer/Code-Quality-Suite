@@ -1533,15 +1533,45 @@ release_commits() {
 	[ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
 }
 
+# aside_existing <branch>: the name under which <branch> was already set aside, when a local
+# 'unmerged/<branch>' (or its '-N' / stamped variant) points at the same commit as the branch
+# (its local or origin ref): the mark of a release that failed after setting it aside (AC O6).
+# Arguments: $1 branch. Returns: 0 and prints that name; 1 when there is none.
+aside_existing() {
+	local b="$1" sha ref name
+	if exists_ref "refs/heads/$b"; then
+		sha="$(git rev-parse "refs/heads/$b")"
+	elif exists_ref "refs/remotes/origin/$b"; then
+		sha="$(git rev-parse "refs/remotes/origin/$b")"
+	else return 1; fi
+	while IFS=' ' read -r ref name; do
+		case "$name" in
+		"$QS_BR_ARCHIVE/$b" | "$QS_BR_ARCHIVE/$b"-[0-9] | "$QS_BR_ARCHIVE"-*/"$b") ;;
+		*) continue ;;
+		esac
+		[ "$ref" = "$sha" ] || continue
+		printf '%s\n' "$name"
+		return 0
+	done < <(git for-each-ref --format='%(objectname) %(refname:short)' refs/heads)
+	return 1
+}
+
 # release_set_aside: set every REL_ARCHIVE branch aside under its 'unmerged/...' name: renamed
 # locally (or a local copy of a branch only on origin) and copied on origin when REL_PUSH is 1
 # and there is an origin; one warning per branch on stderr.
 # Arguments: none; reads REL_ARCHIVE ("<branch><TAB><new name><TAB><ORIGINAL><TAB><commits>").
 # Returns: 0; a failed git command ends the script (set -e).
 release_set_aside() {
-	local entry b new p n
+	local entry b new p n done_as
 	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
 		IFS=$'\t' read -r b new p n <<<"$entry"
+		if done_as="$(aside_existing "$b")"; then
+			# a failed earlier run already set it aside: do not copy it again
+			if [ "$REL_PUSH" = 1 ] && has_origin && ! exists_ref "refs/remotes/origin/$done_as"; then
+				git push -q origin "refs/heads/$done_as:refs/heads/$done_as"
+			fi
+			continue
+		fi
 		if exists_ref "refs/heads/$b"; then
 			git branch -m "$b" "$new"
 		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
@@ -1831,15 +1861,31 @@ ot_release_notes() {
 # (ot_changelog_subject). Skipped when there is no changelog file in the policy or when RELEASE
 # already has commits of its own (a resumed release, AC O6).
 # Arguments: none; reads REL_TIP REL_CL_BASE REL_OT REL_VERSION REL_TAG. Returns: 0; exits through
-# die when the engine cannot write the file or a hook rejects the commit.
+# die when the engine cannot write the file or a hook rejects the commit; the changelog file is then
+# restored (removed when new) so the rerun finds a clean tree.
 ot_changelog_commit() {
 	[ -n "$QS_BR_CHANGELOG" ] || return 0
 	if [ -n "$(git rev-list -n1 "$REL_TIP..HEAD")" ]; then
 		say "$REL_RELEASE already has its changelog commit: resumed"
 		return 0
 	fi
-	ot_release_notes --write >/dev/null 2>&1 || die "could not write $QS_BR_CHANGELOG; $REL_AGAIN"
-	commit_files "$(ot_changelog_subject)" "$QS_BR_CHANGELOG"
+	if ! { ot_release_notes --write >/dev/null 2>&1 && ot_changelog_try_commit; }; then
+		# why: a dirty changelog would make the rerun die in require_clean
+		git reset -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		if git cat-file -e "HEAD:$QS_BR_CHANGELOG" 2>/dev/null; then
+			git checkout -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		else rm -f -- "$QS_BR_CHANGELOG"; fi # why: a file the engine created has nothing to restore
+		die "the changelog commit of $REL_RELEASE failed (see the hook message above); $QS_BR_CHANGELOG was restored. Fix the cause, then run git release again (it resumes)"
+	fi
+}
+
+# ot_changelog_try_commit: commit QS_BR_CHANGELOG with the OT changelog subject, without dying.
+# Arguments: none. Returns: 0 when committed or nothing to commit; 1 when the commit was rejected.
+ot_changelog_try_commit() {
+	git add -- "$QS_BR_CHANGELOG"
+	git diff --cached --quiet && return 0
+	git commit -q -m "$(ot_changelog_subject)" || return 1
+	say "committed: $(ot_changelog_subject)"
 }
 
 # ot_tag_create: the annotated tag REL_OT_TAG on the OT ORIGINAL tip (nothing when branches.ot_tag
@@ -1944,7 +1990,7 @@ ot_release_run() {
 	if [ "$REL_PUSH" = 1 ] && has_origin; then
 		refs=("$REL_RELEASE")
 		[ -n "$REL_OT_TAG" ] && refs+=("refs/tags/$REL_OT_TAG")
-		git push -q -u origin "${refs[@]}" ||
+		git push -q --atomic -u origin "${refs[@]}" ||
 			die "push of $REL_RELEASE failed; the OT tree is untouched. Fix it and run git release again (it resumes)"
 	fi
 	release_set_aside
