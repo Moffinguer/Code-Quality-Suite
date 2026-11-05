@@ -104,7 +104,7 @@ git branch -q -D TESTING
 git checkout -q "$TST"
 t1="$(git log -n1 --format=%H --grep='^feat: t1$' "$TST")"
 git checkout -q -b "$F/cp" "$ORIG"
-git cherry-pick -q "$t1" >/dev/null || fail "G4: cherry-pick"
+git cherry-pick "$t1" >/dev/null || fail "G4: cherry-pick"
 out="$(git push origin "$F/cp" 2>&1)" && fail "G4: the copy was pushed"
 grep -qF "(cherry picked from commit $t1)" <<<"$out" && grep -q "git testing repartir" <<<"$out" &&
 	grep -qF -- "--map $t1=$F/cp --on-applied skip" <<<"$out" || fail "G4: the way out is not named: $out"
@@ -118,7 +118,7 @@ ok "G4 way out 1: the cherry-pick line is accepted"
 
 # way out 2: the copy is recorded as distributed, with the command the refusal names
 git checkout -q -b "$F/cp2" "$ORIG"
-git cherry-pick -q "$t1" >/dev/null || fail "G4: second cherry-pick"
+git cherry-pick "$t1" >/dev/null || fail "G4: second cherry-pick"
 out="$(git testing repartir --map "$t1=$F/cp2" --on-applied skip 2>&1)" || fail "G4: repartir: $out"
 grep -qF "already present in $F/cp2" <<<"$out" || fail "G4: repartir did not record it: $out"
 git config --get-all "qs.testing.$F.distributed" | grep -qF "$t1 $F/cp2" || fail "G4: not recorded as distributed"
