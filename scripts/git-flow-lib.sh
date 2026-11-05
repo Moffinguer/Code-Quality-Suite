@@ -457,7 +457,7 @@ testing_marker_of() {
 # Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref
 # (see testing_range). Returns: 0 and prints the offending sha when there is one; 1 when clean.
 testing_leak_in_range() {
-	local leaf="${QS_BR_TESTING:-TESTING}" hit t m
+	local hit t m
 	local TST_RANGE=()
 	testing_range "$1" "${2:-}" "${3:-remotes}"
 	hit="$(git log -n1 --format=%H --all-match --grep='^Testing-Create: ' --grep='^Sources:$' "${TST_RANGE[@]}" 2>/dev/null || true)"
@@ -475,25 +475,60 @@ testing_leak_in_range() {
 			printf '%s' "$hit"
 			return 0
 		fi
-	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
+	done < <(testing_local_refs)
 	return 1
 }
 
+# Delete the cached patch-id lists whose tip is no longer the tip of any local TESTING branch.
+# One for-each-ref call and a look at the file names: cheap enough to run on every cache write.
+# Temporary files of a write in progress (a dot after the tip) are left alone.
+# Arguments: $1 cache folder, $2 tip just written (always kept). Returns: 0.
+testing_prune_pids() {
+	local dir="$1" live=" $2 " f tip sha ref
+	while read -r sha ref; do
+		is_testing_branch "${ref#refs/heads/}" && live="$live$sha "
+	done < <(git for-each-ref --format='%(objectname) %(refname)' refs/heads/)
+	for f in "$dir"/tst-pids-*; do
+		[ -e "$f" ] || continue
+		tip="${f##*/tst-pids-}"
+		case "$tip" in *.*) continue ;; esac
+		case "$live" in *" $tip "*) ;; *) rm -f -- "$f" ;; esac
+	done
+	return 0
+}
+
 # The stable patch-ids of the commits made on a TESTING branch (first-parent, non-merge, after its
-# marker). Cached by the tip sha in the git dir, so a push computes them once.
-# Arguments: $1 tip sha. Returns: 0 and prints '<patch-id> <commit sha>' lines (possibly none).
+# marker). Cached by the tip sha in the git dir, so a push computes them once. A failed git
+# command is never cached (an empty list would then pass every copy check); a write prunes the
+# cache files of tips that are no longer a TESTING tip (testing_prune_pids).
+# Arguments: $1 tip sha. Returns: 0 and prints '<patch-id> <commit sha>' lines (possibly none);
+# 1 when git failed (nothing printed, nothing cached).
 testing_patch_ids() {
-	local tip="$1" m dir cache
+	local tip="$1" m dir cache log tmp ok=0
 	dir="$(git rev-parse --absolute-git-dir)/quality-suite"
 	cache="$dir/tst-pids-$tip"
-	if [ ! -f "$cache" ]; then
-		mkdir -p "$dir"
-		m="$(testing_marker_of "$tip")" || return 0
-		git log --first-parent --no-merges -p --format='commit %H' "$m..$tip" 2>/dev/null |
-			git patch-id --stable >"$cache.$$" || true
-		mv -f "$cache.$$" "$cache"
+	if [ -f "$cache" ]; then
+		cat "$cache"
+		return 0
 	fi
-	cat "$cache"
+	m="$(testing_marker_of "$tip")" || return 0
+	mkdir -p "$dir"
+	log="$cache.log.$$"
+	tmp="$cache.$$"
+	# why: a pipe would show only the status of patch-id; each command's status is checked here
+	if git log --first-parent --no-merges -p --format='commit %H' "$m..$tip" >"$log" 2>/dev/null &&
+		git patch-id --stable <"$log" >"$tmp" 2>/dev/null; then
+		ok=1
+	fi
+	rm -f -- "$log"
+	if [ "$ok" = 1 ]; then
+		mv -f "$tmp" "$cache"
+		testing_prune_pids "$dir" "$tip"
+		cat "$cache"
+		return 0
+	fi
+	rm -f -- "$tmp"
+	return 1
 }
 
 # Find a copy of TESTING work in a range of commits that did not travel through 'git testing
@@ -508,13 +543,14 @@ testing_patch_ids() {
 # Arguments: $1 new tip, $2 old tip, $3 scope (see testing_range).
 # Returns: 0 and prints '<commit> <TESTING commit>' for the first offender; 1 when clean.
 testing_copy_in_range() {
-	local leaf="${QS_BR_TESTING:-TESTING}" all rng t c cand body rc=1 hit
+	local all rng t c cand body rc=1 hit
 	local TST_RANGE=()
 	all="$(mktemp)"
 	rng="$(mktemp)"
 	while IFS= read -r t; do
-		testing_patch_ids "$(git rev-parse "$t")" >>"$all"
-	done < <(git for-each-ref --format='%(refname)' "refs/heads/**/$leaf")
+		# why: a failed patch-id is not cached (testing_patch_ids); the other sandboxes still count
+		testing_patch_ids "$(git rev-parse "$t")" >>"$all" || true
+	done < <(testing_local_refs)
 	if [ -s "$all" ]; then
 		testing_range "$1" "${2:-}" "${3:-remotes}"
 		git log --no-merges -p -n 500 --format='commit %H' "${TST_RANGE[@]}" 2>/dev/null |
