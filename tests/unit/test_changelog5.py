@@ -14,6 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "engine"))
 
 import changelog  # noqa: E402
+import repofiles  # noqa: E402
 
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
 
@@ -173,6 +174,43 @@ class FromGit(unittest.TestCase):
         self.assertEqual([c["hash"] for c in changelog.without_ot(items)], [self.tip])
         self.assertIsNone(items[0]["ot"])
         self.assertNotIn(";", changelog.render("5.0.0", "2026-11-02", items).split("- ")[1])
+
+
+class GateLevel(unittest.TestCase):
+    """repofiles.check() passes the version being written to the changelog validation."""
+
+    def setUp(self):
+        """Create a folder with a VERSION file at 4.2.1."""
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        with open(os.path.join(self.dir, "VERSION"), "w", encoding="utf-8") as fh:
+            fh.write("4.2.1\n")
+
+    def _check(self, top):
+        """Write a changelog whose top section is `top` and return check()'s warnings.
+
+        Args:
+            top: version of the topmost section.
+
+        Returns:
+            list[str]: the warnings of CHANGELOG.md.
+        """
+        text = (
+            f"# Changelog\n\n## {top} - 2026-11-02\n\n### Added\n\n"
+            "- Old (3b6f5f0, OT 100; Fernando Mateos)\n"
+        )
+        with open(os.path.join(self.dir, "CHANGELOG.md"), "w", encoding="utf-8") as fh:
+            fh.write(text)
+        errs, warns = repofiles.check(self.dir, "CHANGELOG.md")
+        self.assertEqual(errs, [])
+        return warns
+
+    def test_new_top_section_warns(self):
+        warns = self._check("5.0.0")
+        self.assertTrue(any("4.x format" in w for w in warns), warns)
+
+    def test_released_top_section_silent(self):
+        self.assertEqual(self._check("4.2.1"), [])
 
 
 if __name__ == "__main__":
