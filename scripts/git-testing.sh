@@ -520,6 +520,14 @@ cmd_repartir() {
 	[ "$fails" = 0 ]
 }
 
+# Refuse the sandbox commands when branches.flow is not squash: the sandbox is a 5.x feature and
+# the 4.x merge flow has no reserved TESTING leaf. Exits 1 with the reason.
+# Arguments: none. Returns: 0 when the flow is squash; exits 1 otherwise.
+tst_need_squash() {
+	[ "${QS_BR_FLOW:-squash}" = squash ] && return 0
+	tst_die "TESTING needs branches.flow: squash (this repository keeps the 4.x merge flow)"
+}
+
 # Entry point of the git alias.
 # Arguments: the command line after 'git testing'. Returns: the exit status of the command.
 tst_main() {
@@ -527,9 +535,9 @@ tst_main() {
 	shift || true
 	qs_policy_load
 	case "$cmd" in
-	crear | create) cmd_crear "$@" ;;
-	estado | status) cmd_estado "$@" ;;
-	repartir | distribute) cmd_repartir "$@" ;;
+	crear | create) tst_need_squash && cmd_crear "$@" ;;
+	estado | status) tst_need_squash && cmd_estado "$@" ;;
+	repartir | distribute) tst_need_squash && cmd_repartir "$@" ;;
 	*)
 		awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "${BASH_SOURCE[0]}"
 		exit 2

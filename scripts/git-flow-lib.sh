@@ -207,10 +207,6 @@ valid_branch_name() {
 		i=$((i + 1))
 		if [ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ]; then break; fi
 		if [ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ]; then break; fi
-		if testing_reserved_segment "$seg"; then
-			echo "'$seg' is reserved for the TESTING sandbox (git testing crear)"
-			return 1
-		fi
 		if [ "$seg" = "$QS_BR_LEAF" ]; then
 			echo "'$QS_BR_LEAF' can only be the last segment"
 			return 1
@@ -354,10 +350,12 @@ children_pending() {
 
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
 
-# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf).
-# A branch named just the leaf has no level and is an ordinary branch.
+# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf), and
+# only with branches.flow = squash (the sandbox is a 5.x feature; with the 4.x merge flow the leaf is
+# an ordinary segment). A branch named just the leaf has no level and is an ordinary branch.
 # Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
 is_testing_branch() {
+	[ "${QS_BR_FLOW:-squash}" = squash ] || return 1
 	case "$1" in ?*/"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
 	return 1
 }
@@ -373,10 +371,13 @@ testing_local_refs() {
 	return 0
 }
 
-# Whether a branch-name segment is the reserved TESTING leaf, ignoring case.
+# Whether a branch-name segment is the reserved TESTING leaf, ignoring case. Reserved only with
+# branches.flow = squash (see is_testing_branch); the name check of valid_branch_name is
+# reserved_segments_ok.
 # Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
 testing_reserved_segment() {
 	local a b
+	[ "${QS_BR_FLOW:-squash}" = squash ] || return 1
 	a="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
 	b="$(printf '%s' "${QS_BR_TESTING:-TESTING}" | tr '[:upper:]' '[:lower:]')"
 	[ "$a" = "$b" ]
