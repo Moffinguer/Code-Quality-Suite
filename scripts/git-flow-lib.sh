@@ -412,40 +412,124 @@ testing_release_ok() {
 	tst_release_ok "${1%/*}"
 }
 
-# Find a TESTING commit inside a range of commits: a marker commit (trailers 'Testing-Create:' and
-# 'Sources:') or a commit made on a local TESTING branch after its marker. This is how TESTING
-# content is detected when it reached a non-TESTING branch without a merge hook (fast-forward).
+# Build the revision arguments of a range of commits into the global array TST_RANGE.
 # Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref:
 # 'remotes' (history not on any remote) or 'branches:<name>' (history not on any other local
-# branch; <name> is the updated branch, already moved). TESTING branches never count as "other".
-# Returns: 0 and prints the offending sha when there is one; 1 when the range is clean.
-testing_leak_in_range() {
+# branch; <name> is the updated branch). TESTING branches never count as "other".
+# Returns: 0; sets TST_RANGE.
+testing_range() {
 	local new="$1" old="${2:-}" scope="${3:-remotes}" leaf="${QS_BR_TESTING:-TESTING}"
-	local range=() hit t m
 	if [ -n "$old" ] && [ -n "${old//0/}" ] && git cat-file -e "${old}^{commit}" 2>/dev/null; then
-		range=("$new" "^$old")
+		TST_RANGE=("$new" "^$old")
 	else
 		case "$scope" in
-		branches:*) range=("$new" --not --exclude="${scope#branches:}" --exclude="*/$leaf" --branches) ;;
-		*) range=("$new" --not --exclude="*/$leaf" --remotes) ;;
+		branches:*) TST_RANGE=("$new" --not --exclude="${scope#branches:}" --exclude="*/$leaf" --branches) ;;
+		*) TST_RANGE=("$new" --not --exclude="*/$leaf" --remotes) ;;
 		esac
 	fi
-	hit="$(git log -n1 --format=%H --all-match --grep='^Testing-Create: ' --grep='^Sources:$' "${range[@]}" 2>/dev/null || true)"
+}
+
+# The marker commit of a TESTING history: its newest first-parent 'Testing-Create:' commit.
+# Arguments: $1 tip. Returns: 0 and prints the sha; 1 when there is no marker.
+testing_marker_of() {
+	local m
+	m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$1" 2>/dev/null || true)"
+	[ -n "$m" ] || return 1
+	printf '%s' "$m"
+}
+
+# Find a TESTING commit inside a range of commits: a marker commit (trailers 'Testing-Create:' and
+# 'Sources:') or a commit made on a local TESTING branch after its marker (first-parent, so what
+# was merged into TESTING by hand never counts as made there). This is how TESTING content is
+# detected when it reached a non-TESTING branch without a merge hook (fast-forward).
+# Arguments: $1 new tip, $2 old tip (all zeros or empty: a new ref), $3 scope used for a new ref
+# (see testing_range). Returns: 0 and prints the offending sha when there is one; 1 when clean.
+testing_leak_in_range() {
+	local leaf="${QS_BR_TESTING:-TESTING}" hit t m
+	local TST_RANGE=()
+	testing_range "$1" "${2:-}" "${3:-remotes}"
+	hit="$(git log -n1 --format=%H --all-match --grep='^Testing-Create: ' --grep='^Sources:$' "${TST_RANGE[@]}" 2>/dev/null || true)"
 	if [ -n "$hit" ]; then
 		printf '%s' "$hit"
 		return 0
 	fi
 	# commits made on a TESTING branch after its marker, found in the range (marker already shipped)
-	[ -n "$(git rev-list -n1 "${range[@]}" 2>/dev/null)" ] || return 1
+	[ -n "$(git rev-list -n1 "${TST_RANGE[@]}" 2>/dev/null)" ] || return 1
 	while IFS= read -r t; do
-		m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$t" 2>/dev/null || true)"
-		[ -n "$m" ] || continue
-		hit="$(comm -12 <(git rev-list -n 2000 "${range[@]}" 2>/dev/null | sort) \
-			<(git rev-list -n 2000 "$m..$t" 2>/dev/null | sort) | head -n1)"
+		m="$(testing_marker_of "$t")" || continue
+		hit="$(comm -12 <(git rev-list -n 2000 "${TST_RANGE[@]}" 2>/dev/null | sort) \
+			<(git rev-list --first-parent --no-merges -n 2000 "$m..$t" 2>/dev/null | sort) | head -n1)"
 		if [ -n "$hit" ]; then
 			printf '%s' "$hit"
 			return 0
 		fi
 	done < <(git for-each-ref --format='%(refname)' "refs/heads/*/$leaf")
 	return 1
+}
+
+# The stable patch-ids of the commits made on a TESTING branch (first-parent, non-merge, after its
+# marker). Cached by the tip sha in the git dir, so a push computes them once.
+# Arguments: $1 tip sha. Returns: 0 and prints '<patch-id> <commit sha>' lines (possibly none).
+testing_patch_ids() {
+	local tip="$1" m dir cache
+	dir="$(git rev-parse --absolute-git-dir)/quality-suite"
+	cache="$dir/tst-pids-$tip"
+	if [ ! -f "$cache" ]; then
+		mkdir -p "$dir"
+		m="$(testing_marker_of "$tip")" || return 0
+		git log --first-parent --no-merges -p --format='commit %H' "$m..$tip" 2>/dev/null |
+			git patch-id --stable >"$cache.$$" || true
+		mv -f "$cache.$$" "$cache"
+	fi
+	cat "$cache"
+}
+
+# Find a copy of TESTING work in a range of commits that did not travel through 'git testing
+# repartir': a commit whose stable patch-id equals the one of a commit made on a local TESTING
+# branch (this catches 'git cherry-pick' without -x, a rebase of TESTING commits, and a squash
+# of a single TESTING commit). A match is fine when the commit message names that TESTING commit
+# in a '(cherry picked from commit <sha>)' line (what repartir writes) or when the TESTING commit
+# is recorded as distributed. Limit: a squash of several TESTING commits has a combined patch-id
+# no single commit has, and is not recognised; comparing combined diffs would also flag the
+# legitimate result of a full distribution, so it is not done.
+# Arguments: $1 new tip, $2 old tip, $3 scope (see testing_range).
+# Returns: 0 and prints '<commit> <TESTING commit>' for the first offender; 1 when clean.
+testing_copy_in_range() {
+	local leaf="${QS_BR_TESTING:-TESTING}" all rng t c cand body rc=1 hit
+	local TST_RANGE=()
+	all="$(mktemp)"
+	rng="$(mktemp)"
+	while IFS= read -r t; do
+		testing_patch_ids "$(git rev-parse "$t")" >>"$all"
+	done < <(git for-each-ref --format='%(refname)' "refs/heads/*/$leaf")
+	if [ -s "$all" ]; then
+		testing_range "$1" "${2:-}" "${3:-remotes}"
+		git log --no-merges -p -n 500 --format='commit %H' "${TST_RANGE[@]}" 2>/dev/null |
+			git patch-id --stable >"$rng" || true
+		hit="$(awk 'NR == FNR { a[$1] = a[$1] " " $2; next } $1 in a { print $2 a[$1] }' "$all" "$rng")"
+		while read -r c cand; do
+			[ -n "$c" ] || continue
+			body="$(git log -n1 --format=%B "$c")"
+			for t in $cand; do
+				grep -qF "(cherry picked from commit $t)" <<<"$body" && continue
+				git config --get-regexp '^qs\.testing\..*\.distributed$' 2>/dev/null | grep -q " $t " && continue
+				printf '%s %s' "$c" "$t"
+				rc=0
+				break 2
+			done
+		done <<<"$hit"
+	fi
+	rm -f "$all" "$rng"
+	return "$rc"
+}
+
+# Find a merge made INTO a TESTING branch after its creation (first-parent merge commit after the
+# marker). TESTING is recreated ('git testing crear --recrear'), never merged into.
+# Arguments: $1 TESTING tip. Returns: 0 and prints the merge sha when there is one; 1 otherwise.
+testing_merged_into() {
+	local m hit
+	m="$(testing_marker_of "$1")" || return 1
+	hit="$(git rev-list --first-parent --merges -n1 "$m..$1" 2>/dev/null || true)"
+	[ -n "$hit" ] || return 1
+	printf '%s' "$hit"
 }
