@@ -232,9 +232,13 @@ git checkout -q -b "$F/plain" "$ORIG"
 mk plain.txt plain "feat: plain"
 git checkout -q "$ORIG"
 mk o2.txt o2 "feat: o2"
-out="$(git merge --no-edit "$F/plain" 2>&1)" || fail "L2: normal merge failed: $out"
+out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push of a commit on ORIGINAL refused: $out"
+# why: under squash a child merged into its ORIGINAL is refused (pre-merge-commit: git integra); the
+# sync direction ORIGINAL -> child is a normal merge and must not be taken for a TESTING merge
+git checkout -q "$F/plain"
+out="$(git merge --no-edit "$ORIG" 2>&1)" || fail "L2: sync merge failed: $out"
 grep -q "TESTING commit" <<<"$out" && fail "L2: false positive on a merge: $out"
-out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push after a normal merge refused: $out"
+out="$(git push origin "$F/plain" 2>&1)" || fail "L2: push after a sync merge refused: $out"
 ok "L2 a normal merge and its push are not affected"
 git checkout -q "$F/a"
 
