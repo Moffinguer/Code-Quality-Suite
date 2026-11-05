@@ -178,7 +178,10 @@ git checkout -q "$F/a"
 out="$(git testing crear --recrear 2>&1)" && fail "T12: recrear worked with undistributed commits"
 grep -q "feat: t4" <<<"$out" && ok "T12 refused and lists them" || fail "T12: $out"
 mv_orig="$(git rev-parse "$ORIG")"
-git testing crear --recrear --force >/dev/null || fail "T12: --force failed"
+t4_tip="$(git rev-parse "$TST")"
+out="$(git testing crear --recrear --force 2>&1)" || fail "T12: --force failed: $out"
+grep -q "old tip $t4_tip" <<<"$out" && grep -q "feat: t4" <<<"$out" && grep -q "git branch <name> $t4_tip" <<<"$out" &&
+	ok "T12 --force prints the old tip, the dropped commits and the recovery" || fail "T12: force output: $out"
 [ "$(git rev-parse "$TST^{tree}")" != "" ] && ! git testing estado | sed -n '/Commits on TESTING/,$p' | grep -c 'feat:' >/dev/null && ok "T12 --force re-created" || fail "T12: force"
 [ "$(git log -n1 --format=%B "$TST" | grep -c "^Testing-Create: $ORIG $mv_orig")" = 1 ] && ok "T12 from the current ORIGINAL" || fail "T12: orig"
 git checkout -q "$TST"
@@ -201,6 +204,39 @@ if testing_release_ok "$TST" 2>"$CASE_REPO.err"; then fail "O7: pending commits 
 grep -q "feat: t6" "$CASE_REPO.err" && ok "O7 warning names the commits" || fail "O7: warning"
 testing_release_ok "$F/a" && fail "O7: a normal branch matched"
 ok "O7 ordinary branches are left to the release"
+
+# --- L1: the fast-forward leak. 'git merge --ff-only TESTING' fires no merge hook
+git checkout -q "$ORIG"
+leak_old="$(git rev-parse "$ORIG")"
+out="$(git merge --ff-only "$TST" 2>&1)" || fail "L1: the ff-only merge itself failed: $out"
+[ "$(git rev-parse HEAD)" = "$(git rev-parse "$TST")" ] || fail "L1: ORIGINAL did not move to TESTING"
+grep -q "contains TESTING commit" <<<"$out" && grep -q "git reset --hard $leak_old" <<<"$out" &&
+	ok "L1 reference-transaction detects the ff-only merge and says how to undo it" || fail "L1: no detection: $out"
+out="$(git push origin "$ORIG" 2>&1)" && fail "L1: the fast-forwarded ORIGINAL was pushed"
+grep -q "TESTING" <<<"$out" && ok "L1 pre-push refuses the fast-forwarded ORIGINAL" || fail "L1: push message: $out"
+git reset -q --hard "$leak_old"
+# a new branch cut from TESTING is a leak too (the new ref has no old value)
+out="$(git branch "$F/leak" "$TST" 2>&1)" || fail "L1: branch creation failed"
+grep -q "git branch -D $F/leak" <<<"$out" && ok "L1 a branch created on TESTING is reported" || fail "L1: new branch: $out"
+git branch -q -D "$F/leak"
+
+# --- L2: no false positives
+a_tip="$(git rev-parse "$F/a")"
+git log "$ORIG..$F/a" --format=%B | grep -q "cherry picked from commit" || fail "L2: fixture lost its -x lines"
+out="$(git merge --ff-only "$F/a" 2>&1)" || fail "L2: ff of non-TESTING work failed: $out"
+grep -q "TESTING" <<<"$out" && fail "L2: false positive on ff (cherry-picks with -x): $out"
+[ "$(git rev-parse HEAD)" = "$a_tip" ] || fail "L2: ff did not land"
+out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push of non-TESTING work refused: $out"
+ok "L2 ff and push of repartir cherry-picks (-x) are not affected"
+git checkout -q -b "$F/plain" "$ORIG"
+mk plain.txt plain "feat: plain"
+git checkout -q "$ORIG"
+mk o2.txt o2 "feat: o2"
+out="$(git merge --no-edit "$F/plain" 2>&1)" || fail "L2: normal merge failed: $out"
+grep -q "TESTING commit" <<<"$out" && fail "L2: false positive on a merge: $out"
+out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push after a normal merge refused: $out"
+ok "L2 a normal merge and its push are not affected"
+git checkout -q "$F/a"
 
 # --- the manual entry: git ayuda testing
 bash "$SUITE/scripts/qs-help.sh" testing | grep -c "git testing crear" >/dev/null && ok "git ayuda testing prints the manual" || fail "git ayuda testing"

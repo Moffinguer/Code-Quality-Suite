@@ -132,20 +132,16 @@ tst_applied_in() {
 	return "$rc"
 }
 
-# The commits made on TESTING, oldest first: non-merge commits not reachable from the ORIGINAL or
-# the sources recorded at creation, and not the marker.
+# The commits made on TESTING, oldest first: the first-parent non-merge commits after the marker.
+# why first-parent: whatever was merged into TESTING by hand (forbidden, but possible) brings the
+# commits of another branch inside marker..tip; they were not made on TESTING.
 # Arguments: $1 level. Returns: 0 and prints one sha per line; 1 when there is no sandbox.
 tst_commits() {
-	local ref m i excl=()
+	local ref m
 	ref="$(tst_ref "$1")" || return 1
 	tst_load "$1" || return 1
 	m="$(tst_marker "$1")"
-	excl=("^$TST_ORIG_SHA")
-	for i in "${!TST_SRC_SHA[@]}"; do
-		# why: a source never pushed is unknown in a fresh clone; it cannot hold commits we could see
-		if git cat-file -e "${TST_SRC_SHA[$i]}^{commit}" 2>/dev/null; then excl+=("^${TST_SRC_SHA[$i]}"); fi
-	done
-	git rev-list --no-merges --reverse "$ref" "${excl[@]}" | grep -vxF "$m" || true
+	git rev-list --first-parent --no-merges --reverse "$m..$ref"
 }
 
 # The branches where the change of a commit already is: the sources (by change) and the targets
@@ -320,6 +316,15 @@ cmd_crear() {
 				echo "[testing] $tref has commits not distributed yet (git testing repartir, or --force):" >&2
 				while IFS= read -r c; do echo "  $(git log -n1 --format='%h %s' "$c")" >&2; done <<<"$pend"
 				exit 1
+			fi
+		else
+			# why: --force destroys the undistributed commits; say which ones and how to get them back
+			pend="$(tst_undistributed "$f" 2>/dev/null || true)"
+			tip="$(git rev-parse "$(tst_ref "$f")")"
+			if [ -n "$pend" ]; then
+				echo "[testing] --force: dropping undistributed commits of $tref (old tip $tip):" >&2
+				while IFS= read -r c; do echo "  $(git log -n1 --format='%h %s' "$c")" >&2; done <<<"$pend"
+				echo "[testing] recover them with: git branch <name> $tip   (or git reflog show $tref)" >&2
 			fi
 		fi
 		tst_worktree_of "$tref" >/dev/null && tst_die "$tref is checked out: switch to another branch first"
