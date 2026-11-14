@@ -18,6 +18,8 @@
 #                         Squashed:), then it is deleted; '<v>/<ot>/ORIGINAL' goes up by git release
 #                         -m "<subject>" [-m "<body>"]: message without opening the editor (agents)
 #   git arbol [prefix]    the branch tree: parents, siblings, children, merged/behind state
+#                         (flow = squash: '= integrated as <sha>', TESTING, RELEASE marked)
+#                         --limpiar [--yes]: delete the integrated branches (local and origin)
 #   git estructura [file] the whole tree read from stdin (or files): creates what is missing from
 #   (git es)              its parent, checks what exists (never recreates), adds new siblings; a new
 #                         version tree gets its version commit (VERSION, pom.xml) like git np.
@@ -708,11 +710,115 @@ cmd_integra() {
 	is_parent_branch "$cur" || say "the final branch can go: git branch -d $cur$(exists_ref "refs/remotes/origin/$cur" && echo " && git push origin --delete $cur")"
 }
 
+# arbol_testing_sources <testing branch>: print the sources recorded in the marker commit of a
+# TESTING sandbox ('Sources:' block of its Testing-Create commit), comma separated.
+# Arguments: $1 the '<level>/TESTING' branch. Returns: 0; prints nothing when there is no marker.
+arbol_testing_sources() {
+	local ref m
+	ref="$(best_ref "$1" || true)"
+	[ -n "$ref" ] || return 0
+	m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$ref" 2>/dev/null || true)"
+	[ -n "$m" ] || return 0
+	git log -n1 --format=%B "$m" |
+		awk '/^Sources:$/ { on = 1; next } on && NF == 0 { exit } on { printf "%s%s", sep, $1; sep = ", " }'
+}
+
+# checked_out_anywhere <branch>: succeed when <branch> is checked out in any worktree, this one
+# included. Arguments: $1 branch. Returns: 0 checked out, 1 otherwise.
+checked_out_anywhere() {
+	git worktree list --porcelain | grep -qxF "branch refs/heads/$1"
+}
+
+# arbol_limpiar <prefix>: git arbol --limpiar (branches.flow = squash). Lists the branches that
+# git integra squashed into their ORIGINAL (integrated_sha: a 'Refs:' trailer, not just ancestry)
+# and deletes them locally and on origin after a confirmation (--yes skips it). Never deleted: an
+# ORIGINAL with children not integrated yet, a RELEASE, a TESTING sandbox, an 'unmerged/...'
+# branch, a mainline branch, anything checked out in a worktree. Arguments: $1 version prefix
+# (may be empty). Returns: 0; exits through die with flow = merge.
+arbol_limpiar() {
+	local prefix="$1" b p sha pending where n
+	local -a gone=() shas=()
+	[ "${QS_BR_FLOW:-merge}" = squash ] || die "--limpiar needs branches.flow = squash (with merge the branches are ancestors: git branch -d)"
+	fetch_origin
+	while IFS= read -r b; do
+		[ -z "$prefix" ] || case "$b" in "$prefix"/* | "$prefix") ;; *) continue ;; esac
+		is_mainline "$b" && continue
+		is_archived_branch "$b" && continue
+		valid_branch_name "$b" >/dev/null 2>&1 || continue
+		is_testing_branch "$b" && continue
+		{ is_release_branch "$b" || is_ot_release_branch "$b"; } && continue
+		p="$(parent_branch "$b")"
+		[ -n "$p" ] || continue
+		exists_ref "refs/heads/$p" || continue
+		sha="$(integrated_sha "$b" "$p")" || continue
+		if checked_out_anywhere "$b"; then
+			say "kept '$b': integrated as $sha, but checked out in a worktree"
+			continue
+		fi
+		if is_parent_branch "$b"; then
+			pending="$(children_pending "$b")"
+			if [ -n "$pending" ]; then
+				say "kept '$b': integrated as $sha, but children not integrated: $pending"
+				continue
+			fi
+		fi
+		gone+=("$b")
+		shas+=("$sha")
+	done < <(
+		{
+			git for-each-ref --format='%(refname:short)' refs/heads/
+			git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
+		} | sort -u
+	)
+	if [ "${#gone[@]}" = 0 ]; then
+		say "nothing to clean: no integrated branch to delete"
+		return 0
+	fi
+	for n in "${!gone[@]}"; do
+		b="${gone[$n]}"
+		where="origin only"
+		exists_ref "refs/heads/$b" && where="local"
+		exists_ref "refs/heads/$b" && exists_ref "refs/remotes/origin/$b" && where="local and origin"
+		say "integrated: $b = integrated as ${shas[$n]} ($where)"
+	done
+	confirm "delete these ${#gone[@]} branch(es), locally and on origin?" 2>/dev/null || {
+		say "nothing deleted"
+		return 0
+	}
+	for b in "${gone[@]}"; do
+		if exists_ref "refs/heads/$b"; then
+			git branch -q -D "$b" || say "could not delete '$b' locally"
+		fi
+		if exists_ref "refs/remotes/origin/$b"; then
+			git push -q origin --delete "$b" || say "could not delete '$b' on origin"
+		fi
+		say "deleted '$b'"
+	done
+	return 0
+}
+
+# cmd_arbol [prefix] [--limpiar]: print the branch tree (parents '+', finals '-', pending commits,
+# behind state). With branches.flow = squash it reads the 'Refs:'/'Squashed:' trailers like git
+# integra (an integrated branch shows '= integrated as <sha>') and marks TESTING sandboxes (with
+# their sources) and the OT and version RELEASE; flow = merge prints exactly what 4.x did.
+# --limpiar deletes the integrated branches (arbol_limpiar). Returns: 0; die on unknown options.
 cmd_arbol() {
-	local cur prefix
+	local cur prefix="" a clean=0 squash=0
+	for a in "$@"; do
+		case "$a" in
+		--limpiar) clean=1 ;;
+		-*) die "unknown option '$a' (arbol: [prefix] [--limpiar] [--yes])" ;;
+		*) prefix="$a" ;;
+		esac
+	done
+	qs_policy_load
+	[ "${QS_BR_FLOW:-merge}" != squash ] || squash=1
 	cur="$(current_branch || true)"
-	prefix="${1:-}"
 	if [ -z "$prefix" ] && [ -n "$cur" ] && ! is_mainline "$cur"; then prefix="$(branch_version "$cur")"; fi
+	if [ "$clean" = 1 ]; then
+		arbol_limpiar "$prefix"
+		return 0
+	fi
 	{
 		git for-each-ref --format='%(refname:short)' refs/heads/
 		git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
@@ -727,7 +833,7 @@ cmd_arbol() {
 			else printf '~\t%s\n' "$b"; fi
 		done | LC_ALL=C sort -t "$(printf '\t')" -k1,1 |
 		while IFS="$(printf '\t')" read -r node b; do
-			local ind="" p pref ref st="" i depth ahead behind
+			local ind="" p pref ref st="" i depth ahead behind sha plain=0
 			if [ "$node" = "~" ]; then
 				if is_archived_branch "$b"; then echo "~  $b   (set aside by git release)"; else echo "!  $b   (off-model)"; fi
 				continue
@@ -737,7 +843,22 @@ cmd_arbol() {
 			p="$(parent_branch "$b")"
 			pref="$(best_ref "$p" || true)"
 			ref="$(best_ref "$b" || true)"
-			if [ -n "$pref" ] && [ -n "$ref" ]; then
+			if [ "$squash" = 1 ]; then
+				if is_testing_branch "$b"; then
+					st=" [TESTING: sources $(arbol_testing_sources "$b")]"
+					plain=1
+				elif is_ot_release_branch "$b"; then
+					st=" [OT RELEASE]"
+					plain=1
+				elif is_release_branch "$b"; then
+					st=" [version RELEASE]"
+					plain=1
+				elif [ -n "$p" ] && exists_ref "refs/heads/$p" && sha="$(integrated_sha "$b" "$p")"; then
+					st=" = integrated as $sha (git arbol --limpiar deletes it)"
+					plain=1
+				fi
+			fi
+			if [ "$plain" = 0 ] && [ -n "$pref" ] && [ -n "$ref" ]; then
 				ahead="$(git rev-list --count "$pref..$ref")"
 				behind="$(git rev-list --count "$ref..$pref")"
 				if [ "$ahead" = 0 ]; then st=" (nothing pending for $p)"; else

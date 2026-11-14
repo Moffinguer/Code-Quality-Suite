@@ -348,6 +348,28 @@ children_pending() {
 	printf '%s' "${out# }"
 }
 
+# integrated_sha <child> <original>: print the short id of the squash commit of <original> that
+# took <child> in ('Refs: <child> -> <original>'), when <child> is integrated that way (the same
+# rule as branch_integrated) and its tip is not simply an ancestor of <original>: an empty branch
+# that was just created from <original> is not "integrated", whatever its name once was.
+# Arguments: $1 child branch, $2 ORIGINAL branch name (a local branch). Returns: 0 and prints the
+# id; 1 when there is none (pending, or integrated only by ancestry).
+integrated_sha() {
+	local c="$1" p="$2" cref sha
+	cref="$(best_ref "$c" || true)"
+	[ -n "$cref" ] || return 1
+	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 1
+	branch_integrated "$c" "$p" || return 1
+	while IFS= read -r sha; do
+		[ -n "$sha" ] || continue
+		if git log -n1 --format=%B "$sha" | grep -qxF "Refs: $c -> $p"; then
+			git rev-parse --short "$sha"
+			return 0
+		fi
+	done < <(git log -F --grep="Refs: $c -> $p" --format=%H "$p" -- 2>/dev/null)
+	return 1
+}
+
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
 
 # Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf), and
