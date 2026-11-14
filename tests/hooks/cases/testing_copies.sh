@@ -120,7 +120,7 @@ mk x.txt x "feat: x"
 x_sha="$(git rev-parse HEAD)"
 git checkout -q "$TST"
 # why plumbing: the merge commit is built with merge-tree and commit-tree and the branch moved with
-# update-ref, so no hook runs; the reference-transaction check still sees the ref move
+# update-ref (no merge hook, no reflog action); the reference-transaction hook must still see it
 tst_tip="$(git rev-parse HEAD)"
 mx="$(git merge-tree --write-tree "$tst_tip" "$x_sha")" || fail "C2: merge-tree of x"
 mc="$(git commit-tree "$mx" -p "$tst_tip" -p "$x_sha" -m "merge x")" || fail "C2: merge commit"
