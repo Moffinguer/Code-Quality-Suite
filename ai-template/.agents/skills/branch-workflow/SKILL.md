@@ -28,13 +28,17 @@ develop
 - A final branch that needs children: `git convertir-padre` (`<F>/<x>` -> `<F>/<x>/ORIGINAL`,
   local rename), then `git nr <child>`.
 
-## Rebase or merge
+## Rebase and squash (flow `squash`, the 5.x default)
 
 | Branch | Gets parent changes (`git subir`) | Goes up (`git integra`) |
 | --- | --- | --- |
-| final | rebase onto its ORIGINAL | rebase, then merge `--no-ff` (or squash) into its ORIGINAL |
-| ORIGINAL | merge of its parent; never rebased | merge `--no-ff` into the parent ORIGINAL once all children are in |
-| `<version>/ORIGINAL` | merge of `develop` | `git release`, then `git publicar` (below) |
+| final | rebase onto its ORIGINAL | rebase, then **one squash commit** in its ORIGINAL; the branch is deleted (asks) |
+| `<F>/ORIGINAL` | merge of its parent | rebased onto the parent, then squashed into it once all children are in (the one allowed rebase of an ORIGINAL) |
+| `<v>/<ot>/ORIGINAL`, `<v>/ORIGINAL` | merge of its parent | not integrated: `git release` |
+
+Every commit lists its files (`Files:`); a squash keeps the commits in `Commits:`. To change the
+last commit use `git amend` (it recomputes `Files:`), never a bare `git commit --amend`.
+A repository kept on `branches.flow = merge` (4.x) merges `--no-ff` instead; it is deprecated.
 
 ## Creating branches
 
@@ -50,25 +54,35 @@ develop
   `pom.xml` versions and `package.json`. A merge driver keeps each tree's own version.
 - Never edit `VERSION`, the `<version>` of pom.xml, CHANGELOG.md or the README badge by hand.
 
-## Closing a version (two steps)
+## Releases (the human's; preview with `git changelog`)
 
-1. `git changelog`: preview only. Then, when the human asks, `git release`: creates
-   `<version>/RELEASE` with the version, CHANGELOG.md and README badge commits, sets aside never
-   integrated branches as `unmerged/<name>` and deletes the rest of the tree. Review it there.
-2. `git publicar` (the human's): merges RELEASE into `develop`, tags, pushes, deletes RELEASE.
-   Several trees: `git publicar --version <v>` one at a time, or join them first with
-   `git combinar` (the human's).
+1. **OT release**: inside `<v>/<ot>/...`, `git release` creates `<v>/<ot>/RELEASE` (one
+   `docs(changelog)` commit), tags `ot/<v>/<ot>` and deletes the OT subtree.
+2. **Version release**: on `<v>/ORIGINAL`, `git release` (refused while an OT has no RELEASE)
+   builds `<v>/RELEASE` from every OT RELEASE, with the version, CHANGELOG.md and README badge
+   commits. Review it there.
+3. `git publicar` lands RELEASE on `develop` as **one commit** `chore(release): <tag>`, tags,
+   pushes, deletes RELEASE; conflicts on release-owned lines are solved, others stop with steps.
+   Several trees: `git publicar --version <v>`, or join them first with `git combinar`.
+4. `git limpiar-unmerged -n`, then without `-n`: deletes the archived `unmerged/...` branches
+   already in `develop`.
+
+## TESTING sandbox
+
+`git testing crear <branch...>` builds `<F>/TESTING` to try several branches together;
+`git testing repartir` cherry-picks its commits to the right branches. TESTING is never merged,
+rebased, integrated or pushed to an ORIGINAL (the hooks refuse it).
 
 ## Hooks
 
 | Hook | Runs on | Checks |
 | --- | --- | --- |
-| prepare-commit-msg | editor commits | preloads a Conventional Commits template with the file list |
+| prepare-commit-msg | every commit | writes the `Files:` block |
 | commit-msg | every commit | ASCII only, Conventional Commits, subject <= 50 characters |
 | pre-commit | every commit | the quality gate on the staged files |
 | pre-push | `git push`, `git subir` | branch names, a final branch contains its ORIGINAL, no force-push of shared branches, the gate |
-| pre-rebase | `git rebase` | finals rebase onto their parent; shared branches only onto their remote |
-| pre-merge-commit | `git merge`, `git integra` | into an ORIGINAL only its children or parent; never into a final |
+| pre-rebase | `git rebase` | finals rebase onto their parent; shared branches only onto their remote; TESTING never |
+| pre-merge-commit | `git merge` | into an ORIGINAL only its parent (children go up with `git integra`); never into a final; never TESTING |
 | post-checkout | `git checkout`, `git switch` | refreshes config and aliases; warns about off-model names |
 
 ## Rules
@@ -79,3 +93,4 @@ develop
 - Commits: `type(scope): subject`, ASCII, <= 50 characters, body explains why, `Norms: <ids>`;
   never an AI co-author, never `--no-verify`.
 - Never force-push an ORIGINAL, develop or main; never merge into a final branch.
+- Never rebase an ORIGINAL by hand; `git integra` does it.
