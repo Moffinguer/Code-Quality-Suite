@@ -13,6 +13,9 @@
 # '<F>/<leaf>' = '<F>/ORIGINAL'. Siblings share <F>. Derived from the name: same for everyone.
 # Policy (leaf name, level patterns, tag...) comes from .quality-rules.json -> "branches".
 
+# shellcheck source=scripts/special-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
+
 mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
@@ -182,7 +185,7 @@ branch_ot() {
 
 # parent_branch <branch> -> parent per the model; empty for main/master/unknown.
 parent_branch() {
-	local b="$1" node up
+	local b="$1" node up sp
 	qs_policy_load
 	case "$b" in main | master) return 0 ;; esac
 	if [ "$b" = "$QS_BR_MAINLINE" ]; then
@@ -202,6 +205,11 @@ parent_branch() {
 	is_archived_branch "$b" && return 0 # set aside: no parent
 	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
+	sp="$(special_parent "$b")"
+	if [ -n "$sp" ]; then
+		echo "$sp"
+		return 0
+	fi
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
 		case "$node" in */*)
@@ -228,6 +236,16 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	# why: the special table decides its own names and their placement (special-lib.sh)
+	local rc=0
+	special_parse "$b" || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		echo "$SP_WHY"
+		return 1
+		;;
+	esac
 	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;

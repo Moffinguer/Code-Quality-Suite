@@ -240,6 +240,7 @@ cmd_nueva() {
 	local kind="$1" seg="${2:-}" cur node new base
 	[ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
 	testing_reserved_segment "$seg" && die "'$seg' is reserved for the TESTING sandbox: git testing crear"
+	special_refusal "$seg" >/dev/null && die "$(special_refusal "$seg")"
 	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF" | "$QS_BR_RELEASE_LEAF") die "'$seg' is reserved" ;; esac
 	if [ -n "$FROM" ]; then
 		fetch_origin
@@ -746,9 +747,10 @@ cmd_arbol() {
 				fi
 			fi
 			exists_ref "refs/heads/$b" || st="$st (remote only)"
-			printf '%s%s %s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
-				"$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
+			printf '%s%s %s%s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
+				"$(special_marker "$b")" "$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
 		done
+	special_arbol_warnings "$prefix"
 	return 0
 }
 
@@ -846,6 +848,11 @@ cmd_estructura() {
 	while IFS=$'\t' read -r kind node <&3; do
 		if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
 		# why: '<v>/<ot>/RELEASE' and '<F>/TESTING' are valid names, but only their commands create them
+		if why="$(special_node_refusal "$node")"; then
+			echo "  ! $b: $why" >&2
+			errs=$((errs + 1))
+			continue
+		fi
 		if reserved_leaf_segment "${node##*/}"; then
 			echo "  ! $b: '${node##*/}' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF, ${QS_BR_TESTING:-TESTING}, in any case)" >&2
 			errs=$((errs + 1))
@@ -2255,7 +2262,7 @@ ot_release_branches() {
 version_ots() {
 	local o
 	while IFS= read -r o; do
-		[ -n "$o" ] && ! reserved_leaf_segment "$o" && printf '%s\n' "$o"
+		[ -n "$o" ] && ! reserved_leaf_segment "$o" && [ -z "$(special_segment_type "$o")" ] && printf '%s\n' "$o"
 	done < <(all_branches | awk -F/ -v v="$1" '$1 == v && NF >= 3 { print $2 }' | LC_ALL=C sort -u)
 	return 0
 }
