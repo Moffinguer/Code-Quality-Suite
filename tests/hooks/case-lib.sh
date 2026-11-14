@@ -55,6 +55,38 @@ PY
 	git push -q origin develop 2>/dev/null || fail "push develop in $CASE_REPO"
 }
 
+# plumb_commit WHERE BRANCH FILE TEXT SUBJECT: one commit that writes TEXT (plus a newline) into
+# FILE on top of BRANCH, made with plumbing in the current case repo: no hook runs (the fixture
+# stands for a commit someone else made). WHERE is local (only refs/heads/BRANCH moves), origin
+# (only BRANCH on origin moves, on top of origin/BRANCH; origin/BRANCH is fetched) or both. A
+# checked-out BRANCH gets its work tree reset to the new commit. Prints the commit id.
+# Errors: exits 1 through fail when a step does not work.
+plumb_commit() {
+	local where="$1" b="$2" f="$3" text="$4" s="$5" parent idx blob tree c
+	idx="$(git rev-parse --absolute-git-dir)/plumb.idx"
+	parent="refs/heads/$b"
+	[ "$where" != origin ] || parent="refs/remotes/origin/$b"
+	blob="$(printf '%s\n' "$text" | git hash-object -w --stdin)" || fail "plumb_commit: blob of $f"
+	if ! GIT_INDEX_FILE="$idx" git read-tree "$parent" ||
+		! GIT_INDEX_FILE="$idx" git update-index --add --cacheinfo "100644,$blob,$f" ||
+		! tree="$(GIT_INDEX_FILE="$idx" git write-tree)"; then
+		fail "plumb_commit: tree for $f on $b"
+	fi
+	rm -f "$idx"
+	c="$(git commit-tree "$tree" -p "$parent" -m "$s")" || fail "plumb_commit: commit $s"
+	if [ "$where" != origin ]; then
+		git update-ref "refs/heads/$b" "$c" || fail "plumb_commit: move $b"
+		[ "$(git branch --show-current)" != "$b" ] || git reset -q --hard "$c"
+	fi
+	if [ "$where" != local ]; then
+		git update-ref refs/plumb/tip "$c"
+		git -C "$CASE_REPO.git" fetch -q --no-tags "$CASE_REPO" "+refs/plumb/tip:refs/heads/$b" || fail "plumb_commit: origin $b"
+		git update-ref -d refs/plumb/tip
+		git fetch -q origin || fail "plumb_commit: fetch"
+	fi
+	printf '%s\n' "$c"
+}
+
 # run_cases DIR: run every DIR/*.sh in name order, each as its own bash process. Stops at the
 # first failing case, printing "FAIL: case <name>" and exiting 1. An empty or missing DIR is
 # fine. Returns 0 when every case passed.

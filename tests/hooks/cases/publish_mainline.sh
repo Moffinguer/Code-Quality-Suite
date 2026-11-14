@@ -227,3 +227,70 @@ out="$(git publicar --version "$V" --yes 2>&1)" || fail "flow = merge: publicar:
 	[ "$(git log -1 --format=%s develop)" = "chore(release): $V" ] && [ "$(git rev-parse "$V^{commit}")" = "$rel" ] &&
 	! git rev-parse -q --verify "refs/heads/$V/RELEASE" >/dev/null && ! grep -q 'Squashed:' <<<"$(git log -1 --format=%B develop)" &&
 	ok "flow = merge: git publicar keeps the 4.x merge commit, tag on the RELEASE tip" || fail "merge flow publicar: $out"
+
+# --- sandbox 4: only release-owned lines are solved; develop's edits next to them are kept -----
+case_sandbox squash
+POM='<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>t</groupId>
+  <artifactId>app</artifactId>
+  <version>1.0.0</version>
+  <name>app</name>
+</project>'
+plumb_commit both develop pom.xml "$POM" "build: add pom.xml" >/dev/null
+released_version 6.1.0 p p.txt 'from p' "feat(p): add module p" "2020-01-01T10:00:00"
+out="$(git publicar --version 6.1.0 --yes 2>&1)" || fail "publicar 6.1.0: $out"
+git show develop:README.md | grep -q 'qs:version.*6\.1\.0' && git show develop:pom.xml | grep -q '<version>6\.1\.0</version>' ||
+	fail "fixture: develop has no 6.1.0 badge or pom version: $(git show develop:README.md) $(git show develop:pom.xml)"
+released_version 6.2.0 q q.txt 'from q' "feat(q): add module q" "2020-02-01T10:00:00"
+# why: develop edits the line right after the badge and the line right after the project version,
+# so a plain merge puts each edit in the same conflict hunk as the RELEASE's badge / version
+plumb_commit both develop README.md "$(git show develop:README.md | sed '/qs:version/a Develop note.')" \
+	"docs: develop note under the badge" >/dev/null
+plumb_commit both develop pom.xml "$(git show develop:pom.xml | sed 's#<name>app</name>#<name>app (develop)</name>#')" \
+	"build: rename the app on develop" >/dev/null
+old="$(git rev-parse develop)"
+out="$(git publicar --version 6.2.0 --yes 2>&1)" || fail "publicar 6.2.0 with develop edits next to the release lines: $out"
+readme="$(git show develop:README.md)"
+pom="$(git show develop:pom.xml)"
+landed_one 6.2.0 "$old" && grep -qx 'Develop note.' <<<"$readme" && grep -q 'qs:version.*6\.2\.0' <<<"$readme" &&
+	! grep -q 'qs:version.*6\.1\.0' <<<"$readme" && grep -q '<name>app (develop)</name>' <<<"$pom" &&
+	grep -q '<version>6\.2\.0</version>' <<<"$pom" && ! grep -q '<version>6\.1\.0</version>' <<<"$pom" &&
+	[ "$(git show develop:VERSION)" = 6.2.0 ] && ! git grep -q '^<<<<<<<' develop -- README.md pom.xml &&
+	ok "publicar: develop's edits next to the badge and the pom version are kept; badge, pom and VERSION are the RELEASE's" ||
+	fail "release-owned lines: $out / $readme / $pom"
+
+# --- a release commit that also changes another line: stop, nothing moved ----------------------
+released_version 6.3.0 r r.txt 'from r' "feat(r): add module r" "2020-03-01T10:00:00"
+plumb_commit both 6.3.0/RELEASE README.md "$(git show 6.3.0/RELEASE:README.md | sed '1s/.*/# sandbox (release)/')" \
+	"docs(readme): reword the title" >/dev/null
+plumb_commit both develop README.md "$(git show develop:README.md | sed '1s/.*/# sandbox (develop)/')" \
+	"docs: reword the title on develop" >/dev/null
+before="$(refs_state)"
+out="$(git publicar --version 6.3.0 --yes 2>&1)" && fail "publicar solved a conflict on a line that is not release-owned"
+grep -q 'conflict while rebasing 6.3.0/RELEASE onto develop' <<<"$out" && grep -q 'README.md' <<<"$out" &&
+	grep -q 'not only on release-owned lines' <<<"$out" && [ "$(refs_state)" = "$before" ] &&
+	[ -d "$(git rev-parse --git-path rebase-merge)" ] && grep -q '^<<<<<<<' README.md &&
+	ok "publicar: a release commit whose conflict touches another README line stops with the steps; nothing moved" ||
+	fail "stop on a non-release line: $out"
+
+# --- the publish state after git rebase --abort: forgotten by the next run, or by --reset -------
+from="$(git config qs.publish.6.3.0.from || true)"
+out="$(git publicar --reset --version 6.3.0 --yes 2>&1)" && fail "publicar --reset ran while the rebase is stopped"
+grep -q 'a rebase is stopped' <<<"$out" && [ "$(git config qs.publish.6.3.0.from || true)" = "$from" ] && [ -n "$from" ] &&
+	ok "publicar --reset is refused while the rebase is stopped; the state is kept" || fail "reset while stopped: $out"
+git rebase --abort
+git checkout -q develop
+out="$(git publicar --version 6.3.0 --yes 2>&1)" && fail "publicar 6.3.0 passed the conflict"
+grep -q 'stale publish state of 6.3.0 is cleared' <<<"$out" && grep -q 'conflict while rebasing' <<<"$out" &&
+	ok "publicar after git rebase --abort clears the stale qs.publish.6.3.0.from first" || fail "stale state: $out"
+git rebase --abort
+git checkout -q develop
+[ -n "$(git config qs.publish.6.3.0.from || true)" ] || fail "fixture: no publish state after the second stop"
+out="$(git publicar --reset --version 6.3.0 --yes 2>&1)" || fail "publicar --reset: $out"
+grep -q 'publish state of 6.3.0 forgotten' <<<"$out" && [ -z "$(git config --get-regexp '^qs\.publish\.' || true)" ] &&
+	[ "$(git rev-parse 6.3.0/RELEASE)" = "$(git rev-parse origin/6.3.0/RELEASE)" ] &&
+	ok "publicar --reset --version 6.3.0 forgets the publish state; RELEASE untouched" || fail "reset: $out"
+out="$(git publicar --reset --version 6.3.0 --yes 2>&1)" || fail "publicar --reset again: $out"
+grep -q 'nothing to reset' <<<"$out" && ok "publicar --reset with no state: nothing to reset" || fail "reset again: $out"
