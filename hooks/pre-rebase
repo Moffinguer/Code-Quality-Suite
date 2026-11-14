@@ -6,7 +6,9 @@
 #   ORIGINAL/develop/main  only onto their own remote ('git pull'); they are shared, and
 #                  rewriting them breaks every branch built on them
 #   flow squash    also '<F>/ORIGINAL' below the OT onto its parent ORIGINAL once all its
-#                  children are integrated (git integra)
+#                  children are integrated (git integra); '<version>/RELEASE' onto develop
+#                  (its parent: git subir, git publicar), never onto anything else
+#   develop        never rebased in any flow (shared): git publicar adds one commit on top
 # git passes: $1 = upstream, $2 = branch being rebased (empty = current).
 set -euo pipefail
 HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
@@ -34,6 +36,17 @@ fi
 # onto (an ancestor of) its own remote: the 'git pull --rebase' case
 if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 &&
 	git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
+# --- flow squash: '<v>/RELEASE' only onto develop (or an older develop commit), or a tidy-up of
+# its own commits; a RELEASE onto another RELEASE would publish that version too
+if [ "${QS_BR_FLOW:-merge}" = squash ] && is_release_branch "$branch"; then
+	rl_dev="$(best_ref "$QS_BR_MAINLINE" || true)"
+	if [ -n "$rl_dev" ] && { git merge-base --is-ancestor "$up" "$rl_dev" || git merge-base --is-ancestor "$up" "$branch"; }; then
+		exit 0
+	fi
+	echo "[pre-rebase] '$branch' is rebased only onto '$QS_BR_MAINLINE' (git subir, git publicar), not onto '$upstream'." >&2
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
 # --- flow squash: '<F>/ORIGINAL' goes up by rebase onto its parent + squash (git integra) ----
 # Only below the OT ('<v>/<ot>/ORIGINAL' and '<v>/ORIGINAL' go up through git release), only
 # onto (a descendant of) its parent ORIGINAL, and only when every child is integrated.
