@@ -1,5 +1,39 @@
 # Shared image and updates
 
+## Migrating to 5.0.0: the git flow
+
+5.0.0 changes the integration and release flow (see [GIT-WORKFLOW.md](GIT-WORKFLOW.md)). The
+rules file is migrated once, by the engine, on the next run (commit, `git instalar`,
+`git actualizar-suite`). Nothing else is needed to keep working.
+
+- **Existing repositories stay on the 4.x flow.** The migration writes `branches.flow = merge`
+  (the 4.x behaviour: `git integra` merges, one-level release, `git publicar` merges) and
+  `branches.model = 5`. A notice is logged once: "existing rules file: `branches.flow` set to `merge`
+  to keep the 4.x behaviour ...". In-flight 4.x version trees are safe.
+- **Existing `levels[1]` is updated.** The OT rule `^[0-9]+$` (the 4.0.0 default) becomes
+  `^[A-Za-z0-9]+$`, so text OTs work. A custom value is kept. Logged as
+  `migrated branches.levels[1]: ...`. Repeating the run changes nothing.
+- **New repositories start on the 5.x flow.** A rules file created by `git iniciar`, `git instalar`
+  or the first commit gets `flow = squash` and `model = 5`, with no notice.
+- **Old CHANGELOG lines stay.** Entries with authors or with the 4.x reference format are not
+  rewritten.
+- The `merge` flow is deprecated and removed in 6.0.
+
+### How to switch a repository to the squash flow
+
+1. Finish or publish the version trees started with 4.x: the two flows must not be mixed inside
+   one tree.
+2. Edit `.quality-rules.json` (git-ignored, personal) and set the key under `branches`:
+
+   ```json
+   "branches": { "flow": "squash" }
+   ```
+
+3. Run any commit or `git instalar`; check with `git arbol` and `git es -n` on a test branch.
+
+With `flow = squash`, `git integra` squashes and then asks to delete the integrated branch (`--yes`
+answers yes); `git release` and `git publicar` follow the two-release process of 5.x.
+
 ## How the pieces are shared
 
 ```text
@@ -43,7 +77,9 @@ It asks once, then:
 3. builds the base image of this version without cache (needs network; `--lazy` leaves it to the
    first commit);
 4. re-points every repository in `repos.list` and the global git setup (`git clonar`, the clone
-   template, `git actualizar-suite`) to this folder.
+   template, `git actualizar-suite`) to this folder;
+5. applies the rules-file migration of [5.0.0](#migrating-to-500-the-git-flow) to each registered
+   repository.
 
 Then the first commit in each repository installs the tools of its languages again, exactly like a
 first install. To have them ready before committing: `qs-update.sh --langs "java css python c"`.
@@ -88,21 +124,22 @@ bash /c/dev/code-quality-suite/install.sh /path/to/repo
 
 The default of `branches.levels[1]` (the OT, segment 2 of `<version>/<ot>/...`) changed from
 `^[0-9]+$` to `^[A-Za-z0-9]+$`, so `ABC123` is an OT as well as `188858`. The suite never rewrites
-an existing `.quality-rules.json`, and that file already stores the old value. To accept text
-OTs in a repository, set the second item of `branches.levels` by hand:
+an existing `.quality-rules.json` beyond the 5.0.0 migration above, and a file created before 4.0.1
+stores the old value. To accept text OTs in a repository, set the second item of `branches.levels`
+by hand:
 
 ```json
 "branches": { "levels": ["<keep the first item, the semver regex>", "^[A-Za-z0-9]+$"] }
 ```
 
 Numeric OTs keep working. `ABC1` and `abc1` are different branches (case is not checked).
-`RELEASE` and `ORIGINAL` cannot be used as an OT name.
+`RELEASE`, `ORIGINAL` and (under the squash flow) `TESTING` cannot be used as an OT name.
 
 ## What an update keeps
 
 | Kept | Where |
 | --- | --- |
-| each repository's rules and pinned versions | `<repo>/.quality-rules.json` (new rule keys of the new version are added, yours are never overwritten) |
+| each repository's rules and pinned versions | `<repo>/.quality-rules.json` (new rule keys of the new version are added, yours are never overwritten; 5.0.0 also migrates `branches.flow`/`model` and `levels[1]`, see above) |
 | answers to version questions, `QUALITY_HEAVY_CMD` | `<repo>/.git/hooks/quality-suite.env` |
 | branch aliases and branches | repository config (refreshed) |
 | list of repositories | `~/.config/code-quality-suite/repos.list` |
@@ -135,7 +172,8 @@ and never rewrites `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `opencode.json` or `kn
   Replace `analyst` with `systems-analyst` in your own prompts and notes.
 - **`AGENTS.md` is yours.** Update its roles table by hand: `analyst` -> `systems-analyst`, the
   main session is also the business analyst, and the flow is the `team-flow` skill (compare with
-  `<suite>/ai-template/AGENTS.md`). The same for the delegation lines of `CLAUDE.md`.
+  `<suite>/ai-template/AGENTS.md`). The same for the delegation lines of `CLAUDE.md`. For 5.0.0,
+  rule 5 of `AGENTS.md` gains the exception for `git integra` on a `<F>/ORIGINAL` (squash flow).
 
 ## Behind a proxy
 
@@ -155,3 +193,5 @@ builds. Checks never use the network.
 | `used by <repo>` | that repository still points to an older suite folder; `git actualizar-suite` re-points it and frees the image |
 | a tool failed to install | `QS_RETRY_FAILED=1 git commit ...` (built-in checks run meanwhile; the other tools of the batch are kept) |
 | `could not be added to the image` | the whole build failed (network, proxy); log in `~/.config/code-quality-suite/install.log`; the next commit retries |
+| `existing rules file: branches.flow set to merge` | informational: see [Migrating to 5.0.0](#migrating-to-500-the-git-flow) |
+| `TESTING is a sandbox: it cannot be merged, rebased or integrated` | move the commits with `git testing repartir`; see [GIT-WORKFLOW.md](GIT-WORKFLOW.md) |
