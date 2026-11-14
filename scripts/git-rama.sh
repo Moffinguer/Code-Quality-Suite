@@ -1365,18 +1365,84 @@ cmd_release() { # step 1: RELEASE branch with version, changelog and README badg
 # --- git publicar with branches.flow = squash ----------------------------------------------------
 # State of one run, set by publish_local_release: PUB_TIP the '<v>/RELEASE' tip being published.
 # PUB_AGAIN: the command that resumes after a stopped rebase (git subir sets it; empty means
-# git publicar --version <v>).
-PUB_TIP="" PUB_AGAIN=""
+# git publicar --version <v>). PUB_TOKEN: the placeholder of a release-owned line while
+# publish_solve_file merges a release file; PUB_POMS: the "|a|b|" artifactIds of the RELEASE side.
+PUB_TIP="" PUB_AGAIN="" PUB_TOKEN='@@qs:release-owned@@' PUB_POMS="|"
 
 # publish_is_release_file <path>: whether <path> is one of the files the release commits write:
-# QS_BR_CHANGELOG, the version file, a pom.xml, package.json, README.md or CITATION.cff.
+# QS_BR_CHANGELOG, the version file, a pom.xml, package.json, the README or CITATION.cff.
 # Arguments: $1 path (from the top of the work tree). Returns: 0 when it is one, 1 otherwise.
 publish_is_release_file() {
 	[ -n "$1" ] || return 1
 	case "$1" in
-	"$QS_BR_CHANGELOG" | "${QS_BR_VERSION_FILE:-VERSION}" | pom.xml | */pom.xml | package.json | README.md | CITATION.cff) return 0 ;;
+	"$QS_BR_CHANGELOG" | "${QS_BR_VERSION_FILE:-VERSION}" | "${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json | CITATION.cff) return 0 ;;
 	esac
 	return 1
+}
+
+# publish_mask <path> <in> <out> <saved>: write to <out> the file <in> with every release-owned
+# piece replaced by PUB_TOKEN, and append each piece replaced to <saved> (one per line, in
+# order). Release-owned: in the README the badge between its qs:version markers (only that span);
+# in a pom.xml the project's own version (POM_AWK; the parent version when the parent is one of
+# PUB_POMS); in package.json the top-level "version" line; in CITATION.cff the top-level
+# version: and date-released: lines. Any other file is copied as it is.
+# Arguments: $1 the path in the repository (picks the rules); $2 input; $3 output; $4 the list of
+# pieces (created empty first). Returns: 0; 1 when <in> already holds PUB_TOKEN.
+publish_mask() {
+	local p="$1" in="$2" out="$3" saved="$4"
+	: >"$saved"
+	! grep -qF -- "$PUB_TOKEN" "$in" || return 1
+	case "$p" in
+	"${QS_BR_README:-README.md}")
+		# shellcheck disable=SC2016
+		awk -v token="$PUB_TOKEN" -v saved="$saved" -v s='<!-- qs:version -->' -v e='<!-- /qs:version -->' '{
+			out = ""; rest = $0
+			while ((i = index(rest, s)) && (j = index(substr(rest, i + length(s)), e))) {
+				k = i + length(s) + j + length(e) - 2
+				print substr(rest, i, k - i + 1) >>saved
+				out = out substr(rest, 1, i - 1) token
+				rest = substr(rest, k + 1)
+			}
+			print out rest
+		}' "$in" >"$out"
+		;;
+	pom.xml | */pom.xml) awk -v mode=mask -v token="$PUB_TOKEN" -v saved="$saved" -v ours="$PUB_POMS" "$POM_AWK" "$in" >"$out" ;;
+	package.json) awk -v mode=mask -v token="$PUB_TOKEN" -v saved="$saved" "$JSON_AWK" "$in" >"$out" ;;
+	CITATION.cff) awk -v token="$PUB_TOKEN" -v saved="$saved" '/^(version|date-released):/ { print token; print >>saved; next } { print }' "$in" >"$out" ;;
+	*) cat -- "$in" >"$out" ;;
+	esac
+}
+
+# publish_unmask <in> <saved>: print <in> with each PUB_TOKEN replaced, in order, by the next line
+# of <saved> (the release-owned pieces of the RELEASE side, publish_mask).
+# Arguments: $1 the merged masked file; $2 the pieces. Output: the file.
+# Returns: 0; 1 when the number of placeholders and of pieces differ (output incomplete).
+publish_unmask() {
+	awk -v token="$PUB_TOKEN" -v saved="$2" '
+		BEGIN { while ((getline l < saved) > 0) piece[++np] = l }
+		{
+			out = ""; rest = $0
+			while ((i = index(rest, token))) {
+				if (++k > np) bad = 1
+				out = out substr(rest, 1, i - 1) piece[k]
+				rest = substr(rest, i + length(token))
+			}
+			print out rest
+		}
+		END { exit (bad || k != np) ? 1 : 0 }' "$1"
+}
+
+# publish_solve_file <path> <ours> <base> <theirs> <out>: the merge of a release file that solves
+# ONLY its release-owned pieces (publish_mask): the three sides are masked, merged with git
+# merge-file (so develop's edits next to the badge or the version line are kept), and the
+# pieces of the RELEASE side put back. Any conflict left is a conflict on other lines.
+# Arguments: $1 the path in the repository; $2 develop side; $3 base; $4 RELEASE side; $5 output.
+# Returns: 0 when solved; 1 when another line conflicts (or the pieces do not line up).
+publish_solve_file() {
+	local p="$1" out="$5" s
+	for s in 2 3 4; do publish_mask "$p" "${!s}" "${!s}.m" "${!s}.saved" || return 1; done
+	git merge-file -q -p "$2.m" "$3.m" "$4.m" >"$out.m" 2>/dev/null || return 1
+	publish_unmask "$out.m" "$4.saved" >"$out"
 }
 
 # publish_changelog_merge <ours> <theirs> <version>: the changelog <ours> with the '## <version>'
@@ -1447,37 +1513,59 @@ publish_changelog_merge() {
 
 # publish_autosolve: solve the conflicts of the stopped step of the RELEASE rebase when the
 # commit being replayed is a release commit (RELEASE_COMMITS_RX) and every conflicted path is a
-# release file: QS_BR_CHANGELOG keeps both entries in semver order (publish_changelog_merge, the
-# REL_VERSION section of the RELEASE side), the other files keep the RELEASE side of each
-# conflicting hunk and every other edit (git merge-file --theirs); a file the RELEASE side deleted
-# is removed. The solved paths are staged.
+# release file. Only release-owned text is solved: QS_BR_CHANGELOG keeps both entries in semver
+# order (publish_changelog_merge, the REL_VERSION section of the RELEASE side), the version file
+# takes the RELEASE side, and the README, pom.xml, package.json and CITATION.cff keep every edit of
+# both sides with the RELEASE side's badge / version (publish_solve_file). A conflict on any other
+# line, a side that deleted the file, or a piece that does not line up leaves the step for the
+# human. All files are solved in a scratch folder first; only then are they written and staged.
 # Arguments: none; reads REL_VERSION; runs at the top of the work tree.
-# Returns: 0 when every conflict was solved; 1 when one is left for the human (nothing staged).
+# Returns: 0 when every conflict was solved; 1 when one is left for the human (nothing written).
 publish_autosolve() {
-	local c files f t
+	local c files f t i=0 rc=0
 	c="$(git rev-parse -q --verify REBASE_HEAD 2>/dev/null)" || return 1
 	[[ $(git log -1 --format=%s "$c") =~ $RELEASE_COMMITS_RX ]] || return 1
 	files="$(git diff --name-only --diff-filter=U)"
 	[ -n "$files" ] || return 1
 	while IFS= read -r f; do publish_is_release_file "$f" || return 1; done <<<"$files"
 	t="$(git rev-parse --absolute-git-dir)/quality-suite/publish-solve"
-	mkdir -p "$t"
+	rm -rf "$t"
+	mkdir -p "$t/out"
+	PUB_POMS="$(pom_artifacts "$c")"
 	while IFS= read -r f; do
-		if ! git show ":3:$f" >"$t/theirs" 2>/dev/null; then
-			git rm -q -f -- "$f"
-			continue
-		fi
-		git show ":2:$f" >"$t/ours" 2>/dev/null || : >"$t/ours"
+		i=$((i + 1))
+		git show ":3:$f" >"$t/theirs" 2>/dev/null || {
+			rc=1
+			break
+		}
 		if [ "$f" = "$QS_BR_CHANGELOG" ]; then
-			publish_changelog_merge "$t/ours" "$t/theirs" "$REL_VERSION" >"$f"
+			git show ":2:$f" >"$t/ours" 2>/dev/null || : >"$t/ours"
+			publish_changelog_merge "$t/ours" "$t/theirs" "$REL_VERSION" >"$t/out/$i"
+		elif [ "$f" = "${QS_BR_VERSION_FILE:-VERSION}" ]; then
+			cp -- "$t/theirs" "$t/out/$i"
+		elif ! git show ":2:$f" >"$t/ours" 2>/dev/null; then
+			rc=1
+			break
 		else
 			git show ":1:$f" >"$t/base" 2>/dev/null || : >"$t/base"
-			# why: the exit status is the number of conflicts left; --theirs leaves none
-			git merge-file -q -p --theirs "$t/ours" "$t/base" "$t/theirs" >"$f" || true
+			publish_solve_file "$f" "$t/ours" "$t/base" "$t/theirs" "$t/out/$i" || {
+				rc=1
+				break
+			}
 		fi
-		git add -- "$f"
 	done <<<"$files"
+	if [ "$rc" = 0 ]; then
+		i=0
+		while IFS= read -r f; do
+			i=$((i + 1))
+			cat -- "$t/out/$i" >"$f"
+			git add -- "$f"
+		done <<<"$files"
+	else
+		echo "[rama] $f: the conflict is not only on release-owned lines (badge, version); it is left for you" >&2
+	fi
 	rm -rf "$t"
+	[ "$rc" = 0 ] || return 1
 	say "release files solved for $(git log -1 --format='%h %s' "$c"): ${files//$'\n'/ }"
 }
 
