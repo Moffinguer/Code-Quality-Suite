@@ -42,11 +42,20 @@ for upd in "${UPDATES[@]}"; do
 	[ "$new" = "$Z40" ] && continue # deleted
 	if is_testing_branch "$b"; then
 		# why: a merge or pull moving TESTING (fast-forward or not) puts another branch's commits in it
-		case "${GIT_REFLOG_ACTION:-}" in
-		merge* | pull*)
+		# why: plumbing (update-ref to a commit-tree merge) sets no reflog action, so a new tip
+		# with several parents whose first parent is the old tip is also a merge into TESTING
+		how=""
+		case "${GIT_REFLOG_ACTION:-}" in merge* | pull*) how="${GIT_REFLOG_ACTION%% *}" ;; esac
+		if [ -z "$how" ] && [ "$old" != "$Z40" ] &&
+			git rev-parse -q --verify "${new}^2" >/dev/null 2>&1 &&
+			[ "$(git rev-parse -q --verify "${new}^1" 2>/dev/null)" = "$old" ]; then
+			how="merge"
+		fi
+		case "$how" in
+		?*)
 			if [ "$old" != "$Z40" ]; then
 				{
-					echo "[quality-suite] reference-transaction: '$b' was moved by a ${GIT_REFLOG_ACTION%% *}."
+					echo "[quality-suite] reference-transaction: '$b' was moved by a $how."
 					testing_message
 					echo "  TESTING must be recreated ('git testing crear --recrear'), never merged into."
 					echo "  Undo: git reset --hard $old   (or, when $b is not checked out: git branch -f $b $old)"
