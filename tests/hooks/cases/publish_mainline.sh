@@ -294,3 +294,20 @@ grep -q 'publish state of 6.3.0 forgotten' <<<"$out" && [ -z "$(git config --get
 	ok "publicar --reset --version 6.3.0 forgets the publish state; RELEASE untouched" || fail "reset: $out"
 out="$(git publicar --reset --version 6.3.0 --yes 2>&1)" || fail "publicar --reset again: $out"
 grep -q 'nothing to reset' <<<"$out" && ok "publicar --reset with no state: nothing to reset" || fail "reset again: $out"
+
+# --- git subir on a RELEASE: stopped on the same conflict, solved, re-run git subir resumes -------
+git checkout -q 6.3.0/RELEASE
+out="$(git subir 2>&1)" && fail "git subir on 6.3.0/RELEASE passed the conflict"
+grep -q 'conflict while rebasing 6.3.0/RELEASE onto develop' <<<"$out" && grep -q '3\. git subir' <<<"$out" &&
+	[ -d "$(git rev-parse --git-path rebase-merge)" ] ||
+	fail "subir stop: $out"
+# why: keeping develop's title makes the step empty: the resume must skip it, not stop again
+git checkout -q --ours README.md
+git add README.md
+out="$(git subir 2>&1)" || fail "git subir resume: $out"
+[ "$(git branch --show-current)" = 6.3.0/RELEASE ] && git merge-base --is-ancestor develop 6.3.0/RELEASE &&
+	[ "$(git show 6.3.0/RELEASE:README.md | head -1)" = '# sandbox (develop)' ] &&
+	grep -q 'qs:version.*6\.3\.0' <<<"$(git show 6.3.0/RELEASE:README.md)" &&
+	[ "$(git ls-remote --heads origin refs/heads/6.3.0/RELEASE | cut -f1)" = "$(git rev-parse 6.3.0/RELEASE)" ] &&
+	ok "git subir on a RELEASE resumes its stopped rebase (solved by hand), keeps the RELEASE badge, pushes" ||
+	fail "subir resume: $out / $(git show 6.3.0/RELEASE:README.md)"
