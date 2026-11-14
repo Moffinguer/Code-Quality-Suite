@@ -198,9 +198,14 @@ printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
 
 ### git arbol
 
-- **Syntax:** `git arbol [prefix]`
+- **Syntax:** `git arbol [prefix] [--limpiar [--yes]]`
 - **Does:** the tree with parents (`+`), finals (`-`), commits pending to integrate, branches
-  behind their parent, branches set aside (`~ unmerged/...`), and where you are.
+  behind their parent, branches set aside (`~ unmerged/...`), and where you are. With
+  `flow: squash` it reads the `Refs:`/`Squashed:` lines like `git integra`: an integrated branch
+  shows `= integrated as <sha>`; TESTING (with its sources), the OT RELEASE and the version
+  RELEASE are marked. `--limpiar` lists the integrated branches and deletes them locally and on
+  origin after asking (`--yes` skips it); it keeps an ORIGINAL with pending children, any
+  RELEASE, TESTING and a branch checked out in a worktree.
 - **Use it when:** before integrating or releasing; whenever you are lost.
 - **Who:** anyone.
 
