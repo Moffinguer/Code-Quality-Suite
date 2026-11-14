@@ -321,8 +321,9 @@ class App:
         msgs = policy.migrate(self.data)
         for m in msgs:
             qslog.log("INFO", "rules", m, os.path.basename(self.rules_path), "migrate", "SUCCESS")
-        if any(policy.FLOW_NOTICE in m for m in msgs):
-            print(f"[quality-suite] {policy.FLOW_NOTICE}", file=sys.stderr)
+        for notice in (policy.FLOW_NOTICE, policy.DOCS_NOTICE):
+            if any(notice in m for m in msgs):
+                print(f"[quality-suite] {notice}", file=sys.stderr)
         return msgs
 
     def export_tests(self):

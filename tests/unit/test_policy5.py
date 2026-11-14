@@ -84,7 +84,7 @@ def old_file(levels1=OLD_OT):
         dict: the rules data.
     """
     br = copy.deepcopy(policy.DEFAULTS["branches"])
-    for k in ("model", "flow", "ot_tag", "testing_leaf"):
+    for k in ("model", "flow", "ot_tag", "testing_leaf", "special"):
         del br[k]
     br["levels"][1] = levels1
     return {"branches": br}
@@ -98,7 +98,7 @@ class DefaultsTest(unittest.TestCase):
         br, com = policy.DEFAULTS["branches"], policy.DEFAULTS["commit"]
         self.assertEqual(br["flow"], "squash")
         self.assertEqual(br["ot_tag"], "ot/{version}/{ot}")
-        self.assertEqual(br["model"], 5)
+        self.assertEqual(br["model"], 6)
         self.assertEqual(br["testing_leaf"], "TESTING")
         self.assertEqual(com["files"], "block")
         self.assertEqual(policy.validate({}), [])
@@ -146,7 +146,7 @@ class MigrateTest(unittest.TestCase):
         data = old_file()
         msgs = policy.migrate(data)
         self.assertEqual(data["branches"]["levels"][1], policy.OT_RX)
-        self.assertEqual(data["branches"]["model"], 5)
+        self.assertEqual(data["branches"]["model"], 6)
         self.assertEqual(data["branches"]["flow"], "merge")
         self.assertTrue(any("migrated branches.levels[1]" in m for m in msgs))
         self.assertTrue(any(policy.FLOW_NOTICE in m for m in msgs))
@@ -193,7 +193,7 @@ class MigrateTest(unittest.TestCase):
             with open(path, encoding="utf-8") as fh:
                 got = json.load(fh)
             self.assertEqual(got["branches"]["levels"][1], policy.OT_RX)
-            self.assertEqual(got["branches"]["model"], 5)
+            self.assertEqual(got["branches"]["model"], 6)
 
 
 class MigrateFileTest(unittest.TestCase):
@@ -416,7 +416,7 @@ class SyncRulesTest(unittest.TestCase):
             changed = app.sync_rules([], {})
             self.assertIn("policy", changed)
             self.assertEqual(app.data["branches"]["flow"], "merge")
-            self.assertEqual(app.data["branches"]["model"], 5)
+            self.assertEqual(app.data["branches"]["model"], 6)
 
     def test_new_file_gets_squash(self):
         """A rules file created by the engine skips the migration and defaults to squash."""
@@ -476,7 +476,7 @@ class InstallE2ETest(unittest.TestCase):
             with open(path, encoding="utf-8") as fh:
                 got = json.load(fh)
             self.assertEqual(got["branches"]["flow"], "merge")
-            self.assertEqual(got["branches"]["model"], 5)
+            self.assertEqual(got["branches"]["model"], 6)
             self.assertEqual(got["branches"]["levels"][1], policy.OT_RX)
             self.assertIn("squash", res.stdout + res.stderr)
             with open(path, "rb") as fh:

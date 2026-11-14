@@ -19,9 +19,156 @@ import shutil
 import sys
 import tempfile
 
+from registry import LEVELS
+
 # level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
 # no '-' or '_', so it never collides with the leaf names of the branch model
 OT_RX = r"^[A-Za-z0-9]+$"
+
+# ------------------------------------------------------------ special branches table
+
+# Allowed values per property of a `branches.special.<TYPE>` entry; a tuple is an enumeration,
+# a string names a kind checked by _special_value_error.
+SPECIAL_PROPS = {
+    "at": ("version", "node", "task"),  # where the branch may live
+    "children": "bool",  # may become '<X>/ORIGINAL' with children
+    "suffix": ("none", "n", "task"),  # 'ATTEMPT-<n>', 'REVIEW-<task>'
+    "integrates": ("squash", "never", "choose", "apply"),  # how `git integra` treats it
+    "order": ("any", "first", "last", "alone"),
+    "rebase": "bool",  # False: regenerated, never rebased (FORMAT)
+    "types": "types",  # Conventional Commits types; ["*"] = all, [] = no own commits
+    "paths": "paths",  # allowed globs and @tokens; [] = any
+    "level": "level",  # gate level of the branch, or None
+    "push": ("normal", "never"),
+    "push_checks": ("default", "full"),  # 'full': full build and tests on push
+    "trailers": "trailers",  # trailers every own commit must carry
+    "locks": "bool",  # while it exists no other branch of the version may be created
+    "on_release": ("required", "optional", "delete", "set_aside"),
+    "changelog": ("none", "changed", "task"),
+}
+# (type, property) pairs a project cannot change: validate refuses any other value
+SPECIAL_FIXED = {
+    ("FORMAT", "rebase"): False,
+    ("ATTEMPT", "integrates"): "choose",
+    ("CHECKPOINT", "push"): "never",
+}
+# standard files of `git repo-files` except VERSION (it changes only with the version commit)
+REPO_FILES_GLOBS = (
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    "CONTRIBUTORS.md",
+    "MAINTAINERS.md",
+    "ROADMAP.md",
+    "FAQ.md",
+    "INSTALL.md",
+    "ARCHITECTURE.md",
+    "API.md",
+    "DEVELOPMENT.md",
+    "AUTHORS",
+    "LICENSE",
+    "CODEOWNERS",
+    "CITATION.cff",
+)
+# @tokens usable in `paths`; expand_paths turns them into globs
+PATH_TOKENS = {
+    "@repo-files": REPO_FILES_GLOBS,
+    "@docs": ("*.md", "**/*.md", "docs/**", *REPO_FILES_GLOBS),
+    "@tests": (
+        "src/test/**",
+        "**/test/**",
+        "**/tests/**",
+        "**/*_test.*",
+        "**/test_*.py",
+        "**/*.spec.*",
+        "**/*.test.*",
+    ),
+}
+_SP_BASE = {
+    "at": "node",
+    "children": True,
+    "suffix": "none",
+    "integrates": "squash",
+    "order": "any",
+    "rebase": True,
+    "types": ["*"],
+    "paths": [],
+    "level": None,
+    "push": "normal",
+    "push_checks": "default",
+    "trailers": [],
+    "locks": False,
+    "on_release": "set_aside",
+    "changelog": "none",
+}
+
+
+def _sp(**over):
+    """Build one default entry of the special table: the base properties plus overrides.
+
+    Args:
+        **over: the properties that differ from _SP_BASE.
+
+    Returns:
+        dict: a new entry (lists are copied), keys in SPECIAL_PROPS order.
+    """
+    return copy.deepcopy({**_SP_BASE, **over})
+
+
+# 6.0.0 default table; the order of the entries is the order of QS_SP_NAMES and `git ayuda`.
+# TESTING (branches.testing_leaf, 5.0.0-RC1) is not in the table: it is not configurable here.
+SPECIAL_DEFAULTS = {
+    "MIGRATION": _sp(
+        at="version",
+        order="first",
+        types=["build", "fix", "refactor", "perf", "test", "docs", "chore", "ci", "style"],
+        push_checks="full",
+        locks=True,
+        on_release="required",
+        changelog="changed",
+    ),
+    "DOCS": _sp(
+        at="version",
+        children=False,
+        order="last",
+        types=["docs", "chore"],
+        paths=["@docs"],
+        on_release="required",
+    ),
+    "REFACTOR": _sp(
+        order="last",
+        types=["refactor", "style", "perf", "test", "docs", "chore"],
+        level="strict",
+    ),
+    "FORMAT": _sp(children=False, order="alone", rebase=False, types=["style"]),
+    "TESTS": _sp(types=["test", "chore"], paths=["@tests"]),
+    "SPIKE": _sp(integrates="apply", on_release="delete"),
+    "ATTEMPT": _sp(
+        at="task", suffix="n", integrates="choose", on_release="delete", changelog="task"
+    ),
+    "REVIEW": _sp(at="task", suffix="task", integrates="apply", on_release="delete"),
+    "QUARANTINE": _sp(
+        at="task",
+        suffix="task",
+        integrates="apply",
+        trailers=["Generated-by"],
+        level="strict",
+        on_release="delete",
+        changelog="task",
+    ),
+    "CHECKPOINT": _sp(
+        at="task",
+        children=False,
+        suffix="task",
+        integrates="never",
+        level="format",
+        push="never",
+        on_release="delete",
+    ),
+}
 
 DEFAULTS = {
     "encoding": {
@@ -66,7 +213,7 @@ DEFAULTS = {
         ],
         "segment": r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
         "allow": [],
-        "model": 5,  # marker of the one-time migration to the 5.x branch model (migrate)
+        "model": 6,  # marker of the one-time migration to the 6.x branch model (migrate)
         "flow": "squash",  # squash (5.x) | merge (4.x, deprecated)
         "ot_tag": "ot/{version}/{ot}",  # annotated tag at the OT release; '' = none
         "testing_leaf": "TESTING",  # reserved leaf of the TESTING sandbox '<level>/TESTING'
@@ -82,6 +229,7 @@ DEFAULTS = {
         "pom_version": "update",  # update | snapshot | check | off: pom.xml follows the version
         "tag_url": "",  # changelog links: '' = from origin, '-' = none, or '...{tag}'
         "commit_url": "",  # changelog references: '' = from origin, '-' = none, '...{commit}'
+        "special": SPECIAL_DEFAULTS,  # table of special branches (see SPECIAL_PROPS)
     },
 }
 SECTIONS = tuple(DEFAULTS)
@@ -94,37 +242,74 @@ FLOW_NOTICE = (
 )
 
 
-def migrate(data):
-    """One-time migration of a rules file to the 5.x branch model. Run before populate.
+DOCS_NOTICE = (
+    "6.0 kept the 5.x changelog writer (OT RELEASE). To make DOCS write it, finish the open "
+    "version trees and set `branches.special.DOCS.on_release` to `required`, see "
+    "docs/UPDATING.md"
+)
 
-    When `branches.model` is missing or below 5: `branches.levels[1]` equal to the old default
+
+def migrate(data):
+    """One-time migration of a rules file to the current branch model. Run before populate.
+
+    Step 5 (`branches.model` missing or below 5): `branches.levels[1]` equal to the old default
     `^[0-9]+$` becomes OT_RX (any other value is kept), `branches.flow` is added as `merge`
-    (4.x behaviour kept; new files get `squash` from populate) and `branches.model` is set to 5.
-    A second run changes nothing. Never weakens a rule.
+    (4.x behaviour kept; new files get `squash` from populate) and the model is set to 5.
+    Step 6 (model below 6): `branches.special.DOCS.on_release` is added as `optional`, so the
+    5.x changelog writer (OT RELEASE) keeps working until the project switches to `required`
+    (never written over an existing value or over `"DOCS": false`); the model is set to 6.
+    A 4.x file goes through both steps. A second run changes nothing. Never weakens a rule.
 
     Args:
         data: the parsed rules file (dict), changed in place.
 
     Returns:
-        list[str]: one message per change (the log lines); the flow notice is the last one.
+        list[str]: one message per change (the log lines); the notices are FLOW_NOTICE and
+        DOCS_NOTICE inside their messages.
     """
     br = data.get("branches") if isinstance(data, dict) else None
     if not isinstance(br, dict):
         return []
     model = br.get("model")
-    if isinstance(model, int) and not isinstance(model, bool) and model >= MODEL:
+    if not isinstance(model, int) or isinstance(model, bool):
+        model = 0
+    if model >= MODEL:
         return []
     msgs = []
-    levels = br.get("levels")
-    if isinstance(levels, list) and len(levels) > 1 and levels[1] == OLD_OT_RX:
-        levels[1] = OT_RX
-        msgs.append(f"migrated branches.levels[1]: {OLD_OT_RX} -> {OT_RX}")
-    if "flow" not in br:
-        br["flow"] = "merge"
-        msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
+    if model < 5:
+        levels = br.get("levels")
+        if isinstance(levels, list) and len(levels) > 1 and levels[1] == OLD_OT_RX:
+            levels[1] = OT_RX
+            msgs.append(f"migrated branches.levels[1]: {OLD_OT_RX} -> {OT_RX}")
+        if "flow" not in br:
+            br["flow"] = "merge"
+            msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
+        msgs.append("migrated branches.model: 5")
+    msgs += _migrate_special(br)
     br["model"] = MODEL
     msgs.append(f"migrated branches.model: {MODEL}")
     return msgs
+
+
+def _migrate_special(br):
+    """Step 6 of migrate: keep the 5.x changelog writer by setting DOCS.on_release to optional.
+
+    Args:
+        br: the `branches` section of the rules file (dict), changed in place.
+
+    Returns:
+        list[str]: the one message of the change, empty when nothing was set.
+    """
+    special = br.setdefault("special", {})
+    if not isinstance(special, dict):
+        return []
+    docs = special.get("DOCS")
+    if docs is None:
+        special["DOCS"] = docs = {}
+    if not isinstance(docs, dict) or "on_release" in docs:
+        return []
+    docs["on_release"] = "optional"
+    return [f"migrated branches.special.DOCS.on_release: optional ({DOCS_NOTICE})"]
 
 
 def populate(data):
@@ -168,6 +353,75 @@ def get(data, sec):
     cur = (data or {}).get(sec)
     if isinstance(cur, dict):
         out.update(cur)
+        if sec == "branches":
+            out["special"] = _merge_special(cur.get("special"))
+    return out
+
+
+def _merge_special(over):
+    """Merge a project's `branches.special` over the default table, one property at a time.
+
+    Args:
+        over: the project's value (dict), or anything else when absent or malformed.
+
+    Returns:
+        dict: a new table. A type set to a dict keeps the defaults of the properties it does not
+        mention; a type set to anything else (False) or unknown is kept as written so that
+        validate and special_table can see it. A non-dict `over` gives the defaults.
+    """
+    out = copy.deepcopy(SPECIAL_DEFAULTS)
+    if not isinstance(over, dict):
+        return out
+    for name, val in over.items():
+        if isinstance(val, dict) and isinstance(out.get(name), dict):
+            out[name].update(copy.deepcopy(val))
+        elif val is not True or name not in out:
+            # a type set to true keeps its defaults
+            out[name] = copy.deepcopy(val)
+    return out
+
+
+def special_table(data):
+    """The effective table of special branches: enabled known types only.
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        dict[str, dict]: {TYPE: properties} in table order. A type set to `false` is absent (not
+        reserved); `true` or `{}` means the defaults; properties not overridden keep their
+        default; entries that are not objects are dropped.
+    """
+    table = get(data, "branches")["special"]
+    return {n: p for n, p in table.items() if n in SPECIAL_DEFAULTS and isinstance(p, dict)}
+
+
+def special_names(data):
+    """Names of the enabled special types, in table order.
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        list[str]: e.g. ['MIGRATION', 'DOCS', ...]; the `QS_SP_NAMES` of the shell export.
+    """
+    return list(special_table(data))
+
+
+def expand_paths(paths):
+    """Expand the @tokens of a `paths` list into globs.
+
+    Args:
+        paths: list of globs and @tokens (`@repo-files`, `@docs`, `@tests`).
+
+    Returns:
+        list[str]: the globs, in order, without duplicates; an unknown @token is kept as is.
+    """
+    out = []
+    for p in paths:
+        for g in PATH_TOKENS.get(p, (p,)):
+            if g not in out:
+                out.append(g)
     return out
 
 
@@ -204,6 +458,134 @@ def validate(data):
     errors += _validate_encoding(get(data, "encoding"))
     errors += _validate_commit(get(data, "commit"))
     errors += _validate_branches(get(data, "branches"))
+    raw = data.get("branches")
+    errors += _validate_special(raw.get("special") if isinstance(raw, dict) else None)
+    errors += _validate_special_names(get(data, "branches"))
+    return errors
+
+
+def _special_value_error(kind, val):
+    """Check one value of a special-table property against its kind.
+
+    Args:
+        kind: a tuple of allowed values or one of 'bool', 'types', 'paths', 'level', 'trailers'.
+        val: the value found in the rules file.
+
+    Returns:
+        str: what is wrong ('' when the value is valid).
+    """
+    if isinstance(kind, tuple):
+        ok = isinstance(val, str) and val in kind
+        return "" if ok else "must be one of " + ", ".join(kind)
+    if kind == "bool":
+        return "" if isinstance(val, bool) else "must be true or false"
+    if kind == "level":
+        return "" if val is None or val in LEVELS else "must be null or " + ", ".join(LEVELS)
+    if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+        return "must be a list of strings"
+    return _special_list_error(kind, val)
+
+
+def _special_list_error(kind, val):
+    """Check a list-valued property of the special table (its items are already strings).
+
+    Args:
+        kind: 'types', 'paths' or 'trailers'.
+        val: the list.
+
+    Returns:
+        str: what is wrong ('' when the list is valid).
+    """
+    if kind == "types":
+        word = re.compile(r"[a-z][a-z0-9-]*")
+        if val == ["*"] or all(word.fullmatch(x) for x in val):
+            return ""
+        return "must be ['*'] (all) or a list of lowercase Conventional Commits types"
+    if kind == "trailers":
+        ok = all(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", x) for x in val)
+        return "" if ok else "must be a list of trailer names (letters, digits, '-')"
+    for p in val:
+        if p.startswith("@"):
+            if p not in PATH_TOKENS:
+                return f"unknown token {p!r} (known: {', '.join(PATH_TOKENS)})"
+        elif not p or p.startswith("/") or ".." in p.split("/") or "\\" in p:
+            return f"{p!r} is not a glob inside the repository"
+    return ""
+
+
+def _validate_special(special):
+    """Check `branches.special` as written in the rules file.
+
+    Args:
+        special: the raw value (None when absent).
+
+    Returns:
+        list[str]: one message per problem: not an object, unknown type (HOTFIX), type neither an
+        object nor a boolean, unknown property, bad value, change of a non-configurable property
+        (SPECIAL_FIXED).
+    """
+    if special is None:
+        return []
+    if not isinstance(special, dict):
+        return ["branches.special: must be an object"]
+    errors = []
+    for name, val in special.items():
+        base = f"branches.special.{name}"
+        if name not in SPECIAL_DEFAULTS:
+            errors.append(f"{base}: unknown type (known: {', '.join(SPECIAL_DEFAULTS)})")
+        elif isinstance(val, bool):
+            continue
+        elif not isinstance(val, dict):
+            errors.append(f"{base}: must be an object, true or false")
+        else:
+            errors += _validate_special_entry(name, val)
+    return errors
+
+
+def _validate_special_entry(name, entry):
+    """Check the properties of one type of the special table.
+
+    Args:
+        name: the type, a key of SPECIAL_DEFAULTS.
+        entry: the properties set by the project (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
+    for prop, val in entry.items():
+        path = f"branches.special.{name}.{prop}"
+        if prop not in SPECIAL_PROPS:
+            errors.append(f"{path}: unknown property (known: {', '.join(SPECIAL_PROPS)})")
+            continue
+        err = _special_value_error(SPECIAL_PROPS[prop], val)
+        if err:
+            errors.append(f"{path}: {err}")
+        elif (name, prop) in SPECIAL_FIXED and val != SPECIAL_FIXED[(name, prop)]:
+            errors.append(f"{path}: not configurable (always {SPECIAL_FIXED[(name, prop)]!r})")
+    return errors
+
+
+def _validate_special_names(br):
+    """Check that no enabled special type is named like a reserved leaf of the branch model.
+
+    Args:
+        br: the 'branches' section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per clash with parent_leaf, release_leaf or testing_leaf,
+        ignoring case (refs are case-insensitive on Windows).
+    """
+    leaves = {
+        key: str(br.get(key, "")).lower() for key in ("parent_leaf", "release_leaf", "testing_leaf")
+    }
+    errors = []
+    for name, props in br["special"].items():
+        if name not in SPECIAL_DEFAULTS or not isinstance(props, dict):
+            continue
+        for key, leaf in leaves.items():
+            if name.lower() == leaf:
+                errors.append(f"branches.{key}: must differ from the special type {name}")
     return errors
 
 
@@ -403,7 +785,50 @@ def shell_env(data):
         lines[f"QS_BR_LEVEL_{i}"] = rx
     for i, rx in enumerate(br["allow"], 1):
         lines[f"QS_BR_ALLOW_{i}"] = rx
+    lines.update(special_env(data))
     return "".join(f"{k}={_sh(v)}\n" for k, v in lines.items())
+
+
+def _sp_value(val):
+    """Encode one property of the special table as a shell string.
+
+    Args:
+        val: the property value: bool, None, str or list of str.
+
+    Returns:
+        str: '1'/'0' for a bool, '' for None, the items joined with '|' for a list (a list
+        never has '|' in an item that validate accepts), otherwise str(val).
+    """
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return "|".join(val)
+    return str(val)
+
+
+def special_env(data):
+    """The special table as shell variables: the query helper of the hooks and scripts.
+
+    `QS_SP_NAMES` lists the enabled types separated by spaces; every enabled type has one
+    `QS_SP_<TYPE>_<PROP>` per property (PROP upper case: AT, CHILDREN, SUFFIX, INTEGRATES, ORDER,
+    REBASE, TYPES, PATHS, LEVEL, PUSH, PUSH_CHECKS, TRAILERS, LOCKS, ON_RELEASE, CHANGELOG).
+    Booleans are 1/0, a null level is '', lists are joined with '|' (`types` ['*'] = all
+    types, `paths` keep their @tokens: expand them with expand_paths).
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        dict[str, str]: variable name -> value, in table order. Disabled types are absent.
+    """
+    table = special_table(data)
+    env = {"QS_SP_NAMES": " ".join(table)}
+    for name, props in table.items():
+        for prop in SPECIAL_PROPS:
+            env[f"QS_SP_{name}_{prop.upper()}"] = _sp_value(props[prop])
+    return env
 
 
 # ---------------------------------------------------------------- encoding
