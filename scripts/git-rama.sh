@@ -48,11 +48,14 @@
 #                         '<v>/RELEASE' was deleted by hand is also forgotten by the next git release
 #   git publicar [tag]    step 2: '<version>/RELEASE' merged into develop, tagged (annotated with its
 #                         CHANGELOG.md entry), pushed, and deleted. --version <v>, --yes, --no-push
-#                         branches.flow = squash: '<v>/RELEASE' rebased onto develop (release-file
-#                         conflicts solved; any other conflict stops with the steps, re-run resumes),
-#                         ONE commit on develop (changelog entry, Commits:, Files:, Refs:, Squashed:,
-#                         Squashes:), the tag moved onto it, one atomic push of develop + tag + the
-#                         deletion of RELEASE on origin
+#                         branches.flow = squash: '<v>/RELEASE' rebased onto develop (conflicts on
+#                         release-owned lines solved: badge, version, CHANGELOG entries; any other
+#                         conflict stops with the steps, re-run resumes), ONE commit on develop
+#                         (changelog entry, Commits:, Files:, Refs:, Squashed:, Squashes:), the tag
+#                         moved onto it, one atomic push of develop + tag + the deletion of RELEASE
+#                         on origin. --reset --version <v> [--yes]: forgets the publish state kept
+#                         while RELEASE is rebased (refused while a rebase is stopped); a state left
+#                         by 'git rebase --abort' is also forgotten by the next git publicar
 #   git nueva-version <v> new version tree '<v>/ORIGINAL' next to the others, from any branch
 #   (git nv)              (--from <branch>, default the current one), with its version commit; the
 #                         branches below that branch are copied under '<v>/' keeping their path below
@@ -487,6 +490,15 @@ rebase_in_progress() {
 	local gd
 	gd="$(git rev-parse --absolute-git-dir)"
 	[ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]
+}
+
+# rebase_state <file>: the content of <file> (head-name, onto) of the rebase stopped in the current
+# worktree, from rebase-merge or rebase-apply; nothing when no rebase is stopped.
+# Arguments: $1 the state file name. Output: its content. Returns: 0.
+rebase_state() {
+	local gd
+	gd="$(git rev-parse --absolute-git-dir)"
+	cat "$gd/rebase-merge/$1" 2>/dev/null || cat "$gd/rebase-apply/$1" 2>/dev/null || true
 }
 
 # integra_rebase <branch> <onto> <bypass>: rebase the current branch <branch> onto <onto> (nothing
@@ -1746,6 +1758,54 @@ publish_push() {
 	say "pushed $QS_BR_MAINLINE and $REL_TAG$([ -n "$o" ] && echo "; $REL_RELEASE deleted on origin") (one atomic push)"
 }
 
+# publish_from_stale: whether git config qs.publish.<v>.from (the origin tip of REL_RELEASE kept
+# while git publicar rebases it, so that the rebased local copy may differ from origin) is stale:
+# no rebase is stopped and that permission is not needed: the local REL_RELEASE is gone, origin
+# has no REL_RELEASE or another tip, or the local copy still contains the origin tip (it was not
+# rebased, as after 'git rebase --abort' of a stopped git publicar, or it was pushed since).
+# Arguments: none; reads REL_VERSION REL_RELEASE. Returns: 0 when stale; 1 when unset or in use.
+publish_from_stale() {
+	local from l o
+	from="$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)"
+	[ -n "$from" ] || return 1
+	! rebase_in_progress || return 1
+	l="$(git rev-parse -q --verify "refs/heads/$REL_RELEASE" || true)"
+	o="$(git rev-parse -q --verify "refs/remotes/origin/$REL_RELEASE" || true)"
+	if [ -z "$l" ] || [ -z "$o" ] || [ "$o" != "$from" ]; then return 0; fi
+	git merge-base --is-ancestor "$o" "$l"
+}
+
+# publish_forget_stale: clear qs.publish.<v>.from when it is stale (publish_from_stale), saying so;
+# otherwise nothing. The version release does the same with its own state (version_forget_stale).
+# Arguments: none; reads REL_VERSION REL_RELEASE. Returns: 0.
+publish_forget_stale() {
+	publish_from_stale || return 0
+	git config --unset-all "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+	say "$REL_RELEASE was not rebased: the stale publish state of $REL_VERSION is cleared (qs.publish.$REL_VERSION.from)"
+	return 0
+}
+
+# publish_reset: git publicar --reset --version <v>: forget the publish state of REL_VERSION (git
+# config qs.publish.<v>.from) after a confirmation (--yes skips it), like git release --reset.
+# Refused, nothing changed, while a rebase is stopped (git publicar resumes it). Branches and tags
+# are never touched.
+# Arguments: none; reads REL_VERSION REL_TAG_GIVEN. Returns: 0; exits through die when refused or
+# cancelled.
+publish_reset() {
+	local from
+	[ "$REL_TAG_GIVEN" = 0 ] || die "--reset takes no tag: git publicar --reset --version <v>"
+	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue, then git publicar --version $REL_VERSION) or give it up (git rebase --abort) first"
+	from="$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)"
+	if [ -z "$from" ]; then
+		say "nothing to reset: no publish state for $REL_VERSION"
+		return 0
+	fi
+	confirm "Forget the publish state of $REL_VERSION (qs.publish.$REL_VERSION.from = $from)?" || die "cancelled; nothing was changed"
+	git config --unset-all "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+	say "publish state of $REL_VERSION forgotten (qs.publish.$REL_VERSION.from)"
+	return 0
+}
+
 # publish_squash: git publicar with branches.flow = squash (ACs M1-M3): REL_RELEASE rebased onto
 # develop (release-file conflicts solved, any other conflict stops with the steps), ONE
 # single-parent commit on develop with its tree (publish_message), the tag moved onto that commit,
@@ -1758,11 +1818,12 @@ publish_push() {
 publish_squash() {
 	local start base tip old remote dev landed=0 rebased=0 entry
 	cd "$(git rev-parse --show-toplevel)"
+	publish_forget_stale
 	if rebase_in_progress; then
-		[ "$(cat "$(git rev-parse --git-path rebase-merge/head-name)" 2>/dev/null || true)" = "refs/heads/$REL_RELEASE" ] ||
+		[ "$(rebase_state head-name)" = "refs/heads/$REL_RELEASE" ] ||
 			die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort), then run git publicar again"
 		say "resuming the rebase of $REL_RELEASE onto $QS_BR_MAINLINE..."
-		publish_rebase "$(cat "$(git rev-parse --git-path rebase-merge/onto)")"
+		publish_rebase "$(rebase_state onto)"
 	fi
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
@@ -1841,8 +1902,11 @@ cmd_publicar() { # step 2: RELEASE merged into develop, tagged, pushed, deleted
 		die "there are $(grep -c . <<<"$rels") RELEASE branches (${rels//$'\n'/ }); publish one at a time: git publicar --version <v>  (or join them first: git combinar)"
 	fi
 	release_args "$@"
-	[ "$REL_RESET" = 0 ] || die "--reset belongs to git release (it changes state)"
 	REL_RELEASE="$REL_VERSION/$QS_BR_RELEASE_LEAF"
+	if [ "$REL_RESET" = 1 ]; then
+		publish_reset
+		return 0
+	fi
 	if [ "${QS_BR_FLOW:-merge}" = squash ]; then
 		publish_squash
 		return
