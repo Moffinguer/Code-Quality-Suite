@@ -25,7 +25,7 @@ add_commit() {
 # it exists on both sides like a branch that was not cleaned yet.
 integrate_keep() {
 	git checkout -q "$RF/ORIGINAL" && git nr "$1" >/dev/null || fail "nr $1"
-	add_commit "$2" "$1" "feat: add $1"
+	add_commit "$2" "V = 1" "feat: add $1"
 	git push -q origin "$RF/$1" 2>/dev/null || fail "push $1"
 	git integra -m "feat: integrate $1" -m "why $1" >/dev/null 2>&1 </dev/null || fail "integra $1"
 	git rev-parse -q --verify "refs/heads/$RF/$1" >/dev/null || fail "$1 should be kept"
@@ -44,14 +44,14 @@ git np "$V" >/dev/null && git np 500 >/dev/null && git np RF1 >/dev/null || fail
 integrate_keep a a.py
 integrate_keep c c.py
 git checkout -q "$RF/ORIGINAL" && git nr b >/dev/null || fail "nr b"
-add_commit b.py b "feat: add b"
+add_commit b.py "B = 1" "feat: add b"
 git push -q origin "$RF/b" 2>/dev/null || fail "push b"
 git checkout -q "$RF/ORIGINAL"
 git testing crear "$RF/b" >/dev/null 2>&1 || fail "testing crear"
 git branch "$OT/RELEASE" "$OT/ORIGINAL" && git branch "$V/RELEASE" "$V/ORIGINAL" || fail "release branches"
 git branch unmerged/old develop
 git checkout -q "$RF/ORIGINAL"
-SHA="$(git rev-parse --short "$RF/ORIGINAL")"
+SHA="$(git log -n1 --format=%h --grep="Refs: $RF/a -> " "$RF/ORIGINAL")"
 
 # --- A1 squash flow: integrated, pending, TESTING, RELEASE, unmerged
 OUT="$(git arbol "$V" 2>&1)" || fail "A1 arbol failed: $OUT"
@@ -88,7 +88,7 @@ grep -q "nothing to clean" <<<"$OUT" || grep -q "kept '$RF/c'" <<<"$OUT" && ok "
 case_sandbox merge
 git np "$V" >/dev/null && git np 500 >/dev/null && git np RF1 >/dev/null || fail "merge tree"
 git nr a >/dev/null || fail "merge nr a"
-add_commit a.py a "feat: add a"
+add_commit a.py "A = 1" "feat: add a"
 git checkout -q "$RF/ORIGINAL"
 OUT="$(git arbol "$V" 2>&1)" || fail "A3 arbol failed"
 grep -q -- "- $RF/a .*(+1 pending)" <<<"$OUT" && ok "A3 merge flow prints the 4.x state" || fail "A3: $OUT"
