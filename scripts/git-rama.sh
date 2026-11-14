@@ -1636,15 +1636,14 @@ publish_rebase() {
 		fi
 	fi
 	while rebase_in_progress; do
-		if [ -n "$(git ls-files -u)" ]; then
-			publish_autosolve || publish_stopped
-			# why: a step whose solution equals develop has nothing left to commit
-			if git diff --cached --quiet; then
-				GIT_EDITOR=true git rebase --skip >"$log" 2>&1 && continue
-				[ -n "$(git ls-files -u)" ] && continue
-				cat "$log" >&2
-				publish_stopped
-			fi
+		if [ -n "$(git ls-files -u)" ]; then publish_autosolve || publish_stopped; fi
+		# why: a step whose solution (made here or by hand, then git add) equals develop has nothing
+		# left to commit, and git rebase --continue refuses it; unstaged edits are never skipped
+		if git diff --cached --quiet && git diff --quiet; then
+			GIT_EDITOR=true git rebase --skip >"$log" 2>&1 && continue
+			[ -n "$(git ls-files -u)" ] && continue
+			cat "$log" >&2
+			publish_stopped
 		fi
 		GIT_EDITOR=true git rebase --continue >"$log" 2>&1 && continue
 		[ -n "$(git ls-files -u)" ] && continue
