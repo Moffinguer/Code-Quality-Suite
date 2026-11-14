@@ -33,8 +33,29 @@
 #                         with the version commit, CHANGELOG.md and the README badge (separate
 #                         commits); RELEASE is pushed and the rest of the tree deleted. Review it.
 #                         --version <v>, --yes, --no-push, -n (= changelog)
+#                         branches.flow = squash, inside '<v>/<ot>/...' or with --ot <v>/<ot>: the OT
+#                         release instead: '<v>/<ot>/RELEASE' = the OT ORIGINAL tip + one
+#                         docs(changelog) commit with the OT lines, tag branches.ot_tag on the OT
+#                         ORIGINAL tip, RELEASE and tag pushed, the OT subtree deleted (resumable);
+#                         git changelog there previews it. On '<v>/ORIGINAL', develop or with
+#                         --version <v>: the version release, refused while an OT lacks its RELEASE;
+#                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first),
+#                         version, CHANGELOG.md (union of the OT sections) and badge commits, local
+#                         tag on its tip, one atomic push, OT RELEASEs and '<v>/ORIGINAL' deleted
+#                         (resumable; after a conflict: git rebase --continue, then git release).
+#                         --reset --version <v> [--yes]: forgets the resume state of a version
+#                         release given up (refused while '<v>/RELEASE' exists); a release whose
+#                         '<v>/RELEASE' was deleted by hand is also forgotten by the next git release
 #   git publicar [tag]    step 2: '<version>/RELEASE' merged into develop, tagged (annotated with its
 #                         CHANGELOG.md entry), pushed, and deleted. --version <v>, --yes, --no-push
+#                         branches.flow = squash: '<v>/RELEASE' rebased onto develop (conflicts on
+#                         release-owned lines solved: badge, version, CHANGELOG entries; any other
+#                         conflict stops with the steps, re-run resumes), ONE commit on develop
+#                         (changelog entry, Commits:, Files:, Refs:, Squashed:, Squashes:), the tag
+#                         moved onto it, one atomic push of develop + tag + the deletion of RELEASE
+#                         on origin. --reset --version <v> [--yes]: forgets the publish state kept
+#                         while RELEASE is rebased (refused while a rebase is stopped); a state left
+#                         by 'git rebase --abort' is also forgotten by the next git publicar
 #   git nueva-version <v> new version tree '<v>/ORIGINAL' next to the others, from any branch
 #   (git nv)              (--from <branch>, default the current one), with its version commit; the
 #                         branches below that branch are copied under '<v>/' keeping their path below
@@ -45,6 +66,9 @@
 #                         only its own changes (develop merged in first, as a temporary commit, when
 #                         a RELEASE lacks it), then the version, CHANGELOG.md and README badge of
 #                         '<version>/RELEASE'; the ones combined are kept as 'unmerged/<v>/RELEASE'.
+#                         branches.flow = squash: the entry is the union of the reviewed sections of
+#                         the combined RELEASEs, each squash has its Files: block, and their local
+#                         version tags are deleted; git publicar then lands it as ONE commit
 #                         --version <v>, --incluir <v1,v2...>, --yes
 #   git repo-files [NAME] the standard repository files that are missing (README, CHANGELOG, VERSION,
 #                         CONTRIBUTING, ... DEVELOPMENT), filled from git history and pom.xml; never
@@ -288,10 +312,17 @@ cmd_convertir() {
 }
 
 cmd_subir() {
-	local cur parent base
-	cur="$(current_branch)" || die "detached HEAD"
+	local cur parent base head resume=0
+	cur="$(current_branch || true)"
+	if [ -z "$cur" ] && [ "${QS_BR_FLOW:-merge}" = squash ] && rebase_in_progress; then
+		# why: publish_stopped tells the human to re-run git subir while the RELEASE rebase is stopped
+		head="$(rebase_state head-name)"
+		head="${head#refs/heads/}"
+		if is_release_branch "$head"; then cur="$head" resume=1; fi
+	fi
+	[ -n "$cur" ] || die "detached HEAD"
 	testing_refused "$cur" && exit 1 # TESTING sandbox guard
-	require_clean
+	[ "$resume" = 1 ] || require_clean
 	parent="$(parent_branch "$cur")"
 	fetch_origin
 	if is_parent_branch "$cur" || is_mainline "$cur"; then
@@ -314,7 +345,22 @@ cmd_subir() {
 	else
 		base="$(best_ref "$parent")"
 		[ -n "$base" ] || die "parent '$parent' not found locally or on origin"
-		if ! git merge-base --is-ancestor "$base" "$cur"; then
+		if [ "${QS_BR_FLOW:-merge}" = squash ] && is_release_branch "$cur"; then
+			# why: '<v>/RELEASE' onto develop solves its release-file conflicts like git publicar
+			REL_RELEASE="$cur" REL_VERSION="$(branch_version "$cur")" PUB_AGAIN="git subir"
+			REL_TAG="$(git config "qs.release.$REL_VERSION.tag" 2>/dev/null || render_tag "$REL_VERSION/$QS_BR_LEAF")"
+			# why: publish_autosolve writes the solved files by their path from the top
+			cd "$(git rev-parse --show-toplevel)"
+			if [ "$resume" = 1 ]; then
+				say "resuming the rebase of $cur onto $QS_BR_MAINLINE..."
+				publish_rebase "$(rebase_state onto)"
+			else
+				# why: the push below is forced; commits only origin has would be lost
+				publish_local_release
+			fi
+			publish_rebase "$(git rev-parse "$base^{commit}")"
+			git checkout -q "$cur"
+		elif ! git merge-base --is-ancestor "$base" "$cur"; then
 			say "rebasing $cur onto $base..."
 			git rebase -q "$base" || die "conflicts: resolve, 'git rebase --continue', then re-run git subir (rerere remembers)"
 		fi
@@ -460,6 +506,15 @@ rebase_in_progress() {
 	local gd
 	gd="$(git rev-parse --absolute-git-dir)"
 	[ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]
+}
+
+# rebase_state <file>: the content of <file> (head-name, onto) of the rebase stopped in the current
+# worktree, from rebase-merge or rebase-apply; nothing when no rebase is stopped.
+# Arguments: $1 the state file name. Output: its content. Returns: 0.
+rebase_state() {
+	local gd
+	gd="$(git rev-parse --absolute-git-dir)"
+	cat "$gd/rebase-merge/$1" 2>/dev/null || cat "$gd/rebase-apply/$1" 2>/dev/null || true
 }
 
 # integra_rebase <branch> <onto> <bypass>: rebase the current branch <branch> onto <onto> (nothing
@@ -790,6 +845,12 @@ cmd_estructura() {
 	# pass 1: validate every name and conflict before touching anything
 	while IFS=$'\t' read -r kind node <&3; do
 		if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
+		# why: '<v>/<ot>/RELEASE' and '<F>/TESTING' are valid names, but only their commands create them
+		if reserved_leaf_segment "${node##*/}"; then
+			echo "  ! $b: '${node##*/}' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF, ${QS_BR_TESTING:-TESTING}, in any case)" >&2
+			errs=$((errs + 1))
+			continue
+		fi
 		if ! why="$(valid_branch_name "$b")"; then
 			echo "  ! $b: $why" >&2
 			errs=$((errs + 1))
@@ -1086,6 +1147,14 @@ release_changelog() { # <tag> -> markdown on stdout: what each branch brought (f
 # The CHANGELOG.md entry of the release (Common Changelog), from the suite image; semver advice on stderr.
 release_notes() { # release_notes [--write]
 	local root
+	if [ "${REL_UNION:-0}" = 1 ]; then # why: the squash version release unites the OT sections
+		version_union_notes "$@"
+		return
+	fi
+	if [ "${REL_UNION:-0}" = combine ]; then # why: git combinar (flow = squash) unites the RELEASE sections
+		combine_union_notes "$@"
+		return
+	fi
 	root="$(git rev-parse --show-toplevel)"
 	engine "$root" release-notes --version "$REL_VERSION" --tip "$REL_TIP" --base "$REL_CL_BASE" --tag "$REL_TAG" "$@"
 }
@@ -1130,15 +1199,26 @@ release_subject() {
 	printf '%s' "$s"
 }
 
-release_args() { # sets REL_TAG REL_VERSION REL_OUT REL_PUSH REL_PREVIEW from the arguments
-	REL_TAG="" REL_VERSION="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0
+# release_args <argument>...: read the options of git changelog / release / publicar.
+# Sets REL_TAG REL_TAG_GIVEN REL_VERSION REL_OT REL_OUT REL_PUSH REL_PREVIEW REL_RESET REL_TAG_AT.
+# REL_OT ('<v>/<ot>', flow = squash only) comes from --ot or, without --version, from a current branch
+# inside an OT ('<v>/<ot>/...'); empty means the version release. REL_RESET is 1 with --reset.
+# Returns: 0; exits through die on a bad option, version, OT or tag.
+release_args() {
+	REL_TAG="" REL_TAG_GIVEN=0 REL_VERSION="" REL_OT="" REL_OUT="" REL_PUSH=1 REL_PREVIEW=0 REL_RESET=0
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
+		--reset) REL_RESET=1 ;;
 		--version)
 			REL_VERSION="${2:?--version needs a version}"
 			shift
 			;;
 		--version=*) REL_VERSION="${1#--version=}" ;;
+		--ot)
+			REL_OT="${2:?--ot needs <version>/<ot>}"
+			shift
+			;;
+		--ot=*) REL_OT="${1#--ot=}" ;;
 		-o | --output)
 			REL_OUT="${2:?$1 needs a file}"
 			shift
@@ -1149,10 +1229,12 @@ release_args() { # sets REL_TAG REL_VERSION REL_OUT REL_PUSH REL_PREVIEW from th
 		*)
 			[ -z "$REL_TAG" ] || die "one tag only (got '$REL_TAG' and '$1')"
 			REL_TAG="$1"
+			REL_TAG_GIVEN=1
 			;;
 		esac
 		shift
 	done
+	ot_release_target
 	if [ -z "$REL_VERSION" ]; then
 		local cur
 		cur="$(current_branch || true)"
@@ -1178,6 +1260,15 @@ release_args() { # sets REL_TAG REL_VERSION REL_OUT REL_PUSH REL_PREVIEW from th
 
 cmd_changelog() { # preview: changelog + release notes + checks + plan; changes nothing
 	release_args "$@"
+	[ "$REL_RESET" = 0 ] || die "--reset belongs to git release (it changes state)"
+	if [ -n "$REL_OT" ]; then
+		ot_changelog_preview
+		return
+	fi
+	if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+		version_changelog_preview
+		return
+	fi
 	fetch_origin
 	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
 		say "$REL_VERSION is prepared on $REL_VERSION/$QS_BR_RELEASE_LEAF (git release done): review it, then git publicar"
@@ -1228,12 +1319,26 @@ commit_files() {
 }
 
 cmd_release() { # step 1: RELEASE branch with version, changelog and README badge; tree deleted
-	local entry b new p n root
+	local root
 	release_args "$@"
+	if [ "$REL_RESET" = 1 ]; then
+		[ "$REL_TAG_GIVEN" = 0 ] || die "--reset takes no tag: git release --reset --version <v>"
+		[ -z "$REL_OT" ] || die "--reset clears a version release: drop --ot"
+		version_reset
+		return 0
+	fi
 	[ "$REL_PREVIEW" = 1 ] && {
 		cmd_changelog "$@"
 		return
 	}
+	if [ -n "$REL_OT" ]; then
+		ot_release
+		return
+	fi
+	if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+		version_release
+		return
+	fi
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
@@ -1269,14 +1374,7 @@ cmd_release() { # step 1: RELEASE branch with version, changelog and README badg
 		git push -q -u origin "$REL_RELEASE" || die "push of $REL_RELEASE failed; the tree is untouched. Fix it and run git release again (it resumes)"
 	fi
 	# 6. branches never integrated: set aside as unmerged/<name>
-	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
-		IFS=$'\t' read -r b new p n <<<"$entry"
-		if exists_ref "refs/heads/$b"; then
-			git branch -m "$b" "$new"
-		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
-		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then git push -q origin "refs/remotes/origin/$b:refs/heads/$new"; fi
-		echo "[rama] WARN: $b had $n commit(s) not in $p: set aside as $new" >&2
-	done
+	release_set_aside
 	# 7. the rest of the tree (integrated branches, old names, the ORIGINAL)
 	if [ "$REL_PUSH" = 1 ] && has_origin && [ "${#REL_DELETE_REMOTE[@]}" -gt 0 ]; then
 		git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
@@ -1292,6 +1390,525 @@ cmd_release() { # step 1: RELEASE branch with version, changelog and README badg
 	return 0
 }
 
+# --- git publicar with branches.flow = squash ----------------------------------------------------
+# State of one run, set by publish_local_release: PUB_TIP the '<v>/RELEASE' tip being published.
+# PUB_AGAIN: the command that resumes after a stopped rebase (git subir sets it; empty means
+# git publicar --version <v>). PUB_TOKEN: the placeholder of a release-owned line while
+# publish_solve_file merges a release file; PUB_POMS: the "|a|b|" artifactIds of the RELEASE side.
+PUB_TIP="" PUB_AGAIN="" PUB_TOKEN='@@qs:release-owned@@' PUB_POMS="|"
+
+# publish_is_release_file <path>: whether <path> is one of the files the release commits write:
+# QS_BR_CHANGELOG, the version file, a pom.xml, package.json, the README or CITATION.cff.
+# Arguments: $1 path (from the top of the work tree). Returns: 0 when it is one, 1 otherwise.
+publish_is_release_file() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+	"$QS_BR_CHANGELOG" | "${QS_BR_VERSION_FILE:-VERSION}" | "${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json | CITATION.cff) return 0 ;;
+	esac
+	return 1
+}
+
+# publish_mask <path> <in> <out> <saved>: write to <out> the file <in> with every release-owned
+# piece replaced by PUB_TOKEN, and append each piece replaced to <saved> (one per line, in
+# order). Release-owned: in the README the badge between its qs:version markers (only that span);
+# in a pom.xml the project's own version (POM_AWK; the parent version when the parent is one of
+# PUB_POMS); in package.json the top-level "version" line; in CITATION.cff the top-level
+# version: and date-released: lines. Any other file is copied as it is.
+# Arguments: $1 the path in the repository (picks the rules); $2 input; $3 output; $4 the list of
+# pieces (created empty first). Returns: 0; 1 when <in> already holds PUB_TOKEN.
+publish_mask() {
+	local p="$1" in="$2" out="$3" saved="$4"
+	: >"$saved"
+	! grep -qF -- "$PUB_TOKEN" "$in" || return 1
+	case "$p" in
+	"${QS_BR_README:-README.md}")
+		# shellcheck disable=SC2016
+		awk -v token="$PUB_TOKEN" -v saved="$saved" -v s='<!-- qs:version -->' -v e='<!-- /qs:version -->' '{
+			out = ""; rest = $0
+			while ((i = index(rest, s)) && (j = index(substr(rest, i + length(s)), e))) {
+				k = i + length(s) + j + length(e) - 2
+				print substr(rest, i, k - i + 1) >>saved
+				out = out substr(rest, 1, i - 1) token
+				rest = substr(rest, k + 1)
+			}
+			print out rest
+		}' "$in" >"$out"
+		;;
+	pom.xml | */pom.xml) awk -v mode=mask -v token="$PUB_TOKEN" -v saved="$saved" -v ours="$PUB_POMS" "$POM_AWK" "$in" >"$out" ;;
+	package.json) awk -v mode=mask -v token="$PUB_TOKEN" -v saved="$saved" "$JSON_AWK" "$in" >"$out" ;;
+	CITATION.cff) awk -v token="$PUB_TOKEN" -v saved="$saved" '/^(version|date-released):/ { print token; print >>saved; next } { print }' "$in" >"$out" ;;
+	*) cat -- "$in" >"$out" ;;
+	esac
+}
+
+# publish_unmask <in> <saved>: print <in> with each PUB_TOKEN replaced, in order, by the next line
+# of <saved> (the release-owned pieces of the RELEASE side, publish_mask).
+# Arguments: $1 the merged masked file; $2 the pieces. Output: the file.
+# Returns: 0; 1 when the number of placeholders and of pieces differ (output incomplete).
+publish_unmask() {
+	awk -v token="$PUB_TOKEN" -v saved="$2" '
+		BEGIN { while ((getline l < saved) > 0) piece[++np] = l }
+		{
+			out = ""; rest = $0
+			while ((i = index(rest, token))) {
+				if (++k > np) bad = 1
+				out = out substr(rest, 1, i - 1) piece[k]
+				rest = substr(rest, i + length(token))
+			}
+			print out rest
+		}
+		END { exit (bad || k != np) ? 1 : 0 }' "$1"
+}
+
+# publish_solve_file <path> <ours> <base> <theirs> <out>: the merge of a release file that solves
+# ONLY its release-owned pieces (publish_mask): the three sides are masked, merged with git
+# merge-file (so develop's edits next to the badge or the version line are kept), and the
+# pieces of the RELEASE side put back. Any conflict left is a conflict on other lines.
+# Arguments: $1 the path in the repository; $2 develop side; $3 base; $4 RELEASE side; $5 output.
+# Returns: 0 when solved; 1 when another line conflicts (or the pieces do not line up).
+publish_solve_file() {
+	local p="$1" out="$5" s
+	for s in 2 3 4; do publish_mask "$p" "${!s}" "${!s}.m" "${!s}.saved" || return 1; done
+	git merge-file -q -p "$2.m" "$3.m" "$4.m" >"$out.m" 2>/dev/null || return 1
+	publish_unmask "$out.m" "$4.saved" >"$out"
+}
+
+# publish_changelog_merge <ours> <theirs> <version>: the changelog <ours> with the '## <version>'
+# section of <theirs> in semver order (newest first): it replaces a section of that version in
+# <ours>, or goes before the first heading of a lower version, or at the end. Headings that are
+# not versions ('## [Unreleased]') stay where they are. Without such a section in <theirs> the
+# output is <ours> unchanged.
+# Arguments: $1 file of the develop side; $2 file of the RELEASE side; $3 the version.
+# Output: the merged changelog. Returns: 0.
+publish_changelog_merge() {
+	awk -v v="$3" -v theirs="$2" '
+		# hv: the version of a "## [v] - date" / "## v - date" / "## v" heading
+		function hv(line, s, n) {
+			s = substr(line, 4)
+			sub(/^\[/, "", s)
+			n = index(s, "]")
+			if (n) s = substr(s, 1, n - 1)
+			sub(/ .*$/, "", s)
+			return s
+		}
+		function isver(s) { return s ~ /^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$/ }
+		function isnum(s) { return s ~ /^[0-9]+$/ }
+		# cmp: -1, 0 or 1 as semver orders a and b (a pre-release sorts before its release)
+		function cmp(a, b, ca, cb, pa, pb, i, n, na, nb, A, B) {
+			ca = a; pa = ""; i = index(a, "-"); if (i) { ca = substr(a, 1, i - 1); pa = substr(a, i + 1) }
+			cb = b; pb = ""; i = index(b, "-"); if (i) { cb = substr(b, 1, i - 1); pb = substr(b, i + 1) }
+			na = split(ca, A, "."); nb = split(cb, B, ".")
+			n = na > nb ? na : nb
+			for (i = 1; i <= n; i++) if (A[i] + 0 != B[i] + 0) return A[i] + 0 < B[i] + 0 ? -1 : 1
+			if (pa == pb) return 0
+			if (pa == "") return 1
+			if (pb == "") return -1
+			na = split(pa, A, "."); nb = split(pb, B, ".")
+			for (i = 1; i <= na && i <= nb; i++) {
+				if (A[i] == B[i]) continue
+				if (isnum(A[i]) && isnum(B[i])) return A[i] + 0 < B[i] + 0 ? -1 : 1
+				if (isnum(A[i])) return -1
+				if (isnum(B[i])) return 1
+				return A[i] < B[i] ? -1 : 1
+			}
+			return na < nb ? -1 : (na > nb ? 1 : 0)
+		}
+		function emit(i) {
+			for (i = 1; i <= ns; i++) print sec[i]
+			print ""
+			last = ""
+			done = 1
+		}
+		BEGIN {
+			while ((getline line < theirs) > 0) {
+				if (line ~ /^## /) { if (on) break; on = (hv(line) == v) }
+				if (on) sec[++ns] = line
+			}
+			while (ns > 0 && sec[ns] == "") ns--
+		}
+		/^## / {
+			skip = (ns > 0 && hv($0) == v)
+			if (!skip && !done && ns > 0 && isver(hv($0)) && cmp(hv($0), v) < 0) emit()
+		}
+		skip { next }
+		{ print; last = $0 }
+		END {
+			if (done || ns == 0) exit
+			if (NR && last != "") print ""
+			emit()
+		}' "$1"
+}
+
+# publish_autosolve: solve the conflicts of the stopped step of the RELEASE rebase when the
+# commit being replayed is a release commit (RELEASE_COMMITS_RX) and every conflicted path is a
+# release file. Only release-owned text is solved: QS_BR_CHANGELOG keeps both entries in semver
+# order (publish_changelog_merge, the REL_VERSION section of the RELEASE side), the version file
+# takes the RELEASE side, and the README, pom.xml, package.json and CITATION.cff keep every edit of
+# both sides with the RELEASE side's badge / version (publish_solve_file). A conflict on any other
+# line, a side that deleted the file, or a piece that does not line up leaves the step for the
+# human. All files are solved in a scratch folder first; only then are they written and staged.
+# Arguments: none; reads REL_VERSION; runs at the top of the work tree.
+# Returns: 0 when every conflict was solved; 1 when one is left for the human (nothing written).
+publish_autosolve() {
+	local c files f t i=0 rc=0
+	c="$(git rev-parse -q --verify REBASE_HEAD 2>/dev/null)" || return 1
+	[[ $(git log -1 --format=%s "$c") =~ $RELEASE_COMMITS_RX ]] || return 1
+	files="$(git diff --name-only --diff-filter=U)"
+	[ -n "$files" ] || return 1
+	while IFS= read -r f; do publish_is_release_file "$f" || return 1; done <<<"$files"
+	t="$(git rev-parse --absolute-git-dir)/quality-suite/publish-solve"
+	rm -rf "$t"
+	mkdir -p "$t/out"
+	PUB_POMS="$(pom_artifacts "$c")"
+	while IFS= read -r f; do
+		i=$((i + 1))
+		git show ":3:$f" >"$t/theirs" 2>/dev/null || {
+			rc=1
+			break
+		}
+		if [ "$f" = "$QS_BR_CHANGELOG" ]; then
+			git show ":2:$f" >"$t/ours" 2>/dev/null || : >"$t/ours"
+			publish_changelog_merge "$t/ours" "$t/theirs" "$REL_VERSION" >"$t/out/$i"
+		elif [ "$f" = "${QS_BR_VERSION_FILE:-VERSION}" ]; then
+			cp -- "$t/theirs" "$t/out/$i"
+		elif ! git show ":2:$f" >"$t/ours" 2>/dev/null; then
+			rc=1
+			break
+		else
+			git show ":1:$f" >"$t/base" 2>/dev/null || : >"$t/base"
+			publish_solve_file "$f" "$t/ours" "$t/base" "$t/theirs" "$t/out/$i" || {
+				rc=1
+				break
+			}
+		fi
+	done <<<"$files"
+	if [ "$rc" = 0 ]; then
+		i=0
+		while IFS= read -r f; do
+			i=$((i + 1))
+			cat -- "$t/out/$i" >"$f"
+			git add -- "$f"
+		done <<<"$files"
+	else
+		echo "[rama] $f: the conflict is not only on release-owned lines (badge, version); it is left for you" >&2
+	fi
+	rm -rf "$t"
+	[ "$rc" = 0 ] || return 1
+	say "release files solved for $(git log -1 --format='%h %s' "$c"): ${files//$'\n'/ }"
+}
+
+# publish_stopped: end git publicar while the rebase of REL_RELEASE is stopped on a conflict it
+# cannot solve, with the conflicted files and the exact steps. The rebase stays stopped: develop,
+# REL_RELEASE, the tag and origin have not moved. Step 3 names PUB_AGAIN (git subir) or git publicar.
+# Arguments: none; reads REL_RELEASE REL_VERSION REL_TAG PUB_AGAIN. Returns: never (exits 1 through die).
+publish_stopped() {
+	local files at
+	files="$(git diff --name-only --diff-filter=U)"
+	at="$(git log -1 --format='%h %s' REBASE_HEAD 2>/dev/null || echo 'a step')"
+	{
+		echo "[rama] conflict while rebasing $REL_RELEASE onto $QS_BR_MAINLINE at $at${files:+, in: ${files//$'\n'/ }}."
+		echo "  Nothing was published: $QS_BR_MAINLINE, $REL_RELEASE, the tag $REL_TAG and origin did not move."
+		echo "  Solve it:"
+		echo "    1. edit the files, then: git add <files>"
+		echo "    2. git rebase --continue"
+		echo "    3. ${PUB_AGAIN:-git publicar --version $REL_VERSION}   (it resumes; release-file conflicts are solved for you)"
+		echo "  Give up instead: git rebase --abort"
+	} >&2
+	die "stopped: solve the conflict, then run ${PUB_AGAIN:-git publicar --version $REL_VERSION} again"
+}
+
+# publish_rebase <onto>: rebase REL_RELEASE onto <onto> (a develop commit), or carry on with the
+# stopped rebase of REL_RELEASE. Steps that stop only on release files of a release commit are
+# solved (publish_autosolve) and continued; any other stop ends through publish_stopped with the
+# rebase left stopped, so REL_RELEASE does not move until the rebase ends.
+# Arguments: $1 the commit to rebase onto. Returns: 0 when REL_RELEASE contains <onto>; exits
+# through die otherwise.
+publish_rebase() {
+	local onto="$1" log
+	log="$(git rev-parse --absolute-git-dir)/quality-suite/publish.log"
+	mkdir -p "$(dirname "$log")"
+	if ! rebase_in_progress; then
+		git merge-base --is-ancestor "$onto" "refs/heads/$REL_RELEASE" && return 0
+		say "rebasing $REL_RELEASE onto $QS_BR_MAINLINE ($(git rev-parse --short "$onto"))..."
+		if ! git rebase -q "$onto" "$REL_RELEASE" >"$log" 2>&1 && ! rebase_in_progress; then
+			cat "$log" >&2
+			die "the rebase of $REL_RELEASE onto $QS_BR_MAINLINE was refused (see above); nothing was changed"
+		fi
+	fi
+	while rebase_in_progress; do
+		if [ -n "$(git ls-files -u)" ]; then publish_autosolve || publish_stopped; fi
+		# why: a step whose solution (made here or by hand, then git add) equals develop has nothing
+		# left to commit, and git rebase --continue refuses it; unstaged edits are never skipped
+		if git diff --cached --quiet && git diff --quiet; then
+			GIT_EDITOR=true git rebase --skip >"$log" 2>&1 && continue
+			[ -n "$(git ls-files -u)" ] && continue
+			cat "$log" >&2
+			publish_stopped
+		fi
+		GIT_EDITOR=true git rebase --continue >"$log" 2>&1 && continue
+		[ -n "$(git ls-files -u)" ] && continue
+		cat "$log" >&2
+		publish_stopped
+	done
+	git merge-base --is-ancestor "$onto" "refs/heads/$REL_RELEASE" ||
+		die "$REL_RELEASE was not rebased onto $QS_BR_MAINLINE (see the messages above)"
+}
+
+# publish_local_release: make sure REL_RELEASE exists locally and is the copy to publish: created
+# from origin when only origin has it, moved forward when it is behind origin. Local and origin
+# diverged is accepted only when origin still holds the tip recorded before git publicar rebased
+# it (git config qs.publish.<v>.from).
+# Arguments: none; reads REL_RELEASE REL_VERSION. Sets PUB_TIP to the local tip. Returns: 0;
+# exits through die when local and origin diverged otherwise.
+publish_local_release() {
+	local o l
+	o="$(git rev-parse -q --verify "refs/remotes/origin/$REL_RELEASE" || true)"
+	l="$(git rev-parse -q --verify "refs/heads/$REL_RELEASE" || true)"
+	if [ -z "$l" ]; then
+		git branch -q --no-track "$REL_RELEASE" "$o"
+		l="$o"
+	elif [ -n "$o" ] && ! git merge-base --is-ancestor "$o" "$l"; then
+		if git merge-base --is-ancestor "$l" "$o"; then
+			if [ "$(current_branch || true)" = "$REL_RELEASE" ]; then
+				git merge -q --ff-only "$o"
+			else git update-ref "refs/heads/$REL_RELEASE" "$o" "$l"; fi
+			l="$o"
+		elif [ "$o" != "$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)" ]; then
+			die "$REL_RELEASE: local and origin diverged; pull it first (git checkout $REL_RELEASE && git pull)"
+		fi
+	fi
+	PUB_TIP="$l"
+}
+
+# publish_remote_tag: the commit the tag REL_TAG points at on origin (peeled), or nothing when
+# origin has no such tag or there is no origin.
+# Arguments: none. Output: the commit id. Returns: 0.
+publish_remote_tag() {
+	has_origin || return 0
+	git ls-remote --tags origin 2>/dev/null | awk -v t="refs/tags/$REL_TAG" '
+		$2 == t { plain = $1 }
+		$2 == t "^{}" { peeled = $1 }
+		END { if (peeled != "") print peeled; else if (plain != "") print plain }'
+}
+
+# publish_message <base> <tip>: the message of the develop commit of the release: subject
+# chore(release): <tag>, the CHANGELOG.md entry of the version, the Commits: block (nested) and
+# the Files: block of base..tip, then the trailers Refs: <v>/RELEASE -> develop, Squashed:
+# <v>/RELEASE <tip> and the Squashes: lines of the commits base..tip (a combined RELEASE).
+# Arguments: $1 the develop commit; $2 the RELEASE tip. Output: the message. Returns: 0.
+publish_message() {
+	local base="$1" tip="$2" entry
+	entry="$(version_section "$tip" | sed '1d' | sed '/./,$!d')"
+	release_subject "$REL_TAG"
+	printf '\n\n'
+	echo "Release $REL_TAG of $REL_VERSION: $(git rev-list --count --no-merges "$tip" "^$base") commit(s)."
+	echo
+	[ -z "$entry" ] || printf '%s\n\n' "$entry"
+	squash_commits_block "$base" "$tip"
+	squash_files_block "$base" "$tip"
+	echo
+	echo "Refs: $REL_RELEASE -> $QS_BR_MAINLINE"
+	echo "Squashed: $REL_RELEASE $(git rev-parse "$tip^{commit}")"
+	git log --reverse --format=%B "$tip" "^$base" -- | grep '^Squashes: ' | awk '!seen[$0]++' || true
+}
+
+# publish_commit <base> <tip>: ONE single-parent commit on develop with the tree of <tip> (the
+# rebased RELEASE, which contains <base>) and publish_message; the hooks run. Local develop is
+# first brought to <base> (a fast-forward to origin). On any failure develop goes back to where it
+# was and the RELEASE branch is checked out.
+# Arguments: $1 the develop commit; $2 the RELEASE tip. Returns: 0 when committed, 1 otherwise.
+publish_commit() {
+	local base="$1" tip="$2" msg old
+	msg="$(git rev-parse --absolute-git-dir)/quality-suite/PUBLISH_MSG"
+	mkdir -p "$(dirname "$msg")"
+	publish_message "$base" "$tip" >"$msg"
+	old="$(git rev-parse -q --verify "refs/heads/$QS_BR_MAINLINE" || true)"
+	if [ -n "$old" ]; then
+		git checkout -q "$QS_BR_MAINLINE"
+	else git checkout -q -b "$QS_BR_MAINLINE" --track "origin/$QS_BR_MAINLINE"; fi
+	if { [ "$(git rev-parse HEAD)" = "$base" ] || git merge -q --ff-only "$base"; } &&
+		quiet_merge -c merge.ff=true merge -q --squash "$tip" &&
+		git commit -q --cleanup=whitespace -F "$msg" &&
+		[ "$(git rev-parse "HEAD^{tree}")" = "$(git rev-parse "$tip^{tree}")" ]; then
+		return 0
+	fi
+	if [ -n "$old" ]; then git reset -q --hard "$old"; else git reset -q --hard HEAD; fi
+	git checkout -q "$REL_RELEASE"
+	[ -n "$old" ] || git branch -q -D "$QS_BR_MAINLINE"
+	return 1
+}
+
+# publish_tag <commit>: the annotated tag REL_TAG on <commit> (the develop commit of the release),
+# created or moved there; it keeps the message of the local tag git release made (reviewed text),
+# else 'Release <tag> (<v>)' and the CHANGELOG.md entry. Local only: publish_push pushes it.
+# Arguments: $1 the commit. Returns: 0; exits through die when the tag cannot be written.
+publish_tag() {
+	local c="$1" msg
+	exists_ref "refs/tags/$REL_TAG" && [ "$(git rev-parse "refs/tags/$REL_TAG^{commit}")" = "$c" ] && return 0
+	msg="$(git rev-parse --absolute-git-dir)/quality-suite/PUBLISH_TAG_MSG"
+	if exists_ref "refs/tags/$REL_TAG" && [ "$(git cat-file -t "refs/tags/$REL_TAG")" = tag ]; then
+		git for-each-ref --format='%(contents)' "refs/tags/$REL_TAG" >"$msg"
+	else
+		version_tag_message "$msg"
+	fi
+	git tag -f -a --cleanup=whitespace -F "$msg" "$REL_TAG" "$c" >/dev/null ||
+		die "the tag $REL_TAG could not be written on $QS_BR_MAINLINE; run git publicar --version $REL_VERSION again (it resumes)"
+	say "tag $REL_TAG on $QS_BR_MAINLINE ($(git rev-parse --short "$c"))"
+}
+
+# publish_push: ONE atomic push of develop, the tag REL_TAG and the deletion of REL_RELEASE on
+# origin (with a lease on the value fetched). Nothing when REL_PUSH is 0 or there is no origin.
+# Arguments: none. Returns: 0 when pushed (or nothing to push), 1 when the push was rejected
+# (origin unchanged).
+publish_push() {
+	local refs lease=() o
+	[ "$REL_PUSH" = 1 ] && has_origin || return 0
+	refs=("refs/heads/$QS_BR_MAINLINE:refs/heads/$QS_BR_MAINLINE" "refs/tags/$REL_TAG:refs/tags/$REL_TAG")
+	o="$(git rev-parse -q --verify "refs/remotes/origin/$REL_RELEASE" || true)"
+	if [ -n "$o" ]; then
+		refs+=(":refs/heads/$REL_RELEASE")
+		lease=("--force-with-lease=refs/heads/$REL_RELEASE:$o")
+	fi
+	git push -q --atomic origin ${lease[@]+"${lease[@]}"} "${refs[@]}" || return 1
+	say "pushed $QS_BR_MAINLINE and $REL_TAG$([ -n "$o" ] && echo "; $REL_RELEASE deleted on origin") (one atomic push)"
+}
+
+# publish_from_stale: whether git config qs.publish.<v>.from (the origin tip of REL_RELEASE kept
+# while git publicar rebases it, so that the rebased local copy may differ from origin) is stale:
+# no rebase is stopped and that permission is not needed: the local REL_RELEASE is gone, origin
+# has no REL_RELEASE or another tip, or the local copy still contains the origin tip (it was not
+# rebased, as after 'git rebase --abort' of a stopped git publicar, or it was pushed since).
+# Arguments: none; reads REL_VERSION REL_RELEASE. Returns: 0 when stale; 1 when unset or in use.
+publish_from_stale() {
+	local from l o
+	from="$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)"
+	[ -n "$from" ] || return 1
+	! rebase_in_progress || return 1
+	l="$(git rev-parse -q --verify "refs/heads/$REL_RELEASE" || true)"
+	o="$(git rev-parse -q --verify "refs/remotes/origin/$REL_RELEASE" || true)"
+	if [ -z "$l" ] || [ -z "$o" ] || [ "$o" != "$from" ]; then return 0; fi
+	git merge-base --is-ancestor "$o" "$l"
+}
+
+# publish_forget_stale: clear qs.publish.<v>.from when it is stale (publish_from_stale), saying so;
+# otherwise nothing. The version release does the same with its own state (version_forget_stale).
+# Arguments: none; reads REL_VERSION REL_RELEASE. Returns: 0.
+publish_forget_stale() {
+	publish_from_stale || return 0
+	git config --unset-all "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+	say "$REL_RELEASE was not rebased: the stale publish state of $REL_VERSION is cleared (qs.publish.$REL_VERSION.from)"
+	return 0
+}
+
+# publish_reset: git publicar --reset --version <v>: forget the publish state of REL_VERSION (git
+# config qs.publish.<v>.from) after a confirmation (--yes skips it), like git release --reset.
+# Refused, nothing changed, while a rebase is stopped (git publicar resumes it). Branches and tags
+# are never touched.
+# Arguments: none; reads REL_VERSION REL_TAG_GIVEN. Returns: 0; exits through die when refused or
+# cancelled.
+publish_reset() {
+	local from
+	[ "$REL_TAG_GIVEN" = 0 ] || die "--reset takes no tag: git publicar --reset --version <v>"
+	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue, then git publicar --version $REL_VERSION) or give it up (git rebase --abort) first"
+	from="$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)"
+	if [ -z "$from" ]; then
+		say "nothing to reset: no publish state for $REL_VERSION"
+		return 0
+	fi
+	confirm "Forget the publish state of $REL_VERSION (qs.publish.$REL_VERSION.from = $from)?" || die "cancelled; nothing was changed"
+	git config --unset-all "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+	say "publish state of $REL_VERSION forgotten (qs.publish.$REL_VERSION.from)"
+	return 0
+}
+
+# publish_squash: git publicar with branches.flow = squash (ACs M1-M3): REL_RELEASE rebased onto
+# develop (release-file conflicts solved, any other conflict stops with the steps), ONE
+# single-parent commit on develop with its tree (publish_message), the tag moved onto that commit,
+# one atomic push of develop + tag + the deletion of REL_RELEASE, then REL_RELEASE deleted locally.
+# Re-running resumes: a stopped rebase of REL_RELEASE, a develop commit already made (its
+# 'Squashed: <v>/RELEASE <tip>' line), a push that failed. A failure before the develop commit
+# puts REL_RELEASE back where it was.
+# Arguments: none; reads the REL_* variables of release_args. Returns: 0; exits through die on a
+# refusal, a stop or a failure.
+publish_squash() {
+	local start base tip old remote dev landed=0 rebased=0 entry
+	cd "$(git rev-parse --show-toplevel)"
+	publish_forget_stale
+	if rebase_in_progress; then
+		[ "$(rebase_state head-name)" = "refs/heads/$REL_RELEASE" ] ||
+			die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort), then run git publicar again"
+		say "resuming the rebase of $REL_RELEASE onto $QS_BR_MAINLINE..."
+		publish_rebase "$(rebase_state onto)"
+	fi
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	exists_branch "$REL_RELEASE" || die "'$REL_RELEASE' does not exist: prepare it first with git release --version $REL_VERSION"
+	for start in "$REL_RELEASE" "$QS_BR_MAINLINE"; do
+		! checked_out_elsewhere "$start" || die "'$start' is checked out in another worktree: free it there first (git switch -)"
+	done
+	start="$(current_branch || true)"
+	publish_local_release
+	tip="$PUB_TIP"
+	[ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ] && die "$QS_BR_MAINLINE: local and origin diverged; pull it first"
+	base="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$base" ] || die "'$QS_BR_MAINLINE' does not exist"
+	base="$(git rev-parse "$base^{commit}")"
+	dev="$(git rev-parse -q --verify "refs/heads/$QS_BR_MAINLINE" || true)"
+	if [ -n "$dev" ] && git log -1 --format=%B "$dev" | grep -qxF "Squashed: $REL_RELEASE $tip"; then
+		landed=1 # resumed after the develop commit
+	fi
+	remote="$(publish_remote_tag)"
+	if [ -n "$remote" ] && { [ "$landed" = 0 ] || [ "$remote" != "$dev" ]; }; then
+		die "tag '$REL_TAG' is already on origin on another commit; give another: git publicar <tag> --version $REL_VERSION"
+	fi
+	entry="$(version_section "$tip" | sed '1d' | sed '/./,$!d')"
+	[ -n "$entry" ] || echo "[rama] WARN: $QS_BR_CHANGELOG on $REL_RELEASE has no entry for $REL_VERSION" >&2
+	echo "Release $REL_TAG ($REL_VERSION)"
+	echo
+	[ -z "$entry" ] || printf '%s\n\n' "$entry"
+	if [ "$landed" = 1 ]; then
+		echo "Plan: $REL_RELEASE is already on $QS_BR_MAINLINE as $(git rev-parse --short "$dev"): tag $REL_TAG there, push, delete $REL_RELEASE"
+	else
+		echo "Plan: $(git merge-base --is-ancestor "$base" "$tip" || echo "rebase $REL_RELEASE onto $QS_BR_MAINLINE, ")ONE commit on $QS_BR_MAINLINE (\"$(release_subject "$REL_TAG")\"), tag $REL_TAG on it$([ "$REL_PUSH" = 1 ] && has_origin && echo ", push $QS_BR_MAINLINE and $REL_TAG"), delete $REL_RELEASE"
+	fi
+	confirm "Publish $REL_VERSION as $REL_TAG?" || die "cancelled; nothing was changed"
+	if [ "$landed" = 0 ]; then
+		old="$tip"
+		if ! git merge-base --is-ancestor "$base" "$tip"; then
+			[ -n "$(git config "qs.publish.$REL_VERSION.from" 2>/dev/null || true)" ] ||
+				git config "qs.publish.$REL_VERSION.from" "$(git rev-parse -q --verify "refs/remotes/origin/$REL_RELEASE" || echo "$old")"
+			publish_rebase "$base"
+			rebased=1
+			tip="$(git rev-parse "refs/heads/$REL_RELEASE")"
+		fi
+		if ! publish_commit "$base" "$tip"; then
+			if [ "$rebased" = 1 ]; then
+				git checkout -q --detach
+				git update-ref "refs/heads/$REL_RELEASE" "$old" "$tip"
+				git config --unset "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+			fi
+			git checkout -q "${start:-$REL_RELEASE}" 2>/dev/null || git checkout -q "$REL_RELEASE"
+			die "the commit on $QS_BR_MAINLINE failed (see the hook messages above); nothing was changed"
+		fi
+		dev="$(git rev-parse HEAD)"
+		say "$REL_RELEASE landed on $QS_BR_MAINLINE as ONE commit: $(git rev-parse --short "$dev")"
+	else
+		git checkout -q "$QS_BR_MAINLINE"
+	fi
+	publish_tag "$dev"
+	if [ -z "$remote" ] && ! publish_push; then
+		die "push failed: $QS_BR_MAINLINE and $REL_TAG are ready locally and $REL_RELEASE is kept. Fix the push and run git publicar --version $REL_VERSION again (it resumes)"
+	fi
+	git branch -q -D "$REL_RELEASE"
+	git config --unset "qs.release.$REL_VERSION.tag" 2>/dev/null || true
+	git config --unset "qs.publish.$REL_VERSION.from" 2>/dev/null || true
+	say "published $REL_VERSION as $REL_TAG: one commit on $QS_BR_MAINLINE; $REL_RELEASE deleted"
+	if [ "$REL_PUSH" != 1 ] && has_origin; then
+		say "not pushed (--no-push): git push --atomic origin $QS_BR_MAINLINE refs/tags/$REL_TAG :refs/heads/$REL_RELEASE"
+	fi
+	return 0
+}
+
 cmd_publicar() { # step 2: RELEASE merged into develop, tagged, pushed, deleted
 	local tip base notes msg pushed=0 merged=0 root rels
 	# why: with several RELEASE branches, which one reaches develop is said explicitly, one at a time
@@ -1301,6 +1918,14 @@ cmd_publicar() { # step 2: RELEASE merged into develop, tagged, pushed, deleted
 	fi
 	release_args "$@"
 	REL_RELEASE="$REL_VERSION/$QS_BR_RELEASE_LEAF"
+	if [ "$REL_RESET" = 1 ]; then
+		publish_reset
+		return 0
+	fi
+	if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+		publish_squash
+		return
+	fi
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	exists_branch "$REL_RELEASE" || die "'$REL_RELEASE' does not exist: prepare it first with git release --version $REL_VERSION"
@@ -1516,15 +2141,1078 @@ release_commits() {
 	[ -z "$changed" ] || commit_files "docs(readme): version $REL_VERSION" $changed
 }
 
+# aside_existing <branch>: the name under which <branch> was already set aside, when a local
+# 'unmerged/<branch>' (or its '-N' / stamped variant) points at the same commit as the branch
+# (its local or origin ref): the mark of a release that failed after setting it aside (AC O6).
+# Arguments: $1 branch. Returns: 0 and prints that name; 1 when there is none.
+aside_existing() {
+	local b="$1" sha ref name
+	if exists_ref "refs/heads/$b"; then
+		sha="$(git rev-parse "refs/heads/$b")"
+	elif exists_ref "refs/remotes/origin/$b"; then
+		sha="$(git rev-parse "refs/remotes/origin/$b")"
+	else return 1; fi
+	while IFS=' ' read -r ref name; do
+		case "$name" in
+		"$QS_BR_ARCHIVE/$b" | "$QS_BR_ARCHIVE/$b"-[0-9] | "$QS_BR_ARCHIVE"-*/"$b") ;;
+		*) continue ;;
+		esac
+		[ "$ref" = "$sha" ] || continue
+		printf '%s\n' "$name"
+		return 0
+	done < <(git for-each-ref --format='%(objectname) %(refname:short)' refs/heads)
+	return 1
+}
+
+# release_set_aside: set every REL_ARCHIVE branch aside under its 'unmerged/...' name: renamed
+# locally (or a local copy of a branch only on origin) and copied on origin when REL_PUSH is 1
+# and there is an origin; one warning per branch on stderr.
+# Arguments: none; reads REL_ARCHIVE ("<branch><TAB><new name><TAB><ORIGINAL><TAB><commits>").
+# Returns: 0; a failed git command ends the script (set -e).
+release_set_aside() {
+	local entry b new p n done_as
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new p n <<<"$entry"
+		if done_as="$(aside_existing "$b")"; then
+			# a failed earlier run already set it aside: do not copy it again
+			if [ "$REL_PUSH" = 1 ] && has_origin && ! exists_ref "refs/remotes/origin/$done_as"; then
+				git push -q origin "refs/heads/$done_as:refs/heads/$done_as"
+			fi
+			continue
+		fi
+		if exists_ref "refs/heads/$b"; then
+			git branch -m "$b" "$new"
+		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
+		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then git push -q origin "refs/remotes/origin/$b:refs/heads/$new"; fi
+		echo "[rama] WARN: $b had $n commit(s) not in $p: set aside as $new" >&2
+	done
+	return 0
+}
+
+# --- OT release (flow = squash): '<v>/<ot>/ORIGINAL' -> '<v>/<ot>/RELEASE' ---------------------
+# git release inside '<v>/<ot>/...' (or --ot <v>/<ot>): RELEASE at the OT ORIGINAL tip plus one
+# docs(changelog) commit with the OT lines of the '## <v>' section, the annotated tag
+# branches.ot_tag on the OT ORIGINAL tip (keeps the cited hashes reachable), one push of RELEASE
+# and the tag, then the OT subtree deleted (the OT ORIGINAL last: while it exists the release is
+# not finished and running it again resumes). VERSION and the README badge are not touched: the
+# version release ('git release --version <v>') does that once every OT has its RELEASE.
+
+# ot_release_target: settle REL_OT once release_args has read the options. --ot is refused with
+# branches.flow = merge, normalised to '<v>/<ot>' and checked against the model and --version.
+# Without --ot and --version (flow = squash), a current branch inside an OT ('<v>/<ot>/...', three
+# or more segments) selects that OT.
+# Arguments: none; reads and sets REL_OT and REL_VERSION. Returns: 0; exits through die on a bad --ot.
+ot_release_target() {
+	local cur v o
+	if [ -n "$REL_OT" ]; then
+		[ "${QS_BR_FLOW:-merge}" = squash ] ||
+			die "--ot needs branches.flow = squash; this repository keeps the 4.x merge flow (git release --version <v>)"
+		REL_OT="${REL_OT%/}"
+		REL_OT="${REL_OT%/"$QS_BR_LEAF"}"
+		case "$REL_OT" in */*/* | /* | */) die "--ot takes <version>/<ot>, e.g. 9.0.0/500 (got '$REL_OT')" ;; */*) ;; *) die "--ot takes <version>/<ot>, e.g. 9.0.0/500 (got '$REL_OT')" ;; esac
+		v="${REL_OT%%/*}" o="${REL_OT#*/}"
+		if ! printf '%s' "$v" | grep -qE -- "$(_br_level_re 1)" || ! printf '%s' "$o" | grep -qE -- "$(_br_level_re 2)" ||
+			reserved_leaf_segment "$o"; then
+			die "'$REL_OT' is not <version>/<ot> of the branch model (branches.levels)"
+		fi
+		[ -z "$REL_VERSION" ] || [ "${REL_VERSION%%/*}" = "$v" ] || die "--ot $REL_OT is not in --version $REL_VERSION"
+		REL_VERSION="$v"
+	elif [ -z "$REL_VERSION" ] && [ "${QS_BR_FLOW:-merge}" = squash ]; then
+		cur="$(current_branch || true)"
+		case "$cur" in */*/*) ;; *) return 0 ;; esac
+		is_archived_branch "$cur" && return 0
+		valid_branch_name "$cur" >/dev/null 2>&1 || return 0
+		REL_OT="$(cut -d/ -f1-2 <<<"$cur")"
+	fi
+	return 0
+}
+
+# render_ot_tag <v>/<ot>: the tag of an OT release from branches.ot_tag ({version}, {ot}, {date}).
+# Arguments: $1 '<v>/<ot>'. Returns: 0; prints the tag (nothing when ot_tag is '').
+render_ot_tag() {
+	local t="$QS_BR_OT_TAG"
+	[ -n "$t" ] || return 0
+	t="${t//\{version\}/${1%%/*}}"
+	t="${t//\{ot\}/${1#*/}}"
+	t="${t//\{date\}/$(date +%Y%m%d)}"
+	printf '%s' "$t"
+}
+
+# ot_release_branches <v>: hook for the version release: every '<v>/<ot>/RELEASE' of a version,
+# local or on origin, one per line, sorted.
+# Arguments: $1 version. Returns: 0.
+ot_release_branches() {
+	local b
+	while IFS= read -r b; do
+		is_ot_release_branch "$b" && [ "${b%%/*}" = "$1" ] && printf '%s\n' "$b"
+	done < <(all_branches)
+	return 0
+}
+
+# version_ots <v>: hook for the version release: the OTs of a version, i.e. the folders '<v>/<ot>/'
+# holding any branch (local or on origin), one per line, sorted; reserved leaves are not OTs.
+# Arguments: $1 version. Returns: 0.
+version_ots() {
+	local o
+	while IFS= read -r o; do
+		[ -n "$o" ] && ! reserved_leaf_segment "$o" && printf '%s\n' "$o"
+	done < <(all_branches | awk -F/ -v v="$1" '$1 == v && NF >= 3 { print $2 }' | LC_ALL=C sort -u)
+	return 0
+}
+
+# ot_is_testing <branch>: whether a branch is a TESTING sandbox. Uses is_testing_branch of
+# git-flow-lib.sh when it is declared (5.0.0-RC1/git/testing_branch), else the same rule: the
+# last segment is exactly branches.testing_leaf.
+# Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
+ot_is_testing() {
+	if declare -F is_testing_branch >/dev/null; then
+		is_testing_branch "$1"
+		return
+	fi
+	case "$1" in */"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
+	return 1
+}
+
+# ot_change_in <commit> <rev>: whether the change of a commit is already in <rev>: an empty
+# change, the same stable patch-id as a commit of REL_CL_BASE..<rev>, or a diff that reverse-applies
+# cleanly to the tree of <rev> (checked on a temporary index).
+# Arguments: $1 commit, $2 revision. Returns: 0 when present, 1 otherwise.
+ot_change_in() {
+	local c="$1" rev="$2" pid idx rc=1
+	pid="$(git diff "$c^" "$c" | git patch-id --stable | cut -d' ' -f1)"
+	[ -n "$pid" ] || return 0
+	if git log -p --no-merges --format='commit %H' "$rev" ${REL_CL_BASE:+"^$REL_CL_BASE"} -- |
+		git patch-id --stable | cut -d' ' -f1 | grep -qxF "$pid"; then
+		return 0
+	fi
+	idx="$(mktemp)"
+	if git_idx "$idx" read-tree "$rev" 2>/dev/null &&
+		git diff "$c^" "$c" | git_idx "$idx" apply --cached --check -R 2>/dev/null; then
+		rc=0
+	fi
+	rm -f "$idx"
+	return "$rc"
+}
+
+# ot_testing_clean <branch>: whether a TESTING sandbox inside the OT can be deleted with the tree
+# (AC O7). Uses testing_release_ok (5.0.0-RC1/git/testing_branch) when it is declared. Fallback:
+# the TESTING commits are the non-merge commits not reachable from the shas of its marker commit
+# (the newest first-parent commit with 'Testing-Create: <ORIGINAL> <sha>'; 'Sources:' lines
+# '<branch> <sha>'), the marker left out; each must already be in the OT ORIGINAL tip
+# (ot_change_in). Warns on stderr naming the undistributed commits.
+# Arguments: $1 TESTING branch; reads REL_TIP REL_CL_BASE. Returns: 0 when clean; 1 when it has
+# undistributed commits or no readable marker (it is then set aside, never deleted).
+ot_testing_clean() {
+	local b="$1" ref m body s excl=() c pend=""
+	if declare -F testing_release_ok >/dev/null; then
+		testing_release_ok "$b"
+		return
+	fi
+	ref="$(best_ref "$b" || true)"
+	[ -n "$ref" ] || return 1
+	m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$ref" -- 2>/dev/null || true)"
+	if [ -z "$m" ]; then
+		echo "[rama] WARN: $b has no readable marker commit: set aside, not deleted" >&2
+		return 1
+	fi
+	body="$(git log -n1 --format=%B "$m")"
+	while IFS= read -r s; do
+		[ -n "$s" ] && git cat-file -e "$s^{commit}" 2>/dev/null && excl+=("^$s")
+	done < <(awk '/^Testing-Create: / { print $3 } /^Sources:$/ { on = 1; next } on && NF == 0 { on = 0 } on { print $2 }' <<<"$body")
+	while IFS= read -r c; do
+		[ -n "$c" ] && [ "$c" != "$m" ] || continue
+		ot_change_in "$c" "$REL_TIP" || pend="$pend$c"$'\n'
+	done < <(git rev-list --no-merges --reverse "$ref" ${excl[@]+"${excl[@]}"} --)
+	[ -z "$pend" ] && return 0
+	echo "[rama] WARN: $b has undistributed commits (git testing repartir):" >&2
+	while IFS= read -r c; do
+		[ -n "$c" ] && echo "         $(git log -n1 --format='%h %s' "$c")" >&2
+	done <<<"$pend"
+	return 1
+}
+
+# ot_branch_in <branch> <original>: whether a branch of the OT is already in its nearest ORIGINAL:
+# branch_integrated (ancestry, or the 'Refs:'/'Squashed:' lines of a squash commit), or a simulated
+# merge (git merge-tree --write-tree) of the branch into <original> that changes nothing, which
+# proves nested squashes whose own ORIGINAL was squashed and deleted.
+# Arguments: $1 branch, $2 ORIGINAL. Returns: 0 when in, 1 otherwise.
+ot_branch_in() {
+	local b="$1" p="$2" bt pt tree
+	branch_integrated "$b" "$p" 2>/dev/null && return 0
+	bt="$(branch_tip "$b")"
+	pt="$(branch_tip "$p")"
+	tree="$(git merge-tree --write-tree "$pt" "$bt" 2>/dev/null)" || return 1
+	[ "$(head -n1 <<<"$tree")" = "$(git rev-parse "$pt^{tree}")" ]
+}
+
+# ot_release_analyse: analyse the OT REL_OT for its release; fills the REL_* variables of
+# release_analyse plus REL_VTOP (the version ORIGINAL), REL_OT_TAG and REL_DONE, prints only the
+# TESTING warnings. Errors (REL_ERRORS): no OT ORIGINAL (and no RELEASE), local and origin
+# diverged, the version ORIGINAL not contained, no own non-merge commit, the tag on another
+# commit, a RELEASE that does not contain the OT ORIGINAL tip (reopening a released OT is not
+# supported), a branch of the OT checked out in another worktree. REL_DONE=1 when only the
+# RELEASE is left (released); REL_RESUME=1 when RELEASE already contains the OT ORIGINAL tip.
+# The delete lists leave out REL_TOP, which ot_release_run deletes last.
+# Arguments: none. Returns: 0.
+ot_release_analyse() {
+	local v="${REL_OT%%/*}" b p tb tp n rt vt entry archived=$'\n' here wt
+	REL_TOP="$REL_OT/$QS_BR_LEAF" REL_RELEASE="$REL_OT/$QS_BR_RELEASE_LEAF" REL_VTOP="$v/$QS_BR_LEAF"
+	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
+	REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0 REL_DONE=0
+	REL_OT_TAG="$(render_ot_tag "$REL_OT")"
+	if [ -n "$REL_OT_TAG" ] && ! git check-ref-format "refs/tags/$REL_OT_TAG"; then
+		REL_ERRORS+=("branches.ot_tag gives '$REL_OT_TAG', not a valid tag name")
+	fi
+	if ! exists_branch "$REL_TOP"; then
+		if exists_branch "$REL_RELEASE"; then
+			REL_DONE=1
+		else REL_ERRORS+=("'$REL_TOP' does not exist (git arbol $v)"); fi
+		return 0
+	fi
+	REL_TIP="$(branch_tip "$REL_TOP")"
+	[ "$REL_TIP" = diverged ] && REL_ERRORS+=("$REL_TOP: local and origin diverged; run git subir on it first")
+	if ! exists_branch "$REL_VTOP"; then
+		REL_ERRORS+=("'$REL_VTOP' does not exist: the OT release starts from the version ORIGINAL")
+	else
+		vt="$(branch_tip "$REL_VTOP")"
+		[ "$vt" = diverged ] && REL_ERRORS+=("$REL_VTOP: local and origin diverged; pull it first")
+	fi
+	if [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		if ! git merge-base --is-ancestor "$vt" "$REL_TIP"; then
+			REL_ERRORS+=("$REL_VTOP has $(git rev-list --count "$REL_TIP..$vt") commit(s) that $REL_TOP lacks; bring them in first: git checkout $REL_TOP && git subir")
+		elif [ "$(git rev-list --count --no-merges "$REL_TIP" "^$vt")" = 0 ]; then
+			REL_ERRORS+=("$REL_TOP has no commit of its own (integrate its branches first: git integra): nothing to release")
+		else
+			REL_CL_BASE="$vt" REL_BASE="$vt"
+		fi
+	fi
+	if [ -n "$REL_OT_TAG" ] && exists_ref "refs/tags/$REL_OT_TAG" && [ "$REL_TIP" != diverged ] &&
+		[ "$(git rev-parse "refs/tags/$REL_OT_TAG^{commit}")" != "$REL_TIP" ]; then
+		REL_ERRORS+=("tag '$REL_OT_TAG' already exists on another commit (branches.ot_tag); move or delete it first")
+	fi
+	if exists_branch "$REL_RELEASE" && [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		rt="$(branch_tip "$REL_RELEASE")"
+		if [ "$rt" != diverged ] && git merge-base --is-ancestor "$REL_TIP" "$rt"; then
+			REL_RESUME=1 # an interrupted OT release: go on from there
+		else
+			REL_ERRORS+=("'$REL_RELEASE' exists and does not contain $REL_TOP: reopening an OT after its release is not supported")
+		fi
+	fi
+	# every other branch of the OT against its nearest ORIGINAL; TESTING sandboxes never block (O7)
+	while IFS= read -r b; do
+		[ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
+		tb="$(branch_tip "$b")"
+		p="$(nearest_original "$b")"
+		tp="$(branch_tip "$p")"
+		if [ "$tb" = diverged ] || [ "$tp" = diverged ]; then
+			REL_ERRORS+=("$([ "$tb" = diverged ] && echo "$b" || echo "$p"): local and origin diverged; run git subir on it first")
+			continue
+		fi
+		if ot_is_testing "$b"; then
+			if [ "$REL_TIP" != diverged ] && ot_testing_clean "$b"; then
+				REL_OK+=("$b"$'\t'"$p (TESTING sandbox, nothing left to distribute)")
+				continue
+			fi
+		elif ot_branch_in "$b" "$p"; then
+			REL_OK+=("$b"$'\t'"$p")
+			continue
+		fi
+		n="$(git rev-list --count --no-merges "$tp..$tb")"
+		local new
+		new="$(archive_name "$b")" || {
+			REL_ERRORS+=("no free name to set '$b' aside")
+			continue
+		}
+		REL_PLANNED="$REL_PLANNED$new"$'\n'
+		REL_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$p"$'\t'"$n")
+	done < <(all_branches | awk -v p="$REL_OT/" 'index($0, p) == 1')
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do archived="$archived${entry%%$'\t'*}"$'\n'; done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"} ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		b="${entry%%$'\t'*}"
+		exists_ref "refs/remotes/origin/$b" && REL_DELETE_REMOTE+=("$b")
+		case "$archived" in *$'\n'"$b"$'\n'*) continue ;; esac # set aside: renamed locally instead
+		exists_ref "refs/heads/$b" && REL_DELETE_LOCAL+=("$b")
+	done
+	here="$(git rev-parse --show-toplevel)"
+	while IFS= read -r wt; do
+		b="${wt#*$'\t'}"
+		b="${b#refs/heads/}"
+		case "$b" in "$REL_OT"/*) REL_ERRORS+=("'$b' is checked out in another worktree; switch it or remove that worktree") ;; esac
+	done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
+	return 0
+}
+
+# ot_changelog_subject: the subject of the OT changelog commit, 'docs(changelog): <v> <ot>', or a
+# shorter form when that is over the subject limit (commit.subject_max).
+# Arguments: none; reads REL_OT. Returns: 0; prints the subject.
+ot_changelog_subject() {
+	local s max="${QS_COMMIT_SUBJECT_MAX:-50}"
+	s="docs(changelog): ${REL_OT%%/*} ${REL_OT#*/}"
+	[ "${#s}" -le "$max" ] || s="docs(changelog): ${REL_OT#*/}"
+	[ "${#s}" -le "$max" ] || s="docs(changelog): OT release"
+	printf '%s' "$s"
+}
+
+# ot_release_notes [--write]: the CHANGELOG.md section of the OT from the changelog engine: one
+# line per first-parent change of the OT ORIGINAL since the version ORIGINAL, '(<hash>; <ot>)'.
+# Arguments: extra options of qs.py release-notes (--write merges it into CHANGELOG.md of the
+# current work tree). Returns: the exit status of the engine (1 when the suite image cannot run).
+ot_release_notes() {
+	local root
+	root="$(git rev-parse --show-toplevel)"
+	engine "$root" release-notes --version "$REL_VERSION" --tip "$REL_TIP" --base "$REL_CL_BASE" \
+		--ot "${REL_OT#*/}" --tag "$REL_TAG" "$@"
+}
+
+# ot_changelog_commit: the first step of the OT release, kept apart because in 6.0.0 a DOCS branch
+# takes it over: on the checked-out RELEASE, write the OT section into CHANGELOG.md and commit it
+# (ot_changelog_subject). Skipped when there is no changelog file in the policy or when RELEASE
+# already has commits of its own (a resumed release, AC O6).
+# Arguments: none; reads REL_TIP REL_CL_BASE REL_OT REL_VERSION REL_TAG. Returns: 0; exits through
+# die when the engine cannot write the file or a hook rejects the commit; the changelog file is then
+# restored (removed when new) so the rerun finds a clean tree.
+ot_changelog_commit() {
+	[ -n "$QS_BR_CHANGELOG" ] || return 0
+	if [ -n "$(git rev-list -n1 "$REL_TIP..HEAD")" ]; then
+		say "$REL_RELEASE already has its changelog commit: resumed"
+		return 0
+	fi
+	if ! { ot_release_notes --write >/dev/null 2>&1 && ot_changelog_try_commit; }; then
+		# why: a dirty changelog would make the rerun die in require_clean
+		git reset -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		if git cat-file -e "HEAD:$QS_BR_CHANGELOG" 2>/dev/null; then
+			git checkout -q -- "$QS_BR_CHANGELOG" 2>/dev/null || true
+		else rm -f -- "$QS_BR_CHANGELOG"; fi # why: a file the engine created has nothing to restore
+		die "the changelog commit of $REL_RELEASE failed (see the hook message above); $QS_BR_CHANGELOG was restored. Fix the cause, then run git release again (it resumes)"
+	fi
+}
+
+# ot_changelog_try_commit: commit QS_BR_CHANGELOG with the OT changelog subject, without dying.
+# Arguments: none. Returns: 0 when committed or nothing to commit; 1 when the commit was rejected.
+ot_changelog_try_commit() {
+	git add -- "$QS_BR_CHANGELOG"
+	git diff --cached --quiet && return 0
+	git commit -q -m "$(ot_changelog_subject)" || return 1
+	say "committed: $(ot_changelog_subject)"
+}
+
+# ot_tag_create: the annotated tag REL_OT_TAG on the OT ORIGINAL tip (nothing when branches.ot_tag
+# is '' or the tag is already there, which the analysis checked).
+# Arguments: none. Returns: 0.
+ot_tag_create() {
+	[ -n "$REL_OT_TAG" ] || return 0
+	exists_ref "refs/tags/$REL_OT_TAG" && return 0
+	git tag -a -m "OT ${REL_OT#*/} of ${REL_OT%%/*}: $REL_TOP at its release ($REL_RELEASE)" "$REL_OT_TAG" "$REL_TIP"
+	say "tag $REL_OT_TAG created on $REL_TOP ($(git rev-parse --short "$REL_TIP"))"
+}
+
+# ot_release_report: the checks and the plan of the OT release (preview and before running).
+# Arguments: none; reads the REL_* variables. Returns: 0.
+ot_release_report() {
+	local entry b p n new e i=1
+	echo "## Checks"
+	echo
+	[ "${#REL_ERRORS[@]}" -eq 0 ] && echo "[ok] $REL_TOP is consistent (local/origin), contains $REL_VTOP and has its own commits"
+	for e in ${REL_ERRORS[@]+"${REL_ERRORS[@]}"}; do echo "[!!] $e"; done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"}; do
+		IFS=$'\t' read -r b p <<<"$entry"
+		echo "[ok] $b: contained in $p"
+	done
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new p n <<<"$entry"
+		echo "[!!] $b: $n commit(s) not in $p -> will be set aside as $new"
+	done
+	[ "$REL_RESUME" = 1 ] && echo "[ok] $REL_RELEASE exists and contains $REL_TOP: git release resumes from there"
+	echo
+	echo "## Plan"
+	echo
+	if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then
+		echo "$i. set aside ${#REL_ARCHIVE[@]} branch(es) as $QS_BR_ARCHIVE/... (local and origin)"
+		i=$((i + 1))
+	fi
+	echo "$i. $REL_TOP -> $REL_RELEASE with one commit \"$(ot_changelog_subject)\" ($QS_BR_CHANGELOG); $QS_BR_VERSION_FILE and the README badge untouched"
+	i=$((i + 1))
+	[ -n "$REL_OT_TAG" ] && echo "$i. annotated tag $REL_OT_TAG on $REL_TOP ($([ "$REL_TIP" = diverged ] && echo diverged || git rev-parse --short "$REL_TIP"))" && i=$((i + 1))
+	echo "$i. push $REL_RELEASE${REL_OT_TAG:+ and $REL_OT_TAG}; delete the OT subtree: $((${#REL_DELETE_LOCAL[@]} + 1)) local branch(es)$(has_origin && [ "$REL_PUSH" = 1 ] && echo ", $((${#REL_DELETE_REMOTE[@]} + 1)) on origin at most") ($REL_TOP last)"
+	i=$((i + 1))
+	echo "$i. later: git release --version ${REL_OT%%/*} once every OT of ${REL_OT%%/*} has its RELEASE"
+	return 0
+}
+
+# ot_release_changes: the first-parent changes of the OT ORIGINAL since the version ORIGINAL,
+# oldest first, '- <short hash> <subject>'. Arguments: none. Returns: 0.
+ot_release_changes() {
+	echo "# OT release $REL_OT"
+	echo
+	echo "From \`$REL_TOP\` ($(git rev-parse --short "$REL_TIP")) since \`$REL_VTOP\` ($(git rev-parse --short "$REL_CL_BASE")):"
+	echo
+	git log --first-parent --no-merges --reverse --format='- %h %s' "$REL_TIP" "^$REL_CL_BASE" --
+}
+
+# ot_changelog_preview: git changelog inside an OT (AC O1): the OT changes, the CHANGELOG.md section
+# the release would write, the checks and the plan. Changes nothing.
+# Arguments: none; reads REL_OT REL_TAG_GIVEN. Returns: 0 when releasable (or already released);
+# 1 when a check fails.
+ot_changelog_preview() {
+	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its tag is branches.ot_tag ($(render_ot_tag "$REL_OT"))"
+	fetch_origin
+	ot_release_analyse
+	if [ "$REL_DONE" = 1 ]; then
+		say "$REL_OT is released on $REL_RELEASE: next, git release --version ${REL_OT%%/*} once every OT is released"
+		return 0
+	fi
+	if [ -n "$REL_CL_BASE" ]; then
+		ot_release_changes
+		echo
+		echo "## $QS_BR_CHANGELOG section (OT ${REL_OT#*/})"
+		echo
+		ot_release_notes 2>&1 || echo "(the suite image could not run: no changelog preview)"
+		echo
+	fi
+	ot_release_report
+	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
+		echo
+		say "not releasable yet: fix the [!!] items above"
+		return 1
+	fi
+	echo
+	say "preview only, nothing changed. Next: git release --ot $REL_OT"
+}
+
+# ot_release_run: carry out the analysed OT release: RELEASE created (or resumed) and checked out,
+# the changelog commit, the tag, ONE push of RELEASE and the tag, the never-integrated branches set
+# aside, the OT subtree deleted with the OT ORIGINAL last.
+# Arguments: none; reads the REL_* variables. Returns: 0; exits through die when the push fails
+# (nothing deleted yet: running git release again resumes).
+ot_release_run() {
+	local refs=()
+	if ! exists_ref "refs/heads/$REL_RELEASE"; then
+		git branch -q --no-track "$REL_RELEASE" "$([ "$REL_RESUME" = 1 ] && branch_tip "$REL_RELEASE" || echo "$REL_TIP")"
+	elif [ "$REL_RESUME" = 1 ] && [ "$(branch_tip "$REL_RELEASE")" != "$(git rev-parse "refs/heads/$REL_RELEASE")" ]; then
+		[ "$(current_branch || true)" = "$REL_RELEASE" ] && git checkout -q --detach
+		git branch -q -f "$REL_RELEASE" "$(branch_tip "$REL_RELEASE")" # origin is ahead: catch up
+	fi
+	git checkout -q "$REL_RELEASE"
+	ot_changelog_commit
+	ot_tag_create
+	if [ "$REL_PUSH" = 1 ] && has_origin; then
+		refs=("$REL_RELEASE")
+		[ -n "$REL_OT_TAG" ] && refs+=("refs/tags/$REL_OT_TAG")
+		git push -q --atomic -u origin "${refs[@]}" ||
+			die "push of $REL_RELEASE failed; the OT tree is untouched. Fix it and run git release again (it resumes)"
+	fi
+	release_set_aside
+	if [ "$REL_PUSH" = 1 ] && has_origin; then
+		[ "${#REL_DELETE_REMOTE[@]}" -eq 0 ] || git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
+		! exists_ref "refs/remotes/origin/$REL_TOP" || git push -q origin --delete "$REL_TOP"
+	fi
+	[ "${#REL_DELETE_LOCAL[@]}" -eq 0 ] || git branch -q -D "${REL_DELETE_LOCAL[@]}"
+	! exists_ref "refs/heads/$REL_TOP" || git branch -q -D "$REL_TOP"
+	say "OT $REL_OT released on $REL_RELEASE: $((${#REL_DELETE_LOCAL[@]} + 1)) branch(es) of the OT deleted, ${#REL_ARCHIVE[@]} set aside"
+	return 0
+}
+
+# ot_release: git release for one OT (AC O1-O7): checks, preview, confirmation, then ot_release_run.
+# Arguments: none; reads REL_OT REL_TAG_GIVEN REL_PUSH. Returns: 0; exits through die when a check
+# fails or the human cancels (nothing changed).
+ot_release() {
+	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its tag is branches.ot_tag ($(render_ot_tag "$REL_OT"))"
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	ot_release_analyse
+	if [ "$REL_DONE" = 1 ]; then
+		say "$REL_OT is already released on $REL_RELEASE. Next: git release --version ${REL_OT%%/*} once every OT is released"
+		return 0
+	fi
+	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
+		ot_release_report >&2
+		die "nothing was changed"
+	fi
+	ot_release_changes
+	echo
+	ot_release_report
+	echo
+	confirm "Release OT $REL_OT on $REL_RELEASE?" || die "cancelled; nothing was changed"
+	ot_release_run
+	echo
+	echo "Review now (you are on $REL_RELEASE):"
+	echo "  git show HEAD                         # the $QS_BR_CHANGELOG section of OT ${REL_OT#*/}"
+	echo "  \$EDITOR $QS_BR_CHANGELOG               # wording; then: git commit -am 'docs(changelog): review' && git push"
+	return 0
+}
+
+# --- version release (flow = squash): every '<v>/<ot>/RELEASE' -> '<v>/RELEASE' ----------------
+# git release on '<v>/ORIGINAL', develop or with --version <v>: refused (nothing changed) while an
+# OT of the version has no '<v>/<ot>/RELEASE' or still has other branches. Otherwise '<v>/RELEASE'
+# starts at '<v>/ORIGINAL' and each OT RELEASE, oldest first, is rebased onto it (its changelog-only
+# commits dropped) on a detached HEAD, so the OT RELEASE refs stay as they were until the end. Then
+# the version commit, the CHANGELOG.md entry (union of the OT sections as found on each OT RELEASE
+# tip, plus the direct commits of '<v>/ORIGINAL') and the README badge; the annotated tag
+# branches.tag on the RELEASE tip, local until git publicar; ONE atomic push (RELEASE, branches set
+# aside, deletions); the OT RELEASEs and '<v>/ORIGINAL' deleted, '<v>/ORIGINAL' last. Progress is
+# kept in git config qs.release.<v>.plan / .ots / .current, so any failure is resumed by running
+# git release again. The tag name (qs.release.<v>.tag) stays until git publicar; it and the progress
+# are forgotten when '<v>/RELEASE' is gone (version_forget_stale) or by git release --reset.
+
+# version_cfg <key> [<value>]: read (one argument) or write a progress key qs.release.<v>.<key> of
+# REL_VERSION. Arguments: $1 key, $2 value to store. Returns: 0; prints the value when reading
+# (nothing when unset).
+version_cfg() {
+	if [ "$#" -ge 2 ]; then
+		git config "qs.release.$REL_VERSION.$1" "$2"
+	else
+		git config "qs.release.$REL_VERSION.$1" 2>/dev/null || true
+	fi
+}
+
+# version_state_keys: print the set git config keys qs.release.<v>.<key> of REL_VERSION, one per
+# line. The subsection must end right after <v>: version 5 never matches the keys of 5.0.0-RC1.
+# Arguments: none. Returns: 0 (nothing printed when the version has no state).
+version_state_keys() {
+	git config --local --name-only --list 2>/dev/null | LC_ALL=C sort -u |
+		awk -v p="qs.release.$REL_VERSION." 'index($0, p) == 1 && substr($0, length(p) + 1) !~ /\./' || true
+	return 0
+}
+
+# version_state_names: the key names of version_state_keys without the prefix (plan ots current
+# tag), space separated. Arguments: none. Returns: 0.
+version_state_names() {
+	local k names=""
+	while IFS= read -r k; do
+		if [ -n "$k" ]; then names="$names ${k##*.}"; fi
+	done < <(version_state_keys)
+	printf '%s' "${names# }"
+	return 0
+}
+
+# version_cfg_clear: forget the whole resume state of REL_VERSION: plan, ots, current and the tag
+# name (qs.release.<v>.tag). Used when <v>/RELEASE is gone (an abandoned release) and by git release
+# --reset. The tag itself (refs/tags) is never deleted here. Arguments: none. Returns: 0.
+version_cfg_clear() {
+	local k
+	while IFS= read -r k; do
+		if [ -n "$k" ]; then git config --unset-all "$k" 2>/dev/null || true; fi
+	done < <(version_state_keys)
+	return 0
+}
+
+# version_progress_clear: forget the progress of a version release (plan, ots, current) once
+# <v>/RELEASE is prepared. The tag name stays: git publicar reads it and clears it on success.
+# Arguments: none. Returns: 0.
+version_progress_clear() {
+	local k
+	for k in plan ots current; do git config --unset-all "qs.release.$REL_VERSION.$k" 2>/dev/null || true; done
+	return 0
+}
+
+# version_forget_stale: when '<v>/RELEASE' does not exist and no rebase is stopped, the resume state
+# left by an abandoned release (its RELEASE deleted by hand) is stale: it is cleared, the tag name
+# too, and the tag name is computed again unless it was given on the command line. Says so when it
+# clears something. Arguments: none; reads REL_VERSION REL_TAG_GIVEN. Returns: 0.
+version_forget_stale() {
+	local names
+	exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF" && return 0
+	rebase_in_progress && return 0
+	names="$(version_state_names)"
+	[ -n "$names" ] || return 0
+	version_cfg_clear
+	if [ "$REL_TAG_GIVEN" = 0 ]; then
+		REL_TAG="$(render_tag "$REL_VERSION/$QS_BR_LEAF")"
+		REL_TAG_AT=""
+		if exists_ref "refs/tags/$REL_TAG"; then REL_TAG_AT="$(git rev-parse "refs/tags/$REL_TAG^{commit}")"; fi
+	fi
+	say "$REL_VERSION/$QS_BR_RELEASE_LEAF is gone: the stale release state of $REL_VERSION is cleared ($names)"
+	return 0
+}
+
+# version_reset: git release --reset --version <v>: forget the release state of REL_VERSION
+# (version_cfg_clear) after a confirmation (--yes skips it). Refused, nothing changed, while a rebase
+# is stopped or '<v>/RELEASE' exists: that branch is the release in progress or prepared, and git
+# publicar needs the tag name it keeps. A local tag is kept (git tag -d deletes it).
+# Arguments: none; reads REL_VERSION REL_TAG. Returns: 0; exits through die when refused or cancelled.
+version_reset() {
+	local names
+	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort) first"
+	! exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF" ||
+		die "'$REL_VERSION/$QS_BR_RELEASE_LEAF' exists: the release is in progress or prepared; publish it (git publicar --version $REL_VERSION) or delete that branch by hand first; nothing was changed"
+	names="$(version_state_names)"
+	if [ -z "$names" ]; then
+		say "nothing to reset: no release state for $REL_VERSION"
+		return 0
+	fi
+	confirm "Forget the release state of $REL_VERSION ($names)?" || die "cancelled; nothing was changed"
+	version_cfg_clear
+	say "release state of $REL_VERSION forgotten ($names)"
+	if exists_ref "refs/tags/$REL_TAG"; then say "tag $REL_TAG is kept (git tag -d $REL_TAG deletes it)"; fi
+	return 0
+}
+
+# version_ot_order <ot>...: the OTs sorted oldest first: by the author date of the oldest own
+# non-merge commit of '<v>/<ot>/RELEASE' (since REL_TIP, the version ORIGINAL), then by name.
+# Arguments: the OTs. Returns: 0; prints one OT per line.
+version_ot_order() {
+	local o tip key
+	for o in "$@"; do
+		tip="$(best_ref "$REL_VERSION/$o/$QS_BR_RELEASE_LEAF" || true)"
+		key=""
+		[ -z "$tip" ] || key="$(git log --no-merges --format=%at "$tip" "^$REL_TIP" -- | LC_ALL=C sort -n | head -n1)"
+		printf '%s\t%s\n' "${key:-9999999999}" "$o"
+	done | LC_ALL=C sort -t "$(printf '\t')" -k1,1n -k2,2 | cut -f2
+}
+
+# version_release_analyse: analyse the version REL_VERSION for its release (flow = squash). Fills
+# REL_TOP REL_RELEASE REL_TIP REL_BASE REL_CL_BASE REL_ERRORS REL_OK REL_ARCHIVE REL_DELETE_LOCAL
+# REL_DELETE_REMOTE REL_PLANNED REL_RESUME like release_analyse, plus REL_VOTS (the OTs, in rebase
+# order) and REL_MISSING (the OTs that block the release, '<ot>: <why>'). On a resumed release
+# ('<v>/RELEASE' exists and qs.release.<v>.plan is set) the OT list comes from the plan, because the
+# OT RELEASEs may be gone; a plan without '<v>/RELEASE' is stale and ignored.
+# Errors: no or diverged '<v>/ORIGINAL', develop missing, diverged or not inside it, an OT without
+# RELEASE or with other branches, no OT at all, a stale '<v>/RELEASE', the tag on another commit, a
+# branch of the version checked out in another worktree. Branches directly under '<v>/' (finals,
+# '<v>/TESTING') are deleted when integrated (or clean) and set aside otherwise.
+# Arguments: none. Returns: 0.
+version_release_analyse() {
+	local v="$REL_VERSION" o b p tb tp n rel others plan entry archived=$'\n' here wt new rt
+	REL_TOP="$v/$QS_BR_LEAF" REL_RELEASE="$v/$QS_BR_RELEASE_LEAF"
+	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
+	REL_VOTS=() REL_MISSING=() REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0
+	if ! exists_branch "$REL_TOP"; then
+		REL_ERRORS+=("'$REL_TOP' does not exist (git arbol $v)")
+		return 0
+	fi
+	REL_TIP="$(branch_tip "$REL_TOP")"
+	[ "$REL_TIP" = diverged ] && REL_ERRORS+=("$REL_TOP: local and origin diverged; run git subir on it first")
+	REL_BASE="$(best_ref "$QS_BR_MAINLINE" || true)"
+	[ -n "$REL_BASE" ] || REL_ERRORS+=("'$QS_BR_MAINLINE' does not exist")
+	if [ -n "$REL_BASE" ] && [ "$(branch_tip "$QS_BR_MAINLINE")" = diverged ]; then
+		REL_ERRORS+=("$QS_BR_MAINLINE: local and origin diverged; pull it first")
+	fi
+	if [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		REL_CL_BASE="$REL_BASE"
+		git merge-base --is-ancestor "$REL_BASE" "$REL_TIP" ||
+			REL_ERRORS+=("$QS_BR_MAINLINE has $(git rev-list --count "$REL_TIP..$REL_BASE") commit(s) that $REL_TOP lacks; bring them in first: git checkout $REL_TOP && git subir")
+	fi
+	# why: the plan is the state of a release in progress; without '<v>/RELEASE' it is stale
+	plan=""
+	exists_branch "$REL_RELEASE" && plan="$(version_cfg plan)" || true
+	if [ -n "$plan" ]; then
+		REL_RESUME=1
+		read -r -a REL_VOTS <<<"$plan"
+	else
+		while IFS= read -r o; do
+			[ -n "$o" ] || continue
+			rel="$v/$o/$QS_BR_RELEASE_LEAF"
+			others="$(all_branches | awk -v p="$v/$o/" -v r="$rel" 'index($0, p) == 1 && $0 != r' | tr '\n' ' ')"
+			if ! exists_branch "$rel"; then
+				REL_MISSING+=("$o: no $rel (git release --ot $v/$o)")
+			elif [ -n "$others" ]; then
+				REL_MISSING+=("$o: still has branches: ${others% }")
+			elif [ "$(branch_tip "$rel")" = diverged ]; then
+				REL_MISSING+=("$o: $rel diverged between local and origin; pull it first")
+			else
+				REL_VOTS+=("$o")
+			fi
+		done < <(version_ots "$v")
+		for o in ${REL_MISSING[@]+"${REL_MISSING[@]}"}; do REL_ERRORS+=("OT $o"); done
+		if [ "${#REL_MISSING[@]}" -eq 0 ] && [ "${#REL_VOTS[@]}" -eq 0 ]; then
+			REL_ERRORS+=("$v has no OT ('$v/<ot>/RELEASE'): nothing to release")
+		fi
+		if exists_branch "$REL_RELEASE"; then
+			REL_ERRORS+=("'$REL_RELEASE' exists but no version release of $v is in progress (left by an earlier release?); publish or delete it first")
+		fi
+		if [ "${#REL_VOTS[@]}" -gt 1 ] && [ "$REL_TIP" != diverged ] && [ -n "$REL_TIP" ]; then
+			mapfile -t REL_VOTS < <(version_ot_order "${REL_VOTS[@]}")
+		fi
+	fi
+	if [ -n "$REL_TAG_AT" ]; then
+		rt="$(best_ref "$REL_RELEASE" || true)"
+		if [ "$REL_RESUME" = 0 ] || [ -z "$rt" ] || [ "$REL_TAG_AT" != "$(git rev-parse "$rt")" ]; then
+			REL_ERRORS+=("tag '$REL_TAG' already exists on another commit; choose another name")
+		fi
+	fi
+	# branches directly under the version: finals and the version TESTING sandbox
+	while IFS= read -r b; do
+		[ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
+		[ "$(awk -F/ '{ print NF }' <<<"$b")" = 2 ] || continue
+		tb="$(branch_tip "$b")"
+		p="$REL_TOP"
+		tp="$REL_TIP"
+		if [ "$tb" = diverged ] || [ "$tp" = diverged ]; then
+			REL_ERRORS+=("$([ "$tb" = diverged ] && echo "$b" || echo "$p"): local and origin diverged; run git subir on it first")
+			continue
+		fi
+		if ot_is_testing "$b"; then
+			if ot_testing_clean "$b"; then
+				REL_OK+=("$b"$'\t'"$p (TESTING sandbox, nothing left to distribute)")
+				continue
+			fi
+		elif ot_branch_in "$b" "$p"; then
+			REL_OK+=("$b"$'\t'"$p")
+			continue
+		fi
+		n="$(git rev-list --count --no-merges "$tp..$tb")"
+		new="$(archive_name "$b")" || {
+			REL_ERRORS+=("no free name to set '$b' aside")
+			continue
+		}
+		REL_PLANNED="$REL_PLANNED$new"$'\n'
+		REL_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$p"$'\t'"$n")
+	done < <(all_branches | awk -v p="$v/" 'index($0, p) == 1')
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do archived="$archived${entry%%$'\t'*}"$'\n'; done
+	for o in ${REL_VOTS[@]+"${REL_VOTS[@]}"}; do REL_OK+=("$v/$o/$QS_BR_RELEASE_LEAF"$'\t'"$REL_RELEASE (rebased into it)"); done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"} ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		b="${entry%%$'\t'*}"
+		exists_ref "refs/remotes/origin/$b" && REL_DELETE_REMOTE+=("$b")
+		case "$archived" in *$'\n'"$b"$'\n'*) continue ;; esac # set aside: renamed locally instead
+		exists_ref "refs/heads/$b" && REL_DELETE_LOCAL+=("$b")
+	done
+	here="$(git rev-parse --show-toplevel)"
+	while IFS= read -r wt; do
+		b="${wt#*$'\t'}"
+		b="${b#refs/heads/}"
+		case "$b" in "$v"/*) REL_ERRORS+=("'$b' is checked out in another worktree; switch it or remove that worktree") ;; esac
+	done < <(git worktree list --porcelain | awk -v h="$here" '/^worktree /{w=substr($0,10)} /^branch /{ if (w != h) print w "\t" $2 }')
+	return 0
+}
+
+# version_section <rev>: the '## <v>' section of QS_BR_CHANGELOG at <rev> (REL_VERSION), heading
+# included, as Common Changelog writes it ('## [<v>] - date' or '## <v> - date').
+# Arguments: $1 revision. Returns: 0; prints nothing when the file or the section is missing.
+version_section() {
+	[ -n "$QS_BR_CHANGELOG" ] && git cat-file -e "$1:$QS_BR_CHANGELOG" 2>/dev/null || return 0
+	git show "$1:$QS_BR_CHANGELOG" | tr -d '\r' | awk -v v="$REL_VERSION" '
+		/^## / { if (on) exit; on = (index($0, "## [" v "]") == 1 || index($0, "## " v " ") == 1 || $0 == "## " v) }
+		on { print }'
+}
+
+# version_union_notes [--write]: the CHANGELOG.md entry of the version release: qs.py release-notes
+# --union over the section of each OT, read on its '<v>/<ot>/RELEASE' tip (the reviewed text), in
+# REL_VOTS order, after the section of the direct commits of '<v>/ORIGINAL' since develop (changes
+# without OT, warned by the engine) when there are any. The inputs are written to a scratch folder
+# of the work tree (the engine sees only the work tree) and removed afterwards.
+# Arguments: extra options of release-notes (--write merges the entry into CHANGELOG.md).
+# Returns: the exit status of the engine; 1 when the suite image cannot run.
+version_union_notes() {
+	local root dir rel o i=0 files=() rc=0
+	root="$(git rev-parse --show-toplevel)"
+	dir=".qs-release-union"
+	rm -rf -- "${root:?}/$dir"
+	mkdir -p "$root/$dir"
+	if engine "$root" release-notes --version "$REL_VERSION" --tip "$REL_TIP" --base "$REL_CL_BASE" \
+		--tag "$REL_TAG" >"$root/$dir/00-direct.md"; then
+		grep -q '^### ' "$root/$dir/00-direct.md" && files+=("$dir/00-direct.md")
+	else rc=1; fi
+	for o in ${REL_VOTS[@]+"${REL_VOTS[@]}"}; do
+		i=$((i + 1))
+		rel="$(best_ref "$REL_VERSION/$o/$QS_BR_RELEASE_LEAF" || true)"
+		if [ -z "$rel" ]; then
+			echo "[rama] WARN: $REL_VERSION/$o/$QS_BR_RELEASE_LEAF is gone: its section is not in the entry" >&2
+			continue
+		fi
+		version_section "$rel" >"$root/$dir/$(printf '%02d' "$i")-$o.md"
+		files+=("$dir/$(printf '%02d' "$i")-$o.md")
+	done
+	if [ "$rc" = 0 ]; then
+		if [ "${#files[@]}" -eq 0 ]; then
+			: >"$root/$dir/empty.md"
+			files=("$dir/empty.md")
+		fi
+		engine "$root" release-notes --version "$REL_VERSION" --union "${files[@]}" --tag "$REL_TAG" "$@" || rc=$?
+	fi
+	rm -rf -- "${root:?}/$dir"
+	return "$rc"
+}
+
+# version_rebase_done <ot>: record that the commits of OT <ot> are in '<v>/RELEASE'.
+# Arguments: $1 OT. Returns: 0.
+version_rebase_done() {
+	version_cfg ots "$(version_cfg ots) $1"
+	git config --unset "qs.release.$REL_VERSION.current" 2>/dev/null || true
+}
+
+# version_rebase_ot <ot>: put the commits of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE': git rebase
+# -i --onto <RELEASE> <version ORIGINAL> <OT RELEASE sha> on a detached HEAD (the OT RELEASE ref is
+# not moved), its commits that only change QS_BR_CHANGELOG dropped (docs(changelog) subjects: the OT
+# changelog commit and its reviews, whose text goes into the union entry); commits that become empty are dropped.
+# Then '<v>/RELEASE' moves to the result. Skipped when the OT is already done (qs.release.<v>.ots);
+# after a conflict solved with 'git rebase --continue' the result is taken as it is
+# (qs.release.<v>.current: '<ot> <RELEASE sha> <OT RELEASE sha>').
+# Arguments: $1 OT; reads REL_VERSION REL_TIP REL_RELEASE. Returns: 0; exits through die on a
+# conflict (with the instructions) or a failed rebase.
+version_rebase_ot() {
+	local o="$1" rel cur onto tip head c drop=""
+	case " $(version_cfg ots) " in *" $o "*) return 0 ;; esac
+	rel="$REL_VERSION/$o/$QS_BR_RELEASE_LEAF"
+	onto="$(git rev-parse "refs/heads/$REL_RELEASE")"
+	cur="$(version_cfg current)"
+	if [ "${cur%% *}" = "$o" ]; then
+		read -r _ c tip <<<"$cur"
+		if [ "$c" != "$onto" ]; then # RELEASE already moved: only the record was missing
+			version_rebase_done "$o"
+			return 0
+		fi
+		head="$(git rev-parse -q --verify HEAD || true)"
+		if [ -z "$(current_branch || true)" ] && [ -n "$head" ] && [ "$head" != "$onto" ] && [ "$head" != "$tip" ] &&
+			git merge-base --is-ancestor "$onto" "$head"; then # finished with git rebase --continue
+			git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
+			version_rebase_done "$o"
+			say "OT $o: the rebase finished by hand is now on $REL_RELEASE"
+			return 0
+		fi
+	fi
+	tip="$(git rev-parse "$(best_ref "$rel")")" || die "'$rel' is gone; the version release cannot go on (git config --get qs.release.$REL_VERSION.plan)"
+	while IFS= read -r c; do
+		[ -n "$c" ] && [ "$(git diff-tree --no-commit-id --name-only -r "$c")" = "$QS_BR_CHANGELOG" ] &&
+			git log -1 --format=%s "$c" | grep -q '^docs(changelog)' && drop="$drop $c"
+	done < <(git rev-list --no-merges "$tip" "^$REL_TIP" --)
+	version_cfg current "$o $onto $tip"
+	say "rebasing $rel onto $REL_RELEASE..."
+	# why: -i only to drop the changelog commits; the todo is edited by awk, nobody is asked
+	# shellcheck disable=SC2016 # why: expanded by the shell git runs for the sequence editor
+	if ! QS_RELEASE_DROP="$drop" GIT_SEQUENCE_EDITOR='f() { awk -v d="$QS_RELEASE_DROP" '\''BEGIN { n = split(d, a, " ") } $1 == "pick" { for (i = 1; i <= n; i++) if (index(a[i], $2) == 1) { $1 = "drop"; break } } { print }'\'' "$1" >"$1.qs" && mv -f "$1.qs" "$1"; }; f' \
+		git rebase -q -i --empty=drop --onto "$onto" "$REL_TIP" "$tip"; then
+		rebase_in_progress && die "conflict while rebasing OT $o onto $REL_RELEASE. Solve it: edit the files, git add them, git rebase --continue (repeat while it stops); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git rebase --abort"
+		die "the rebase of $rel onto $REL_RELEASE failed (see above); $REL_AGAIN"
+	fi
+	head="$(git rev-parse HEAD)"
+	git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
+	version_rebase_done "$o"
+	say "OT $o: $(git rev-list --count "$onto..$head") commit(s) on $REL_RELEASE"
+}
+
+# version_tag_message <file>: write the message of the version tag: 'Release <tag> (<v>)', a blank
+# line and the body of the '## <v>' entry of QS_BR_CHANGELOG on '<v>/RELEASE'.
+# Arguments: $1 output file. Returns: 0.
+version_tag_message() {
+	{
+		echo "Release $REL_TAG ($REL_VERSION)"
+		echo
+		version_section "refs/heads/$REL_RELEASE" | sed '1d' | sed '/./,$!d'
+	} >"$1"
+}
+
+# version_tag_create: the annotated tag REL_TAG on the '<v>/RELEASE' tip, message = its CHANGELOG.md
+# entry (version_tag_message); local only, git publicar pushes it. Nothing when it is already there.
+# Arguments: none. Returns: 0; exits through die when the tag cannot be created.
+version_tag_create() {
+	local msg tip
+	tip="$(git rev-parse "refs/heads/$REL_RELEASE")"
+	if exists_ref "refs/tags/$REL_TAG"; then
+		[ "$(git rev-parse "refs/tags/$REL_TAG^{commit}")" = "$tip" ] && return 0
+		die "tag '$REL_TAG' exists on another commit; nothing was pushed or deleted. Delete it (git tag -d $REL_TAG) and run git release again"
+	fi
+	msg="$(git rev-parse --absolute-git-dir)/quality-suite/RELEASE_TAG_MSG"
+	mkdir -p "$(dirname "$msg")"
+	version_tag_message "$msg"
+	git tag -a --cleanup=whitespace -F "$msg" "$REL_TAG" "$tip" ||
+		die "the tag $REL_TAG could not be created; $REL_AGAIN"
+	say "tag $REL_TAG created on $REL_RELEASE (local: git publicar pushes it)"
+}
+
+# version_push: ONE atomic push of the version release: '<v>/RELEASE', the copies of the branches
+# set aside, the deletion of the OT RELEASEs, of the integrated branches, of the old names and of
+# '<v>/ORIGINAL'. Nothing when REL_PUSH is 0 or there is no origin. The tag is not pushed.
+# Arguments: none; reads REL_RELEASE REL_TOP REL_ARCHIVE REL_DELETE_REMOTE. Returns: 0; exits
+# through die when the push is rejected (nothing changed on origin; git release resumes).
+version_push() {
+	local refs=() entry b new name
+	[ "$REL_PUSH" = 1 ] && has_origin || return 0
+	refs=("refs/heads/$REL_RELEASE:refs/heads/$REL_RELEASE")
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new _ <<<"$entry"
+		exists_ref "refs/remotes/origin/$b" || continue
+		name="$(aside_existing "$b" || echo "$new")"
+		exists_ref "refs/remotes/origin/$name" || refs+=("refs/remotes/origin/$b:refs/heads/$name")
+	done
+	for b in ${REL_DELETE_REMOTE[@]+"${REL_DELETE_REMOTE[@]}"} "$REL_TOP"; do
+		exists_ref "refs/remotes/origin/$b" && refs+=(":refs/heads/$b")
+	done
+	git push -q --atomic -u origin "${refs[@]}" ||
+		die "the push of $REL_RELEASE was rejected; nothing changed on origin. Fix it and run git release --version $REL_VERSION again (it resumes)"
+	say "pushed $REL_RELEASE (one atomic push; tag $REL_TAG stays local until git publicar)"
+}
+
+# version_release_report: the checks and the plan of the version release (preview and before
+# running). Arguments: none; reads the REL_* variables. Returns: 0.
+version_release_report() {
+	local entry b p n new e o i=1
+	echo "## Checks"
+	echo
+	[ "${#REL_ERRORS[@]}" -eq 0 ] && echo "[ok] $REL_TOP is consistent (local/origin) and contains $QS_BR_MAINLINE"
+	for e in ${REL_ERRORS[@]+"${REL_ERRORS[@]}"}; do echo "[!!] $e"; done
+	for entry in ${REL_OK[@]+"${REL_OK[@]}"}; do
+		IFS=$'\t' read -r b p <<<"$entry"
+		echo "[ok] $b: $p"
+	done
+	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
+		IFS=$'\t' read -r b new p n <<<"$entry"
+		echo "[!!] $b: $n commit(s) not in $p -> will be set aside as $new"
+	done
+	[ "$REL_RESUME" = 1 ] && echo "[ok] a version release of $REL_VERSION is in progress: git release resumes it (done: $(version_cfg ots | sed 's/^ *//'))"
+	echo
+	echo "## Plan"
+	echo
+	echo "$i. $REL_RELEASE at $REL_TOP; the OT RELEASEs rebased into it, oldest first (changelog-only commits dropped):${REL_VOTS[*]+ ${REL_VOTS[*]}}"
+	i=$((i + 1))
+	echo "$i. up to three commits: $(version_subject "$REL_VERSION"), docs(changelog): $REL_VERSION (union of the OT sections), docs(readme): version $REL_VERSION"
+	i=$((i + 1))
+	echo "$i. annotated tag $REL_TAG on the $REL_RELEASE tip (local until git publicar)"
+	i=$((i + 1))
+	echo "$i. $([ "$REL_PUSH" = 1 ] && has_origin && echo "one atomic push: $REL_RELEASE, ${#REL_ARCHIVE[@]} set aside, ${#REL_DELETE_REMOTE[@]} + $REL_TOP deleted on origin; then ")delete ${#REL_DELETE_LOCAL[@]} local branch(es), $REL_TOP last"
+	i=$((i + 1))
+	echo "$i. you: review $QS_BR_CHANGELOG on $REL_RELEASE; then git publicar"
+	return 0
+}
+
+# version_changelog_preview: git changelog for a version (flow = squash): the OTs, the CHANGELOG.md
+# entry the release would write, the checks and the plan. Changes nothing.
+# Arguments: none; reads REL_VERSION REL_TAG. Returns: 0 when releasable; 1 when a check fails.
+version_changelog_preview() {
+	local o
+	fetch_origin
+	version_release_analyse
+	echo "# Version release $REL_VERSION"
+	echo
+	for o in ${REL_VOTS[@]+"${REL_VOTS[@]}"}; do echo "- OT $o: $REL_VERSION/$o/$QS_BR_RELEASE_LEAF"; done
+	for o in ${REL_MISSING[@]+"${REL_MISSING[@]}"}; do echo "- OT $o"; done
+	echo
+	if [ "${#REL_ERRORS[@]}" -eq 0 ]; then
+		echo "## $QS_BR_CHANGELOG entry (union of the OT sections)"
+		echo
+		version_union_notes 2>&1 || echo "(the suite image could not run: no changelog preview)"
+		echo
+	fi
+	version_release_report
+	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
+		echo
+		say "not releasable yet: fix the [!!] items above"
+		return 1
+	fi
+	echo
+	say "preview only, nothing changed. Next: git release --version $REL_VERSION"
+}
+
+# version_release_run: carry out the analysed version release: progress recorded, RELEASE created
+# (or resumed), the OTs rebased, the release commits (skipped once the tag exists: the OT RELEASEs
+# may be gone then), the tag, the branches set aside locally, the atomic push, the local
+# deletions with '<v>/ORIGINAL' last, the progress forgotten.
+# Arguments: none; reads the REL_* variables. Returns: 0; exits through die on a conflict or a
+# rejected step (git release resumes).
+version_release_run() {
+	local o push="$REL_PUSH"
+	git config "qs.release.$REL_VERSION.tag" "$REL_TAG"
+	[ -n "$(version_cfg plan)" ] || version_cfg plan "${REL_VOTS[*]}"
+	if ! exists_ref "refs/heads/$REL_RELEASE"; then
+		git branch -q --no-track "$REL_RELEASE" "$(best_ref "$REL_RELEASE" || echo "$REL_TIP")"
+	fi
+	for o in "${REL_VOTS[@]}"; do version_rebase_ot "$o"; done
+	git checkout -q "$REL_RELEASE"
+	if ! exists_ref "refs/tags/$REL_TAG"; then
+		REL_UNION=1
+		release_commits
+		REL_UNION=0
+	fi
+	version_tag_create
+	REL_PUSH=0 # why: the copies on origin go in the atomic push below
+	release_set_aside
+	REL_PUSH="$push"
+	version_push
+	[ "${#REL_DELETE_LOCAL[@]}" -eq 0 ] || git branch -q -D "${REL_DELETE_LOCAL[@]}"
+	! exists_ref "refs/heads/$REL_TOP" || git branch -q -D "$REL_TOP"
+	# why: the tag name stays for git publicar (it reads qs.release.<v>.tag and clears it)
+	version_progress_clear
+	say "$REL_VERSION prepared on $REL_RELEASE: ${#REL_VOTS[@]} OT(s), $((${#REL_DELETE_LOCAL[@]} + 1)) branch(es) deleted, ${#REL_ARCHIVE[@]} set aside"
+}
+
+# version_release: git release of a version with branches.flow = squash (ACs V1-V6): checks,
+# preview, confirmation, then version_release_run.
+# Arguments: none; reads REL_VERSION REL_TAG REL_PUSH. Returns: 0; exits through die when a check
+# fails, a rebase is stopped, or the human cancels (nothing changed).
+version_release() {
+	local o
+	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort), then run git release --version $REL_VERSION again"
+	require_clean || die "working tree not clean: commit or stash first"
+	fetch_origin
+	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then
+		version_progress_clear
+		say "$REL_VERSION/$QS_BR_RELEASE_LEAF is already prepared. Review $QS_BR_CHANGELOG there, then: git publicar --version $REL_VERSION"
+		return 0
+	fi
+	version_forget_stale
+	version_release_analyse
+	if [ "${#REL_ERRORS[@]}" -gt 0 ]; then
+		version_release_report >&2
+		die "nothing was changed"
+	fi
+	echo "# Version release $REL_VERSION"
+	echo
+	for o in "${REL_VOTS[@]}"; do echo "- OT $o: $REL_VERSION/$o/$QS_BR_RELEASE_LEAF"; done
+	echo
+	version_release_report
+	echo
+	confirm "Prepare $REL_VERSION on $REL_RELEASE?" || die "cancelled; nothing was changed"
+	version_release_run
+	echo
+	echo "Review now (you are on $REL_RELEASE):"
+	echo "  git log --oneline $QS_BR_MAINLINE..$REL_RELEASE   # the OT commits and the release commits"
+	echo "  \$EDITOR $QS_BR_CHANGELOG               # wording; commit it, then move the local tag: git tag -f -a $REL_TAG"
+	echo "When it is right:"
+	echo "  git publicar                          # $REL_RELEASE onto $QS_BR_MAINLINE, tag $REL_TAG pushed"
+	return 0
+}
+
 # --- git combinar --------------------------------------------------------------------------------
 # State of one run, set by cmd_combinar: CB_BASE the develop commit, CB_GD the state folder, CB_WT
 # the temporary worktree. Helpers return through CB_* variables when a subshell would lose them.
 # CB_ARCHIVE holds "<branch><TAB><archive name><TAB><tip>" per combined RELEASE; CB_ROLLBACK is 1
 # while the local branches are being moved (CB_HEAD_REF / CB_HEAD_SHA: where HEAD was); CB_PWD and
 # CB_PREV_TRAP are restored when the run ends.
-CB_BASE="" CB_GD="" CB_WT="" CB_REL="" CB_ONLY="" CB_OUT="" CB_CONFLICTS=""
+CB_BASE="" CB_GD="" CB_WT="" CB_REL="" CB_ONLY="" CB_OUT="" CB_CONFLICTS="" CB_FILES=""
 CB_N=0 CB_M=0 CB_K=0 CB_J=0
 CB_ARCHIVE=() CB_ROLLBACK=0 CB_HEAD_REF="" CB_HEAD_SHA="" CB_PWD="" CB_PREV_TRAP=""
+# flow = squash: CB_UNION holds "<version><TAB><tip>" per combined RELEASE, oldest first (the
+# sections the new entry unites); CB_TAGS "<tag><TAB><object>" per local version tag that git
+# release put on a combined RELEASE tip (deleted with the branches: that version is never published)
+CB_UNION=() CB_TAGS=()
+
+# combine_union_notes [--write]: the CHANGELOG.md entry of the combined version with branches.flow
+# = squash: qs.py release-notes --union over the '## <v>' section of each combined RELEASE, read on
+# its tip (the reviewed text), in CB_UNION order. The inputs are written to a scratch folder of the
+# work tree (the engine sees only the work tree) and removed afterwards.
+# Arguments: extra options of release-notes (--write merges the entry into CHANGELOG.md); reads
+# REL_VERSION (the combined version) and REL_TAG. Returns: the exit status of the engine.
+combine_union_notes() {
+	local root dir entry v t i=0 files=() rc=0
+	root="$(git rev-parse --show-toplevel)"
+	dir=".qs-release-union"
+	rm -rf -- "${root:?}/$dir"
+	mkdir -p "$root/$dir"
+	for entry in ${CB_UNION[@]+"${CB_UNION[@]}"}; do
+		IFS=$'\t' read -r v t <<<"$entry"
+		i=$((i + 1))
+		REL_VERSION="$v" version_section "$t" >"$root/$dir/$(printf '%02d' "$i").md"
+		files+=("$dir/$(printf '%02d' "$i").md")
+	done
+	if [ "${#files[@]}" -eq 0 ]; then
+		: >"$root/$dir/empty.md"
+		files=("$dir/empty.md")
+	fi
+	engine "$root" release-notes --version "$REL_VERSION" --union "${files[@]}" --tag "$REL_TAG" "$@" || rc=$?
+	rm -rf -- "${root:?}/$dir"
+	return "$rc"
+}
+
+# combine_source_tags <branch> <tip>: with branches.flow = squash, add to CB_TAGS the local tag git
+# release put on the tip of a combined '<v>/RELEASE' (qs.release.<v>.tag, else the tag template),
+# when it points at <tip>. Arguments: $1 the RELEASE branch; $2 its tip. Returns: 0.
+combine_source_tags() {
+	local v tag
+	[ "${QS_BR_FLOW:-merge}" = squash ] || return 0
+	v="$(branch_version "$1")"
+	tag="$(git config "qs.release.$v.tag" 2>/dev/null || render_tag "$v/$QS_BR_LEAF")"
+	exists_ref "refs/tags/$tag" && [ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$2" ] || return 0
+	CB_TAGS+=("$tag"$'\t'"$(git rev-parse "refs/tags/$tag")")
+}
 
 # combine_cleanup: undo what a git combinar run leaves behind. When it stops while the local
 # branches are being moved, the branches and HEAD go back to where they were (all-or-nothing); if
@@ -1817,7 +3505,8 @@ combine_subject() {
 # combine_message <version> <tip> <squashes> <exclude>...: the message of the squash of one
 # RELEASE. The body lists, oldest first, the subjects of its own first-parent commits that are not
 # release commits or mainline merges (with the OT of their 'Refs:' line); an earlier squash
-# (a combined RELEASE) contributes its own list. Then the 'Squashes:' lines.
+# (a combined RELEASE) contributes its own list. Then the Files: block in CB_FILES (flow = squash;
+# empty otherwise) and the 'Squashes:' lines.
 # Arguments: $1 the version; $2 its tip; $3 the 'Squashes: ...' lines; $4... the tips already
 # combined. Output: the message. Exit status: 0.
 combine_message() {
@@ -1840,6 +3529,7 @@ combine_message() {
 	printf '\n\n'
 	lines="$(grep -v '^$' <<<"$lines" || true)"
 	[ -z "$lines" ] || printf '%s\n\n' "$lines"
+	[ -z "$CB_FILES" ] || printf '%s\n\n' "$CB_FILES"
 	printf '%s\n' "$sq"
 }
 
@@ -1851,24 +3541,27 @@ combine_message() {
 # Exit status: 0; ends the script through die when no free name is left.
 combine_archive_plan() {
 	local b new
-	REL_PLANNED=$'\n' CB_ARCHIVE=()
+	REL_PLANNED=$'\n' CB_ARCHIVE=() CB_TAGS=()
 	while [ "$#" -ge 2 ]; do
 		b="$1"
 		new="$(archive_name "$b")" || die "no free name to set '$b' aside; nothing was changed"
 		REL_PLANNED="$REL_PLANNED$new"$'\n'
 		CB_ARCHIVE+=("$b"$'\t'"$new"$'\t'"$2")
+		combine_source_tags "$b" "$2"
 		if exists_ref "refs/heads/$b"; then echo "  local:  $b -> $new"; else echo "  local:  $new (copy of origin/$b)"; fi
 		if has_origin && exists_ref "refs/remotes/origin/$b"; then
 			echo "  origin: $b -> $new  (renamed on origin: $b is deleted there)"
 		fi
 		shift 2
 	done
+	for b in ${CB_TAGS[@]+"${CB_TAGS[@]}"}; do echo "  local:  tag ${b%%$'\t'*} deleted (that version is published as part of the combined one)"; done
 	echo "  local:  $REL_RELEASE $(if exists_ref "refs/heads/$REL_RELEASE"; then echo "moves to the combined result"; else echo "created"; fi)"
 	if has_origin; then echo "  origin: $REL_RELEASE pushed; all origin changes in one atomic push, at the end"; fi
 }
 
 # combine_apply <result>: move the local branches in one transaction (git update-ref --stdin):
-# REL_RELEASE to the result, each CB_ARCHIVE entry renamed, then check out REL_RELEASE. HEAD is
+# REL_RELEASE to the result, each CB_ARCHIVE entry renamed, each CB_TAGS tag deleted (flow =
+# squash: the local tags of the combined versions), then check out REL_RELEASE. HEAD is
 # detached first; the undo file (combine.undo) is written before any branch moves, and while
 # CB_ROLLBACK is 1 a failure puts every branch and HEAD back (combine_cleanup, from the EXIT
 # trap; if a branch moved meanwhile and the undo is rejected, HEAD stays detached with a warning).
@@ -1887,6 +3580,11 @@ combine_apply() {
 			printf 'delete refs/heads/%s %s\n' "$b" "$old" >>"$tx"
 			printf 'create refs/heads/%s %s\n' "$b" "$old" >>"$undo.new"
 		fi
+	done
+	for entry in ${CB_TAGS[@]+"${CB_TAGS[@]}"}; do
+		IFS=$'\t' read -r b t <<<"$entry"
+		printf 'delete refs/tags/%s %s\n' "$b" "$t" >>"$tx"
+		printf 'create refs/tags/%s %s\n' "$b" "$t" >>"$undo.new"
 	done
 	if exists_ref "refs/heads/$REL_RELEASE"; then
 		old="$(git rev-parse "refs/heads/$REL_RELEASE")"
@@ -2120,6 +3818,9 @@ cmd_combinar() {
 			tree="$(git -C "$CB_WT" write-tree)"
 			h="$(git -C "$CB_WT" rev-parse HEAD)"
 			if [ "$tree" != "$(git rev-parse "$h^{tree}")" ]; then
+				CB_FILES=""
+				# why: with flow = squash every commit carries its Files: block, the squashes too
+				[ "${QS_BR_FLOW:-merge}" != squash ] || CB_FILES="$(squash_files_block "$h" "$tree")"
 				combine_message "$(branch_version "$r")" "$t" "$sq" ${done_tips[@]+"${done_tips[@]}"} >"$CB_GD/combine.msg"
 				# why: the squash keeps the creation date of what it squashes (the order of a later combinar)
 				h="$(GIT_AUTHOR_DATE="${okey[$r]%%$'\t'*} +0000" git commit-tree "$tree" -p "$h" -F "$CB_GD/combine.msg")"
@@ -2136,6 +3837,7 @@ cmd_combinar() {
 			done <<<"${orig[$r]}"
 		fi
 		links+=("$t")
+		CB_UNION+=("$(branch_version "$r")"$'\t'"$t")
 	done
 	# 7. the changelog reads the original histories: a chain of temporary merges on develop
 	m="$CB_BASE"
@@ -2149,7 +3851,10 @@ cmd_combinar() {
 	# why: no subshell, so errexit still applies inside; every die there says nothing was changed,
 	# and combine_cleanup goes back to CB_PWD
 	cd "$CB_WT"
+	# why: flow = squash: the entry is the union of the reviewed sections of the combined RELEASEs
+	[ "${QS_BR_FLOW:-merge}" != squash ] || REL_UNION=combine
 	release_commits
+	REL_UNION=0
 	cd "$here"
 	res="$(git -C "$CB_WT" rev-parse HEAD)"
 	git worktree remove --force "$CB_WT"
@@ -2160,7 +3865,10 @@ cmd_combinar() {
 	git config "qs.release.$target.tag" "$REL_TAG"
 	for r in "${chosen[@]}"; do
 		[ "$r" = "$REL_RELEASE" ] || git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
+		# why: a stopped git publicar of a combined RELEASE left its origin tip; that RELEASE is gone
+		git config --unset-all "qs.publish.$(branch_version "$r").from" 2>/dev/null || true
 	done
+	git config --unset-all "qs.publish.$target.from" 2>/dev/null || true
 	for c in "${CB_ARCHIVE[@]}"; do say "${c%%$'\t'*} kept as $(cut -f2 <<<"$c")"; done
 	# 10. origin last, in one atomic push
 	combine_push

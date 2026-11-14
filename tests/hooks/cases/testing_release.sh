@@ -6,7 +6,7 @@
 set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
-case_sandbox merge
+case_sandbox squash
 
 V=7.2.0
 A=$V/300200/RF1 # the requirement whose TESTING keeps an undistributed commit
@@ -44,12 +44,19 @@ git integra -m "feat(b): add b" >/dev/null 2>&1 || fail "integra b"
 for rf in "$A" "$B"; do
 	git checkout -q "$rf/ORIGINAL"
 	out="$(git integra -m "feat(rf1): requirement RF1" 2>&1)" || fail "integra $rf: $out"
-	git checkout -q "${rf%/*}/ORIGINAL"
-	out="$(git integra -m "feat(ot): OT ${rf%/*}" 2>&1)" || fail "integra OT of $rf: $out"
+done
+# why: under squash an OT ORIGINAL goes up through its OT release (git release), not git integra;
+# the OT release sets aside the undistributed TESTING of its requirements (O7)
+for ot in "${A%/*}" "${B%/*}"; do
+	git checkout -q "$ot/ORIGINAL"
+	git release --yes >>rel.out 2>&1 || {
+		cat rel.out
+		fail "OT release $ot"
+	}
 done
 git checkout -q develop
 
-git release --version "$V" --yes >rel.out 2>&1 || {
+git release --version "$V" --yes >>rel.out 2>&1 || {
 	cat rel.out
 	fail "git release"
 }

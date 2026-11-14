@@ -74,6 +74,54 @@ is_release_branch() {
 	case "$1" in */*/* | */) return 1 ;; */"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
 	printf '%s' "${1%%/*}" | grep -qE -- "$(_br_level_re 1)"
 }
+# Whether a branch is the RELEASE of one OT: '<version>/<ot>/RELEASE', exactly three segments, the
+# version and the OT matching branches.levels (made by git release inside the OT, flow = squash).
+# Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
+is_ot_release_branch() {
+	local node
+	case "$1" in */*/*/* | */) return 1 ;; */*/"$QS_BR_RELEASE_LEAF") ;; *) return 1 ;; esac
+	node="${1%/*}"
+	printf '%s' "${node%%/*}" | grep -qE -- "$(_br_level_re 1)" &&
+		printf '%s' "${node#*/}" | grep -qE -- "$(_br_level_re 2)"
+}
+
+# Whether a segment is one of the reserved leaves (branches.parent_leaf, release_leaf and
+# testing_leaf), ignoring case: on Windows 'release' and 'RELEASE' are the same ref file.
+# Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
+reserved_leaf_segment() {
+	local s l
+	s="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+	for l in "$QS_BR_LEAF" "$QS_BR_RELEASE_LEAF" "${QS_BR_TESTING:-TESTING}"; do
+		[ -n "$l" ] && [ "$s" = "$(printf '%s' "$l" | tr '[:upper:]' '[:lower:]')" ] && return 0
+	done
+	return 1
+}
+
+# Check the reserved leaves of a branch name: the parent leaf only as the exact last segment, the
+# TESTING leaf only as the exact last segment of '<F>/TESTING', no other segment equal to a
+# reserved leaf in any case (the RELEASE branches are accepted earlier by their own checks). That
+# broad refusal applies only with flow = squash; with flow = merge only the exact parent leaf is
+# reserved, as in 4.x.
+# Arguments: $1 branch. Returns: 0 when fine; 1 and prints the reason otherwise.
+reserved_segments_ok() {
+	local b="$1" n i=0 seg
+	n="$(awk -F/ '{print NF}' <<<"$b")"
+	while IFS= read -r seg; do
+		i=$((i + 1))
+		[ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ] && continue
+		[ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ] && continue
+		if [ "$seg" = "$QS_BR_LEAF" ]; then
+			echo "'$QS_BR_LEAF' can only be the last segment"
+			return 1
+		fi
+		if [ "${QS_BR_FLOW:-squash}" = squash ] && reserved_leaf_segment "$seg"; then
+			echo "'$seg' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF and ${QS_BR_TESTING:-TESTING}, in any case)"
+			return 1
+		fi
+	done < <(tr '/' '\n' <<<"$b")
+	return 0
+}
+
 # 'unmerged/<name>' or 'unmerged-<stamp>/<name>' (prefix taken): a branch set aside by 'git release'
 # because it was never integrated
 is_archived_branch() {
@@ -104,6 +152,11 @@ parent_branch() {
 		return 0
 	fi
 	is_mainline "$b" && return 0
+	# why: an OT RELEASE goes into the version RELEASE, which starts at the version ORIGINAL
+	if is_ot_release_branch "$b"; then
+		echo "${b%%/*}/$QS_BR_LEAF"
+		return 0
+	fi
 	if is_release_branch "$b"; then
 		echo "$QS_BR_MAINLINE"
 		return 0
@@ -128,7 +181,7 @@ valid_branch_name() {
 	local b="$1" i=0 seg rx n last
 	qs_policy_load
 	is_mainline "$b" && return 0
-	{ is_release_branch "$b" || is_archived_branch "$b"; } && return 0
+	{ is_release_branch "$b" || is_ot_release_branch "$b" || is_archived_branch "$b"; } && return 0
 	for ((i = 1; i <= ${QS_BR_ALLOW:-0}; i++)); do
 		rx="QS_BR_ALLOW_$i"
 		printf '%s' "$b" | grep -qE -- "${!rx}" && return 0
@@ -137,6 +190,7 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;
 	*)
@@ -153,10 +207,6 @@ valid_branch_name() {
 		i=$((i + 1))
 		if [ "$i" -eq "$n" ] && [ "$seg" = "$QS_BR_LEAF" ]; then break; fi
 		if [ "$i" -eq "$n" ] && [ "$n" -ge 2 ] && [ "$seg" = "${QS_BR_TESTING:-TESTING}" ]; then break; fi
-		if testing_reserved_segment "$seg"; then
-			echo "'$seg' is reserved for the TESTING sandbox (git testing crear)"
-			return 1
-		fi
 		if [ "$seg" = "$QS_BR_LEAF" ]; then
 			echo "'$QS_BR_LEAF' can only be the last segment"
 			return 1
@@ -300,10 +350,12 @@ children_pending() {
 
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
 
-# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf).
-# A branch named just the leaf has no level and is an ordinary branch.
+# Whether a branch is a TESTING sandbox: '<level>/TESTING' (the leaf is branches.testing_leaf), and
+# only with branches.flow = squash (the sandbox is a 5.x feature; with the 4.x merge flow the leaf is
+# an ordinary segment). A branch named just the leaf has no level and is an ordinary branch.
 # Arguments: $1 branch. Returns: 0 when it is one, 1 otherwise.
 is_testing_branch() {
+	[ "${QS_BR_FLOW:-squash}" = squash ] || return 1
 	case "$1" in ?*/"${QS_BR_TESTING:-TESTING}") return 0 ;; esac
 	return 1
 }
@@ -319,10 +371,13 @@ testing_local_refs() {
 	return 0
 }
 
-# Whether a branch-name segment is the reserved TESTING leaf, ignoring case.
+# Whether a branch-name segment is the reserved TESTING leaf, ignoring case. Reserved only with
+# branches.flow = squash (see is_testing_branch); the name check of valid_branch_name is
+# reserved_segments_ok.
 # Arguments: $1 segment. Returns: 0 when reserved, 1 otherwise.
 testing_reserved_segment() {
 	local a b
+	[ "${QS_BR_FLOW:-squash}" = squash ] || return 1
 	a="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
 	b="$(printf '%s' "${QS_BR_TESTING:-TESTING}" | tr '[:upper:]' '[:lower:]')"
 	[ "$a" = "$b" ]
@@ -622,4 +677,83 @@ testing_squash_hit() {
 	fi
 	echo "commit-msg: .git/SQUASH_MSG is stale (this commit does not use it): rm .git/SQUASH_MSG" >&2
 	return 1
+}
+
+# POM_AWK: awk program that walks a pom.xml tracking the element path (comments skipped). With
+# mode=art it prints the project artifactId. With mode=strip it drops the lines that only hold the
+# project's own version: project/version, project/properties/revision and project/parent/version
+# when the parent artifactId is listed in "ours" ("|a|b|"). Anything else is kept. With mode=mask
+# each such line is printed as the line held in "token" instead, and the line itself is appended
+# to the file named by "saved" (git publicar solves release-line conflicts this way).
+# why: awk variables such as $0 must reach awk unexpanded
+# shellcheck disable=SC2016
+POM_AWK='
+function top(   i, p) { p = ""; for (i = 1; i <= n; i++) p = p "/" st[i]; return substr(p, 2) }
+{
+	line = $0; rest = line; full = 0
+	if (line ~ /^[ \t\r]*<(version|revision)>[^<]*<\/(version|revision)>[ \t\r]*$/) full = 1
+	drop = 0
+	while (rest != "") {
+		if (incom) {
+			i = index(rest, "-->")
+			if (!i) break
+			rest = substr(rest, i + 3); incom = 0; continue
+		}
+		if (substr(rest, 1, 4) == "<!--") { incom = 1; rest = substr(rest, 5); continue }
+		if (match(rest, /^<[^>]*>/)) {
+			tag = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+			if (tag ~ /^<[?!]/ || tag ~ /\/>$/) continue
+			if (tag ~ /^<\//) {
+				name = substr(tag, 3, length(tag) - 3); sub(/[ \t\r].*/, "", name)
+				p = top()
+				if (full && n > 0 && st[n] == name && txt != "") {
+					if (p == "project/version" || p == "project/properties/revision") drop = 1
+					else if (p == "project/parent/version" && index(ours, "|" parent "|")) drop = 1
+				}
+				if (p == "project/artifactId" && mode == "art") print txt
+				if (p == "project/parent/artifactId") parent = txt
+				if (n > 0) n--
+				txt = ""
+			} else {
+				name = substr(tag, 2, length(tag) - 2); sub(/[ \t\r\n\/].*/, "", name)
+				st[++n] = name; txt = ""
+			}
+			continue
+		}
+		if (match(rest, /^[^<]+/)) { txt = txt substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1); continue }
+		break
+	}
+	gsub(/^[ \t\r]+|[ \t\r]+$/, "", txt)
+	if (mode == "mask" && drop) { print token; print line >>saved }
+	else if ((mode == "strip" && !drop) || mode == "mask") print line
+}'
+
+# JSON_AWK: awk program that drops the top-level "version" line of a package.json (depth 1, whole
+# line `"version": "..."`). Dependencies and any nested "version" key are kept. With mode=mask
+# that line is printed as "token" and appended to the file named by "saved" (as POM_AWK).
+# why: used by the scripts that source this library (git-unmerged.sh, git-rama.sh)
+# shellcheck disable=SC2016,SC2034
+JSON_AWK='
+{
+	line = $0
+	if (depth == 1 && line ~ /^[ \t\r]*"version"[ \t]*:[ \t]*"([^"\\]|\\.)*"[ \t]*,?[ \t\r]*$/) {
+		if (mode == "mask") { print token; print line >>saved }
+	} else print line
+	ins = 0
+	for (i = 1; i <= length(line); i++) {
+		c = substr(line, i, 1)
+		if (ins) { if (c == "\\") i++; else if (c == "\"") ins = 0; continue }
+		if (c == "\"") ins = 1
+		else if (c == "{" || c == "[") depth++
+		else if (c == "}" || c == "]") depth--
+	}
+}'
+
+# pom_artifacts REF: print "|a|b|", the artifactIds of every pom.xml in the tree of REF.
+pom_artifacts() {
+	local f out="|"
+	while IFS= read -r f; do
+		out+="$(git show "$1:$f" 2>/dev/null | awk -v mode=art "$POM_AWK" | head -1)|"
+	done < <(git ls-tree -r --name-only "$1" 2>/dev/null | grep -E '(^|/)pom\.xml$' || true)
+	printf '%s' "$out"
 }

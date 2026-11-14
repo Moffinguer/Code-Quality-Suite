@@ -9,7 +9,7 @@
 set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
-case_sandbox merge
+case_sandbox squash
 
 F=1.0.0/ot1
 ORIG=$F/ORIGINAL

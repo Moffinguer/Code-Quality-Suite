@@ -163,6 +163,8 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 				! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
 				br_err "'$b' is shared and the push rewrites its history (force-push). Merge instead: git subir"
 			fi
+		elif is_ot_release_branch "$b"; then
+			: # why: an OT RELEASE is frozen at its OT release; the version release rebases it
 		elif [ "${QUALITY_SKIP_PARENT_CHECK:-0}" != 1 ]; then
 			p="$(parent_branch "$b")"
 			ptip="$(best_ref "$p" || true)"

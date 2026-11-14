@@ -282,8 +282,25 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   `<version>/ORIGINAL` becomes `<version>/RELEASE` with commits for the version (`VERSION`,
   `pom.xml`), the `CHANGELOG.md` entry and the README badge; it is pushed and the rest of the tree
   deleted. Resumes if interrupted.
+  With `branches.flow = squash` and `--version <v>`, every OT of the version must have its
+  `<v>/<ot>/RELEASE`; `<v>/RELEASE` gets each OT rebased in, oldest first.
+  A release given up by deleting `<v>/RELEASE` by hand leaves no state behind: the next
+  `git release` says so (`stale release state ... is cleared`) and takes every OT that exists then.
 - **Use it when:** every OT of the version is integrated into `<version>/ORIGINAL`.
 - **Who:** human. Then review `CHANGELOG.md` on `<version>/RELEASE` (edit and commit there).
+
+### git release --reset
+
+- **Syntax:** `git release --reset --version <v> [--yes]`
+- **Does:** forgets the resume state of a version release given up: `qs.release.<v>.plan`,
+  `.ots`, `.current` and `.tag` (git config only). Asks first; `--yes` skips the question.
+  Refused, nothing changed, while `<version>/RELEASE` exists (it is the release in progress or
+  prepared, and `git publicar` needs the tag name it keeps) or a rebase is stopped. The local tag
+  itself is not deleted (`git tag -d <tag>` does that). Says "nothing to reset" when no state is
+  left.
+- **Use it when:** a cancelled release must not be resumed: delete `<version>/RELEASE` by hand
+  first, then reset. Usually not needed: the next `git release` clears a stale state by itself.
+- **Who:** human.
 
 ### git publicar
 
