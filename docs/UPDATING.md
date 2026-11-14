@@ -98,6 +98,15 @@ OTs in a repository, set the second item of `branches.levels` by hand:
 Numeric OTs keep working. `ABC1` and `abc1` are different branches (case is not checked).
 `RELEASE` and `ORIGINAL` cannot be used as an OT name.
 
+## Special branches table (6.0.0)
+
+`branches.special` (see `docs/QUALITY-RULES.md`) holds the rules of the reserved branch types.
+A rules file written by 5.x is migrated once (`branches.model` becomes 6) and gets
+`branches.special.DOCS.on_release: "optional"`: the 5.x changelog writer (OT RELEASE) keeps
+working. New files get `required`: DOCS writes the changelog. To switch an existing repository,
+finish its open version trees, then set `on_release` to `"required"` in `.quality-rules.json`.
+`"FORMAT": false` (or any type) disables a type; any property can be overridden on its own.
+
 ## What an update keeps
 
 | Kept | Where |
