@@ -677,3 +677,82 @@ testing_squash_hit() {
 	echo "commit-msg: .git/SQUASH_MSG is stale (this commit does not use it): rm .git/SQUASH_MSG" >&2
 	return 1
 }
+
+# POM_AWK: awk program that walks a pom.xml tracking the element path (comments skipped). With
+# mode=art it prints the project artifactId. With mode=strip it drops the lines that only hold the
+# project's own version: project/version, project/properties/revision and project/parent/version
+# when the parent artifactId is listed in "ours" ("|a|b|"). Anything else is kept. With mode=mask
+# each such line is printed as the line held in "token" instead, and the line itself is appended
+# to the file named by "saved" (git publicar solves release-line conflicts this way).
+# why: awk variables such as $0 must reach awk unexpanded
+# shellcheck disable=SC2016
+POM_AWK='
+function top(   i, p) { p = ""; for (i = 1; i <= n; i++) p = p "/" st[i]; return substr(p, 2) }
+{
+	line = $0; rest = line; full = 0
+	if (line ~ /^[ \t\r]*<(version|revision)>[^<]*<\/(version|revision)>[ \t\r]*$/) full = 1
+	drop = 0
+	while (rest != "") {
+		if (incom) {
+			i = index(rest, "-->")
+			if (!i) break
+			rest = substr(rest, i + 3); incom = 0; continue
+		}
+		if (substr(rest, 1, 4) == "<!--") { incom = 1; rest = substr(rest, 5); continue }
+		if (match(rest, /^<[^>]*>/)) {
+			tag = substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1)
+			if (tag ~ /^<[?!]/ || tag ~ /\/>$/) continue
+			if (tag ~ /^<\//) {
+				name = substr(tag, 3, length(tag) - 3); sub(/[ \t\r].*/, "", name)
+				p = top()
+				if (full && n > 0 && st[n] == name && txt != "") {
+					if (p == "project/version" || p == "project/properties/revision") drop = 1
+					else if (p == "project/parent/version" && index(ours, "|" parent "|")) drop = 1
+				}
+				if (p == "project/artifactId" && mode == "art") print txt
+				if (p == "project/parent/artifactId") parent = txt
+				if (n > 0) n--
+				txt = ""
+			} else {
+				name = substr(tag, 2, length(tag) - 2); sub(/[ \t\r\n\/].*/, "", name)
+				st[++n] = name; txt = ""
+			}
+			continue
+		}
+		if (match(rest, /^[^<]+/)) { txt = txt substr(rest, 1, RLENGTH); rest = substr(rest, RLENGTH + 1); continue }
+		break
+	}
+	gsub(/^[ \t\r]+|[ \t\r]+$/, "", txt)
+	if (mode == "mask" && drop) { print token; print line >>saved }
+	else if ((mode == "strip" && !drop) || mode == "mask") print line
+}'
+
+# JSON_AWK: awk program that drops the top-level "version" line of a package.json (depth 1, whole
+# line `"version": "..."`). Dependencies and any nested "version" key are kept. With mode=mask
+# that line is printed as "token" and appended to the file named by "saved" (as POM_AWK).
+# why: used by the scripts that source this library (git-unmerged.sh, git-rama.sh)
+# shellcheck disable=SC2016,SC2034
+JSON_AWK='
+{
+	line = $0
+	if (depth == 1 && line ~ /^[ \t\r]*"version"[ \t]*:[ \t]*"([^"\\]|\\.)*"[ \t]*,?[ \t\r]*$/) {
+		if (mode == "mask") { print token; print line >>saved }
+	} else print line
+	ins = 0
+	for (i = 1; i <= length(line); i++) {
+		c = substr(line, i, 1)
+		if (ins) { if (c == "\\") i++; else if (c == "\"") ins = 0; continue }
+		if (c == "\"") ins = 1
+		else if (c == "{" || c == "[") depth++
+		else if (c == "}" || c == "]") depth--
+	}
+}'
+
+# pom_artifacts REF: print "|a|b|", the artifactIds of every pom.xml in the tree of REF.
+pom_artifacts() {
+	local f out="|"
+	while IFS= read -r f; do
+		out+="$(git show "$1:$f" 2>/dev/null | awk -v mode=art "$POM_AWK" | head -1)|"
+	done < <(git ls-tree -r --name-only "$1" 2>/dev/null | grep -E '(^|/)pom\.xml$' || true)
+	printf '%s' "$out"
+}
