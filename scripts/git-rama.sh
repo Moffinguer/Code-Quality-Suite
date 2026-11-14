@@ -3866,7 +3866,10 @@ cmd_combinar() {
 	git config "qs.release.$target.tag" "$REL_TAG"
 	for r in "${chosen[@]}"; do
 		[ "$r" = "$REL_RELEASE" ] || git config --unset "qs.release.$(branch_version "$r").tag" 2>/dev/null || true
+		# why: a stopped git publicar of a combined RELEASE left its origin tip; that RELEASE is gone
+		git config --unset-all "qs.publish.$(branch_version "$r").from" 2>/dev/null || true
 	done
+	git config --unset-all "qs.publish.$target.from" 2>/dev/null || true
 	for c in "${CB_ARCHIVE[@]}"; do say "${c%%$'\t'*} kept as $(cut -f2 <<<"$c")"; done
 	# 10. origin last, in one atomic push
 	combine_push
