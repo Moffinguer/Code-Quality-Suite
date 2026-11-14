@@ -18,12 +18,17 @@ Tool fields (consumed by engine/runner.py):
   install   list of channels: apt / pip / npm / github / url / script
   needs     runtimes installed first (node, java, go, rust, dotnet, ...)
 """
-import copy
 
-TOOLS = {}
-LANGS = []
-RUNTIMES = {}
-GLOBAL_TOOLS = []
+import copy
+from typing import Any
+
+TOOLS: dict[str, dict[str, Any]] = {}
+LANGS: list[dict[str, Any]] = []
+RUNTIMES: dict[str, dict[str, Any]] = {}
+GLOBAL_TOOLS: list[Any] = []
+
+# why noqa PLR0913/PLR0917 below: these helpers are the authoring API of every family file;
+# their keyword-rich signatures are the catalog's schema, a parameter object would hide it
 
 # dpkg arch -> vendor arch spellings
 A_GO = {"amd64": "amd64", "arm64": "arm64"}
@@ -33,6 +38,7 @@ A_X64 = {"amd64": "x64", "arm64": "arm64"}
 A_AMDONLY = {"amd64": "amd64"}
 
 # ------------------------------------------------------------------ install channels
+
 
 def apt(*pkgs):
     return {"apt": list(pkgs)}
@@ -53,7 +59,7 @@ def npm(*specs):
     return {"npm": list(specs)}
 
 
-def gh(repo, tag, asset, bins, arch=A_X86, verified=True, sha256=None):
+def gh(repo, tag, asset, bins, arch=A_X86, verified=True, sha256=None):  # noqa: PLR0913, PLR0917
     """GitHub release asset. asset may use {tag} {ver} (tag without 'v') {arch}."""
     d = {"github": {"repo": repo, "tag": tag, "asset": asset, "bins": list(bins), "arch": arch}}
     if not verified:
@@ -63,7 +69,7 @@ def gh(repo, tag, asset, bins, arch=A_X86, verified=True, sha256=None):
     return d
 
 
-def url(u, bins, arch=A_X86, dest=None, strip=0, verified=True):
+def url(u, bins, arch=A_X86, dest=None, strip=0, verified=True):  # noqa: PLR0913, PLR0917
     d = {"url": {"url": u, "bins": list(bins), "arch": arch, "strip": strip}}
     if dest:
         d["url"]["dest"] = dest
@@ -91,13 +97,33 @@ def script(code):
 
 # ------------------------------------------------------------------ definitions
 
+
 def runtime(rid, name, install, path=(), env=None):
-    RUNTIMES[rid] = {"id": rid, "name": name, "install": install, "path": list(path), "env": env or {}}
+    RUNTIMES[rid] = {
+        "id": rid,
+        "name": name,
+        "install": install,
+        "path": list(path),
+        "env": env or {},
+    }
     return rid
 
 
-def tool(tid, role, name, cmd, *, bin=None, install=(), needs=(), config=None, defaults=None,
-         homepage="", license="", **kw):
+def tool(  # noqa: PLR0913
+    tid,
+    role,
+    name,
+    cmd,
+    *,
+    bin=None,
+    install=(),
+    needs=(),
+    config=None,
+    defaults=None,
+    homepage="",
+    license="",
+    **kw,
+):
     assert tid not in TOOLS, f"duplicate tool {tid}"
     t = {"id": tid, "role": role, "name": name, "cmd": cmd}
     if bin is not None:
@@ -118,13 +144,39 @@ def tool(tid, role, name, cmd, *, bin=None, install=(), needs=(), config=None, d
     return tid
 
 
-def lang(lid, name, *, kind="programming", ext=(), names=(), globs=(), shebang=(), modeline=(), magic=(),
-         probe=(), default_for_ambiguous=False, tools=(), basic=None, marker=None, version=None,
-         subtypes=(), notes="", candidates=(), tool_defaults=None):
-    assert all(l["id"] != lid for l in LANGS), f"duplicate language {lid}"
+def lang(  # noqa: PLR0913
+    lid,
+    name,
+    *,
+    kind="programming",
+    ext=(),
+    names=(),
+    globs=(),
+    shebang=(),
+    modeline=(),
+    magic=(),
+    probe=(),
+    default_for_ambiguous=False,
+    tools=(),
+    basic=None,
+    marker=None,
+    version=None,
+    subtypes=(),
+    notes="",
+    candidates=(),
+    tool_defaults=None,
+):
+    assert all(x["id"] != lid for x in LANGS), f"duplicate language {lid}"
     m = {}
-    for k, v in (("ext", ext), ("names", names), ("globs", globs), ("shebang", shebang),
-                 ("modeline", modeline), ("magic", magic), ("probe", probe)):
+    for k, v in (
+        ("ext", ext),
+        ("names", names),
+        ("globs", globs),
+        ("shebang", shebang),
+        ("modeline", modeline),
+        ("magic", magic),
+        ("probe", probe),
+    ):
         if v:
             m[k] = list(v)
     if default_for_ambiguous:
@@ -148,7 +200,9 @@ def lang(lid, name, *, kind="programming", ext=(), names=(), globs=(), shebang=(
     return lid
 
 
-def subtype(sid, name, *, globs=(), content=(), names=(), tools=(), exclude_roles=(), exclude_tools=()):
+def subtype(  # noqa: PLR0913
+    sid, name, *, globs=(), content=(), names=(), tools=(), exclude_roles=(), exclude_tools=()
+):
     m = {}
     if globs:
         m["globs"] = list(globs)
@@ -164,8 +218,11 @@ def subtype(sid, name, *, globs=(), content=(), names=(), tools=(), exclude_role
     return d
 
 
-def version(default, *, env=None, detect=(), label=None, ask=True, choices=None):
-    """Language version knob. detect: [{file, re, map}] (first match wins; file may be a root glob)."""
+def version(default, *, env=None, detect=(), label=None, ask=True, choices=None):  # noqa: PLR0913
+    """Language version knob.
+
+    detect: [{file, re, map}] (first match wins; file may be a root glob).
+    """
     d = {"default": default, "detect": list(detect)}
     if env:
         d["env"] = env
@@ -198,9 +255,25 @@ def probe(regex, weight=1):
 
 # ------------------------------------------------------------------ lexer presets (built-in checks)
 
-def lex(line=(), block=(), strings=('"', "'"), raw=(), escape="\\", nested=False, brackets="()[]{}", **kw):
-    d = {"line_comment": list(line), "block_comment": [list(b) for b in block], "strings": list(strings),
-         "raw_strings": [list(r) for r in raw], "escape": escape, "brackets": brackets}
+
+def lex(  # noqa: PLR0913, PLR0917
+    line=(),
+    block=(),
+    strings=('"', "'"),
+    raw=(),
+    escape="\\",
+    nested=False,
+    brackets="()[]{}",
+    **kw,
+):
+    d = {
+        "line_comment": list(line),
+        "block_comment": [list(b) for b in block],
+        "strings": list(strings),
+        "raw_strings": [list(r) for r in raw],
+        "escape": escape,
+        "brackets": brackets,
+    }
     if nested:
         d["nested_block"] = True
     d.update(kw)
@@ -231,14 +304,18 @@ def syntax_tool(tid, name, check, **kw):
     return tool(tid, "syntax", name, {"check": check}, **kw)
 
 
-def extend(lid, tools=(), *, replace=None, subtypes=(), notes=None, candidates=None, tool_defaults=None):
+def extend(  # noqa: PLR0913
+    lid, tools=(), *, replace=None, subtypes=(), notes=None, candidates=None, tool_defaults=None
+):
     """Add tools (and subtypes) to a language defined in another family file.
 
     replace: {old_tool_id: new_tool_id or None} swaps or drops an existing tool.
     """
-    lang = next(l for l in LANGS if l["id"] == lid)
+    lang = next(x for x in LANGS if x["id"] == lid)
     for old, new in (replace or {}).items():
-        lang["tools"] = [new if t == old else t for t in lang["tools"] if not (t == old and new is None)]
+        lang["tools"] = [
+            new if t == old else t for t in lang["tools"] if not (t == old and new is None)
+        ]
     lang["tools"] += [t for t in tools if t not in lang["tools"]]
     if subtypes:
         lang.setdefault("subtypes", []).extend(subtypes)
