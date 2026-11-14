@@ -168,3 +168,27 @@ anything and respects `commit.files` (off = silent).
 Commits written before: run `git commit --amend --no-edit` (or `git amend --no-edit`) on the
 last one to rebuild its block. Older commits keep the wrong block; `git rebase -r --exec
 "git commit --amend --no-edit"` rewrites them only if they are unpushed.
+
+## Format check reports a file the commit leaves alone (known limitation)
+
+Symptom: `qs-run.sh --check` (or the pre-push check) says `not formatted (a commit formats
+it)`, but a commit does not change the file.
+
+Cause: formatters without a reliable check mode are checked by formatting a copy of the file
+in a temp folder and comparing (`"check": "diff"`). A tool that finds its config, or the
+project layout, by walking up from the file or from the working directory finds nothing there,
+so the copy can be formatted with other settings than the real file. ruff-format had this
+bug (imports of the repository's own packages sorted as third-party); since 5.0.0-RC1 it is
+checked by piping the real file through stdin with its real path (`"check": {"pipe": ...}`).
+
+Still affected, planned for a later version:
+
+- configs found by walking up directories: `.editorconfig`, `.rubocop.yml`, `.sqlfluff`;
+- ktlint, rubocop-layout, perltidy, sqlfluff-format, markdownlint-fix, html-beautify-*,
+  vsg-fix and npm-groovy-lint-format;
+- tools the suite runs without `--config`: fprettify, nimpretty, dockerfmt, cue-fmt and
+  puppet-lint-fix.
+
+Workaround: run the fix (`qs-run.sh <file>`, or commit) and trust its result. For a tool the
+suite passes a generated config, put the setting in `.quality-rules.json`: that config is the
+same in both modes.
