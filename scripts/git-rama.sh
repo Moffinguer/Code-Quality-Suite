@@ -312,10 +312,17 @@ cmd_convertir() {
 }
 
 cmd_subir() {
-	local cur parent base
-	cur="$(current_branch)" || die "detached HEAD"
+	local cur parent base head resume=0
+	cur="$(current_branch || true)"
+	if [ -z "$cur" ] && [ "${QS_BR_FLOW:-merge}" = squash ] && rebase_in_progress; then
+		# why: publish_stopped tells the human to re-run git subir while the RELEASE rebase is stopped
+		head="$(rebase_state head-name)"
+		head="${head#refs/heads/}"
+		if is_release_branch "$head"; then cur="$head" resume=1; fi
+	fi
+	[ -n "$cur" ] || die "detached HEAD"
 	testing_refused "$cur" && exit 1 # TESTING sandbox guard
-	require_clean
+	[ "$resume" = 1 ] || require_clean
 	parent="$(parent_branch "$cur")"
 	fetch_origin
 	if is_parent_branch "$cur" || is_mainline "$cur"; then
@@ -341,7 +348,16 @@ cmd_subir() {
 		if [ "${QS_BR_FLOW:-merge}" = squash ] && is_release_branch "$cur"; then
 			# why: '<v>/RELEASE' onto develop solves its release-file conflicts like git publicar
 			REL_RELEASE="$cur" REL_VERSION="$(branch_version "$cur")" PUB_AGAIN="git subir"
-			REL_TAG="$(git config "qs.release.$REL_VERSION.tag" 2>/dev/null || render_tag "$cur")"
+			REL_TAG="$(git config "qs.release.$REL_VERSION.tag" 2>/dev/null || render_tag "$REL_VERSION/$QS_BR_LEAF")"
+			# why: publish_autosolve writes the solved files by their path from the top
+			cd "$(git rev-parse --show-toplevel)"
+			if [ "$resume" = 1 ]; then
+				say "resuming the rebase of $cur onto $QS_BR_MAINLINE..."
+				publish_rebase "$(rebase_state onto)"
+			else
+				# why: the push below is forced; commits only origin has would be lost
+				publish_local_release
+			fi
 			publish_rebase "$(git rev-parse "$base^{commit}")"
 			git checkout -q "$cur"
 		elif ! git merge-base --is-ancestor "$base" "$cur"; then
