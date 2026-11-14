@@ -1159,7 +1159,7 @@ grep -q '^### git np' <<<"$a1" && ! grep -q '^### git nr' <<<"$a1" && grep -q 'g
 	}
 # AI files committed by mistake: git ia takes them out of the index and keeps them on disk
 (cd "$T/nuevo" && git config user.email t@example.com && git config user.name tester &&
-	git add -f AGENTS.md knowledge .claude && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m "chore: oops")" &&
+	git add -f AGENTS.md knowledge .claude && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -m "chore: oops")" &&
 	git ia >../ia.out 2>&1 && grep -q 'taken out of the index' ../ia.out && [ -f AGENTS.md ] &&
 	[ -z "$(git ls-files --cached -- AGENTS.md knowledge .claude | grep -v '^$' | head -n1)" ] &&
 	git diff --cached --name-only | grep -q '^AGENTS.md$' && git ia --actualizar | grep -q 'untouched') &&
