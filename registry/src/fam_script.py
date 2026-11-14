@@ -59,6 +59,10 @@ fmt_tool(
                 "--quiet",
                 "--exit-zero",
                 ["--config", "{config}"],
+                # why: isort tells first-party imports by the folders under src; a format
+                # check runs on copies in a temp root, so src must name the real repository
+                "--config",
+                "src = ['{repo}']",
                 "{files}",
             ],
             [

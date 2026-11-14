@@ -38,6 +38,8 @@ class Ctx:
         )  # files whose extension was ambiguous (confidently resolved)
         self.protect = {}  # file -> non-UTF-8 charset: formatters/markers never touch it
         self.charsets = {}  # lang -> charset name for {charset} (e.g. PMD --encoding)
+        # why: a format check runs on copies in a temp root; {repo} stays the real repository
+        self.repo = root
 
 
 class StepResult:
@@ -80,6 +82,7 @@ _RULE_RE = re.compile(r"\{rule:([A-Za-z0-9_.-]+)\}")
 def _subst(t, ctx, tool, version, vv):
     cfg = ctx.cfg_paths.get((tool.get("_lang"), tool["id"]), "")
     s = t.replace("{root}", ctx.root).replace("{tmp}", ctx.tmp).replace("{suite}", SUITE)
+    s = s.replace("{repo}", getattr(ctx, "repo", ctx.root))
     s = s.replace("{npm}", os.environ.get("QS_NPM", "/opt/npm"))
     s = s.replace("{charset}", ctx.charsets.get(tool.get("_lang"), "UTF-8"))
     s = _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), s)
@@ -564,6 +567,7 @@ def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):  # 
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(os.path.join(gdir, marker), dst)
     sub = Ctx(work, "fix", ctx.tmp, ctx.cfg_paths, ctx.exec_files, ctx.ambiguous)
+    sub.repo, sub.charsets = ctx.repo, ctx.charsets
     ok_codes = tool.get("success_fix", tool.get("success", [0]))
     for gdir, gfiles in groups.items():
         units = [gfiles] if tool.get("batch", True) else [[f] for f in gfiles]

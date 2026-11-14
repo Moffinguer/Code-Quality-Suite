@@ -1811,6 +1811,8 @@
         "--config",
         "{config}"
        ],
+       "--config",
+       "src = ['{repo}']",
        "{files}"
       ],
       [

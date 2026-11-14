@@ -6,7 +6,8 @@ every family module, validates cross references and writes registry/registry.jso
 Tool fields (consumed by engine/runner.py):
   role      syntax | marker | format | lint | deep   (one formatter per file type)
   cmd       {"fix": [...], "check": [...] | "diff", "stdout": [...], "builtin": name}
-            tokens: {files} {file} {args} {config} {config_dir} {root} {tmp} {group}
+            tokens: {files} {file} {args} {config} {config_dir} {root} {repo} {tmp} {group}
+                    ({root} is the temp copy in a format check, {repo} always the repository)
                     {found_dir} {v} {v_nodot} {v_major} {v_minor} {var:NAME}
             a nested list is an optional group, dropped if a placeholder is empty
             {"all": [cmd, cmd]} runs commands in order
