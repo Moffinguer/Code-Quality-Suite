@@ -187,7 +187,9 @@ Still affected, planned for a later version:
 - ktlint, rubocop-layout, perltidy, sqlfluff-format, markdownlint-fix, html-beautify-*,
   vsg-fix and npm-groovy-lint-format;
 - tools the suite runs without `--config`: fprettify, nimpretty, dockerfmt, cue-fmt and
-  puppet-lint-fix.
+  puppet-lint-fix;
+- tools that find a project config next to the file: juliaformatter (`.JuliaFormatter.toml`),
+  mh-style (`miss_hit.cfg`) and bicep-format (`bicepconfig.json`).
 
 Workaround: run the fix (`qs-run.sh <file>`, or commit) and trust its result. For a tool the
 suite passes a generated config, put the setting in `.quality-rules.json`: that config is the
