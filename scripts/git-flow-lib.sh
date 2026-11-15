@@ -320,20 +320,44 @@ configure_repo() {
 # i.e. the child did not move after its squash. A child that does not exist counts as in.
 # Arguments: $1 child branch, $2 ORIGINAL branch name. Returns: 0 in, 1 pending.
 branch_integrated() {
-	local c="$1" p="$2" cref tip bodies sha found=0 squashed=0
+	local c="$1" p="$2" cref
 	cref="$(best_ref "$c" || true)"
 	[ -n "$cref" ] || return 0
 	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 0
-	tip="$(git rev-parse "$cref^{commit}")"
-	bodies="$(git log -F --grep="Refs: $c -> $p" --format='%B' "$p" -- 2>/dev/null || true)"
-	grep -qxF "Refs: $c -> $p" <<<"$bodies" || return 1
+	squash_in "$cref" "$c" "$p" "$p"
+}
+
+# squash_in <tipref> <child> <original> <pref>: succeed when a commit of <pref> (a copy of the
+# ORIGINAL: local or origin/...) has the line 'Refs: <child> -> <original>' and, when that commit
+# also has 'Squashed: <child> <sha>', the tip of <tipref> is contained in <sha> (the child did not
+# move after its squash). A 'Refs:' line without 'Squashed:' (hand-written squash) is taken as
+# recorded. Arguments: $1 ref of the child copy, $2 child, $3 ORIGINAL name, $4 ref searched.
+# Returns: 0 integrated, 1 not.
+squash_in() {
+	local tip bodies sha found=0 squashed=0
+	tip="$(git rev-parse "$1^{commit}")"
+	bodies="$(git log -F --grep="Refs: $2 -> $3" --format='%B' "$4" -- 2>/dev/null || true)"
+	grep -qxF "Refs: $2 -> $3" <<<"$bodies" || return 1
 	while IFS= read -r sha; do
 		[ -n "$sha" ] || continue
 		squashed=1
 		if [ "$sha" = "$tip" ] || git merge-base --is-ancestor "$tip" "$sha" 2>/dev/null; then found=1; fi
-	done < <(awk -v c="$c" '$1 == "Squashed:" && $2 == c { print $3 }' <<<"$bodies")
-	# why: a 'Refs:' line without 'Squashed:' (hand-written squash) is taken as recorded
+	done < <(awk -v c="$2" '$1 == "Squashed:" && $2 == c { print $3 }' <<<"$bodies")
 	[ "$squashed" = 0 ] || [ "$found" = 1 ]
+}
+
+# squash_commit <child> <original> <pref>: print the short id of the commit of <pref> whose body
+# has the line 'Refs: <child> -> <original>'. Returns: 0 and the id; 1 when there is none.
+squash_commit() {
+	local sha
+	while IFS= read -r sha; do
+		[ -n "$sha" ] || continue
+		if git log -n1 --format=%B "$sha" | grep -qxF "Refs: $1 -> $2"; then
+			git rev-parse --short "$sha"
+			return 0
+		fi
+	done < <(git log -F --grep="Refs: $1 -> $2" --format=%H "$3" -- 2>/dev/null)
+	return 1
 }
 
 # children_pending <original>: print, space separated, the direct children of <original> that
@@ -346,6 +370,21 @@ children_pending() {
 		branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
+}
+
+# integrated_sha <child> <original>: print the short id of the squash commit of <original> that
+# took <child> in ('Refs: <child> -> <original>'), when <child> is integrated that way (the same
+# rule as branch_integrated) and its tip is not simply an ancestor of <original>: an empty branch
+# that was just created from <original> is not "integrated", whatever its name once was.
+# Arguments: $1 child branch, $2 ORIGINAL branch name (a local branch). Returns: 0 and prints the
+# id; 1 when there is none (pending, or integrated only by ancestry).
+integrated_sha() {
+	local c="$1" p="$2" cref
+	cref="$(best_ref "$c" || true)"
+	[ -n "$cref" ] || return 1
+	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 1
+	branch_integrated "$c" "$p" || return 1
+	squash_commit "$c" "$p" "$p"
 }
 
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----
