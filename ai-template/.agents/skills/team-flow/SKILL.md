@@ -49,6 +49,9 @@ paths** in the main worktree.
    commit** and the integrated branch is deleted (`--yes` answers the question). To try several
    branches together first, `git testing crear <branch...>`, then `git testing repartir`.
    Fix the last commit with `git amend`. **Human checkpoint: approve each integration.**
+   Integrate only from the main checkout (the real `.quality-rules.json`), check `"flow":` before
+   and `git log -1 --format='%P' <ORIGINAL>` (one parent) before pushing; see the "Commit and
+   merge flow" of `branch-workflow`.
    The OT then closes with `git release` inside it, the version with `git release` on
    `<version>/ORIGINAL`, and `git publicar` (one commit on `develop`): all the human's.
    Afterwards `git limpiar-unmerged`. Manual: the `git-commands` skill.

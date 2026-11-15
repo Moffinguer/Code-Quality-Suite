@@ -45,6 +45,11 @@ skills and in `knowledge/`.
 10. **Co-authors.** Human co-authors are fine. Never add Claude or any AI model as co-author
     (no `Co-Authored-By:` naming an AI) nor a "Generated with ..." line in commits or PRs.
     `.claude/settings.json` sets `attribution` to empty (legacy key: `includeCoAuthoredBy: false`).
+11. **Integration flow.** Under `branches.flow = squash` an ORIGINAL moves only through
+    `git integra` (one single-parent commit): never `git merge`, `git pull` without `--rebase`,
+    cherry-pick or a push of a rebuilt ORIGINAL. Integrate from the main checkout only (a worktree
+    may lack the real `.quality-rules.json`), and check `git log -1 --format=%P <ORIGINAL>` shows
+    one parent before pushing. Details: skill `branch-workflow`.
 
 ## Roles (Claude Code subagents in .claude/agents; OpenCode gets the same ones in .opencode/agents)
 

@@ -8,6 +8,41 @@ description: Use when creating, syncing, integrating or naming git branches, tag
 Short version and rules. Syntax of every command: the `git-commands` skill (`git ayuda <cmd>`).
 Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
 
+## Commit and merge flow (mandatory, every project)
+
+The flow in the effective `.quality-rules.json` (`branches.flow`) decides how work goes up.
+Under `flow: squash` the ONLY way anything reaches an `ORIGINAL` is `git integra`. It makes
+**one** commit with **one parent**, whose body holds `Commits:`, `Files:`, `Refs:` and
+`Squashed:`. A merge commit (two parents) in an `ORIGINAL` is a defect.
+
+1. **Commits** go only on final branches (and special branches), through the hooks. They are
+   Conventional Commits, ASCII, with a subject of at most 50 characters and the `Files:` block.
+   Never commit directly on an `ORIGINAL`, `RELEASE`, `develop` or `main`. Never `--no-verify`.
+2. **Never move an ORIGINAL by hand**. That means no `git merge`, no `git pull` without
+   `--rebase`, no fast-forward, no `cherry-pick`, no `reset` and no `push` of a locally rebuilt
+   ORIGINAL. Only `git integra`, `git release`, and the human's `git publicar` / `git combinar`
+   move these branches.
+3. **Integrate only where the real rules file is.**
+   - `.quality-rules.json` may be git-ignored (personal). A worktree or clone then gets a
+     generated default with `flow: merge`.
+   - Run `git integra` only from the main checkout, where `.quality-rules.json` is the
+     project's real one. If you must run it from a worktree, first copy that file into the
+     worktree.
+   - Agents never integrate: only the lead does.
+4. **Check before integrating**:
+   - Look at the line `"flow":` in the `.quality-rules.json` of the checkout you are in. It
+     must equal the flow of the target ORIGINAL's history, where squashes carry `Squashed:`
+     trailers.
+   - If they differ, STOP and ask the human.
+5. **Check after integrating, before pushing**:
+   - `git log -1 --format='%P' <ORIGINAL>` must print ONE parent under squash.
+   - `git log -1 --format=%B <ORIGINAL>` must show `Commits:`, `Files:` and `Refs:`.
+   - If either check fails, do not push. Report it to the human and leave the local branch
+     as it is.
+6. **A wrong integration that was already pushed** is never rewritten, because that would
+   force-push an ORIGINAL. Report it to the human, record it in the lessons, and let the
+   human decide.
+
 ## The tree
 
 ```text
@@ -89,10 +124,9 @@ rebased, integrated or pushed to an ORIGINAL (the hooks refuse it).
 
 ## Rules
 
-- Only the lead integrates, and only into ORIGINAL branches; merging into `develop` is the human's.
+- Only the lead integrates (see the flow above), and only into ORIGINAL branches; merging into `develop` is the human's.
   Agents pass the message: `git integra -m "feat(login): add login page" -m "<why>"`; the subject
   becomes a CHANGELOG.md line.
 - Commits: `type(scope): subject`, ASCII, <= 50 characters, body explains why, `Norms: <ids>`;
   never an AI co-author, never `--no-verify`.
 - Never force-push an ORIGINAL, develop or main; never merge into a final branch.
-- Never rebase an ORIGINAL by hand; `git integra` does it.

@@ -238,6 +238,14 @@ Squashed: 6.22.6/188858/RF001/login 0123456789abcdef...
 - `Squashed:` (full sha) lets the release check recognise squash-integrated branches.
 - `Refs:` is kept for the readers of 4.x history.
 
+### Running integra from a worktree
+
+`.quality-rules.json` may be git-ignored, so a worktree gets the generated default
+(`flow: merge`) and `git integra` there makes merge commits (two parents) in the ORIGINAL. Run it
+only from the main checkout, or copy the real file into the worktree first. Before integrating,
+check the `"flow":` line; before pushing, check that `git log -1 --format=%P <ORIGINAL>` prints
+one parent. A wrong integration that is already pushed is never rewritten: report it.
+
 ## Closing an OT: `git release` (OT release)
 
 Run it inside `<v>/<ot>/...` (or with `--ot <v>/<ot>`) once every branch of the OT is integrated.

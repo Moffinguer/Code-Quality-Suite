@@ -227,6 +227,9 @@ printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
   The message is generated (subject, body, `Commits:`, `Files:`, `Norms:`, `Refs:`, `Squashed:`);
   the subject becomes a line of `CHANGELOG.md`, so write it for the reader. Agents pass `-m`.
   (flow merge: the 4.x behaviour, `--no-ff` merge.)
+- **Warning:** run it only from the main checkout, where the real `.quality-rules.json` is (a
+  worktree may use the default `flow: merge` and create a merge commit). Check `"flow":` first and
+  `git log -1 --format=%P <ORIGINAL>` (one parent) before pushing.
 - **Use it when:** a task (or a whole OT) is finished, reviewed and passes the gate.
 - **Who:** lead (into an `ORIGINAL`).
 
