@@ -91,6 +91,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do REFS+=("$local_ref $
 if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 	# shellcheck disable=SC1091
 	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_suite_stamp_check
 	qs_policy_load
 	# --- TESTING sandbox guard (pushed only to its own name) ---
 	for ref in ${REFS[@]+"${REFS[@]}"}; do

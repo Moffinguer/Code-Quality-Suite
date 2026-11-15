@@ -76,6 +76,59 @@ qs_special_need_squash() {
 	return 1
 }
 
+# Print the path of a working python (python3 or python); the Windows Store python3 stub exists
+# on Git Bash but fails, so each candidate is tried.
+# Arguments: none. Returns: 0 and the command name, or 1 when none works.
+qs_python() {
+	local py
+	for py in python3 python; do
+		if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1; then
+			printf '%s' "$py"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Lazy rules upgrade: when the stamp `<git common dir>/quality-suite/suite-version` differs from
+# the VERSION of the suite (a suite update happened), run `engine/policy.py rules-upgrade` once
+# under the suite lock, print one summary line on stderr, and let the hook go on. The stamp is
+# written by the upgrade; an error is a warning and the stamp stays (the next hook retries). A
+# stamp newer than the suite gives a warning and nothing is written. Cheap when up to date: one
+# file read and one git call. Never fails.
+# Arguments: none (reads QUALITY_SUITE_DIR). Returns: always 0.
+qs_suite_stamp_check() {
+	local sv cur="" common root py err out n
+	[ -n "${QUALITY_SUITE_DIR:-}" ] && [ "${QS_SUITE_STAMP_OFF:-0}" != 1 ] || return 0
+	[ -f "$QUALITY_SUITE_DIR/VERSION" ] || return 0
+	read -r sv <"$QUALITY_SUITE_DIR/VERSION" || true
+	sv="${sv%$'\r'}"
+	[ -n "$sv" ] || return 0
+	common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+	[ -f "$common/quality-suite/suite-version" ] && { read -r cur <"$common/quality-suite/suite-version" || true; }
+	cur="${cur%$'\r'}"
+	[ "$cur" != "$sv" ] || return 0
+	py="$(qs_python)" || {
+		echo "[quality-suite] WARN: no working python3/python: rules file not upgraded" >&2
+		return 0
+	}
+	# shellcheck disable=SC1091
+	. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"
+	qs_lock
+	err="$(mktemp)"
+	if out="$("$py" "$QUALITY_SUITE_DIR/engine/policy.py" rules-upgrade "$root" 2>"$err")"; then
+		n="$(grep -cE '^(added|migrated) ' <<<"$out" || true)"
+		[ "${n:-0}" = 0 ] || echo "[quality-suite] rules file upgraded to suite $sv: $n change(s) (git actualizar-suite shows them)" >&2
+		[ ! -s "$err" ] || cat "$err" >&2
+	else
+		echo "[quality-suite] WARN: rules file not upgraded (retried by the next hook): $(tr '\n' ' ' <"$err")" >&2
+	fi
+	rm -f "$err"
+	qs_unlock
+	return 0
+}
+
 # Load the commit/branch policy into QS_* variables. The engine writes <state>/policy.env on
 # every run; when the rules file is newer (edited since), it is regenerated with the image.
 qs_policy_load() {

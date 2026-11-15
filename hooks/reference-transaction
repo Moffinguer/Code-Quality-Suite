@@ -32,6 +32,7 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # why: a hook must never break a ref update because of its own problem: any doubt -> allow
 # shellcheck disable=SC1090
 [ -f "$LIB" ] && . "$LIB" || exit 0
+qs_suite_stamp_check
 qs_policy_load 2>/dev/null || exit 0
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 
