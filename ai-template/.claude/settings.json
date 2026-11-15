@@ -29,14 +29,30 @@
       "Bash(git switch:*)",
       "Bash(git encoding:*)",
       "Bash(git changelog:*)",
+      "Bash(git checkpoint:*)",
+      "Bash(git revision:*)",
+      "Bash(git tests:*)",
+      "Bash(git spike:*)",
       "Bash(bash <SUITE>/scripts/qs-run.sh:*)",
       "Bash(bash <SUITE>/scripts/ai-ask.sh:*)"
+    ],
+    "ask": [
+      "Bash(git intentos:*)",
+      "Bash(git testing:*)",
+      "Bash(git cuarentena:*)",
+      "Bash(git aceptar:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git publicar:*)",
       "Bash(git combinar:*)",
+      "Bash(git changelog --escribir:*)",
+      "Bash(git migracion:*)",
+      "Bash(git formatear:*)",
+      "Bash(git elegir:*)",
+      "Bash(git docs:*)",
+      "Bash(git refactor:*)",
       "Read(./.env)",
       "Read(./.env.*)"
     ]
