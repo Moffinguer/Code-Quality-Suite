@@ -3147,6 +3147,17 @@ version_squash_message() {
 	} >"$out"
 }
 
+# version_squash_commit <msgfile> <parent>: commit the staged squash of an OT on the detached HEAD
+# with plumbing (git commit-tree + reset): the work was gated on its own branches, so no hook runs
+# again over thousands of lines (the rebase it replaces ran none either). Moves HEAD to the commit.
+# Arguments: $1 message file, $2 parent commit. Returns: 0; ends the script when git fails (set -e).
+version_squash_commit() {
+	local tree c
+	tree="$(git write-tree)"
+	c="$(git commit-tree "$tree" -p "$2" -F "$1")"
+	git reset -q --hard "$c"
+}
+
 # version_rebase_ot <ot>: put the work of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE' as ONE squash
 # commit: the tree difference of the OT RELEASE against its base, applied (git merge --squash, on a
 # detached HEAD) onto the '<v>/RELEASE' tip, never its individual commits (the OT history may hold
@@ -3180,7 +3191,7 @@ version_rebase_ot() {
 		if [ -z "$(current_branch || true)" ] && [ "$head" = "$onto" ] && [ -f "$gd/SQUASH_MSG" ]; then
 			[ -z "$(git diff --name-only --diff-filter=U)" ] ||
 				die "OT $o still has conflicts. Solve them: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git reset --hard $REL_RELEASE"
-			git commit -q -F "$gd/SQUASH_MSG" || die "the squash commit of OT $o was rejected (see the hook messages); $REL_AGAIN"
+			version_squash_commit "$gd/SQUASH_MSG" "$onto"
 			git update-ref "refs/heads/$REL_RELEASE" "$(git rev-parse HEAD)" "$onto"
 			version_rebase_done "$o"
 			return 0
@@ -3208,7 +3219,7 @@ version_rebase_ot() {
 		say "OT $o: nothing to bring in ($REL_RELEASE already has it)"
 		return 0
 	fi
-	git commit -q -F "$msg" || die "the squash commit of OT $o was rejected (see the hook messages); $REL_AGAIN"
+	version_squash_commit "$msg" "$onto"
 	rm -f "$msg"
 	head="$(git rev-parse HEAD)"
 	git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
