@@ -154,3 +154,23 @@ lib "configure_repo '$T/suite-n7'"
 [ "$(git config alias.zeta)" = "!bash '$T/suite-n7/scripts/git-zeta.sh'" ] && [ -n "$(git config alias.zeta-largo)" ] &&
 	ok "configure_repo registers scripts with a qs-alias header" || fail "qs-alias"
 lib "configure_repo '$SUITE'"
+# a header may not shadow a git command, a suite alias or another script's alias
+mkdir -p "$T/suite-n7b/scripts"
+printf '#!/usr/bin/env bash\n# qs-alias: commit nr dup mine\n' >"$T/suite-n7b/scripts/git-a.sh"
+printf '#!/usr/bin/env bash\n# qs-alias: dup mine2\n' >"$T/suite-n7b/scripts/git-b.sh"
+git config alias.nr "!bash '$SUITE/scripts/git-rama.sh' nueva-final"
+out="$(lib "configure_repo '$T/suite-n7b'" 2>&1)"
+[ -z "$(git config alias.commit)" ] && [ "$(git config alias.nr)" = "!bash '$T/suite-n7b/scripts/git-rama.sh' nueva-final" ] &&
+	grep -q "'commit' is a git command" <<<"$out" && grep -q "'nr' is already defined" <<<"$out" ||
+	fail "qs-alias shadowing: $out"
+[ -z "$(git config alias.dup)" ] && grep -q "'dup' claimed by both .*git-a.sh and .*git-b.sh" <<<"$out" &&
+	[ "$(git config alias.mine)" = "!bash '$T/suite-n7b/scripts/git-a.sh'" ] && [ "$(git config alias.mine2)" = "!bash '$T/suite-n7b/scripts/git-b.sh'" ] &&
+	ok "qs-alias skips git commands, suite aliases and duplicate claims with a warning" || fail "qs-alias duplicates: $out"
+lib "configure_repo '$SUITE'"
+git config --unset alias.mine
+git config --unset alias.mine2
+
+# --- git nv --arbol-completo leaves the special branches behind
+out="$(git nv 9.0.0 --from 6.0.0/ot1/ORIGINAL --arbol-completo -n 2>&1)"
+grep -q "9.0.0/ot1/" <<<"$out" && ! grep -qE "MIGRATION|DOCS|REFACTOR|REVIEW|ATTEMPT|CHECKPOINT|QUARANTINE" <<<"$out" &&
+	ok "nv --arbol-completo copies no special branch" || fail "nv --arbol-completo: $out"

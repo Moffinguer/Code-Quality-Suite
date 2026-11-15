@@ -330,7 +330,7 @@ require_clean() {
 
 # configure_repo <suite_dir> - repo-LOCAL config + aliases (idempotent).
 configure_repo() {
-	local suite="$1" a
+	local suite="$1" a claimed=" "
 	git config pull.rebase true
 	git config rebase.autoStash true
 	git config branch.autoSetupRebase always
@@ -346,17 +346,39 @@ configure_repo() {
 		publicar:publicar repo-files:repo-files ficheros-repo:repo-files \
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
+		claimed="$claimed${a%%:*} "
 	done
-	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
-	# QS_AMEND=1 tells prepare-commit-msg it is an amend
-	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit
-	local s n
+	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit;
+	# a name that is a git command or an alias of the suite, or claimed by another script, is skipped
+	local s n builtins k other
+	builtins=" $(git --list-cmds=main,nohelpers 2>/dev/null | tr '\n' ' ') commit "
+	for a in amend limpiar-unmerged encoding testing; do claimed="$claimed$a "; done
 	for s in "$suite"/scripts/git-*.sh; do
 		[ -f "$s" ] || continue
 		for n in $(sed -n 's/^# qs-alias:[[:space:]]*//p' "$s" | head -n1); do
+			case "$builtins" in *" $n "*)
+				echo "[git-flow] WARN: $s: qs-alias '$n' is a git command; skipped" >&2
+				continue
+				;;
+			esac
+			if [[ $claimed == *" $n "* ]]; then
+				echo "[git-flow] WARN: $s: qs-alias '$n' is already defined by the suite; skipped" >&2
+				continue
+			fi
+			k="qs_owner_$(printf '%s' "$n" | tr -c 'A-Za-z0-9' '_')"
+			other="${!k:-}"
+			if [ -n "$other" ]; then
+				echo "[git-flow] WARN: qs-alias '$n' claimed by both $other and $s; skipped" >&2
+				git config --unset "alias.$n" 2>/dev/null || true
+				claimed="$claimed$n "
+				continue
+			fi
+			printf -v "$k" '%s' "$s"
 			git config "alias.$n" "!bash '$s'"
 		done
 	done
+	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
+	# QS_AMEND=1 tells prepare-commit-msg it is an amend
 	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
 	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
