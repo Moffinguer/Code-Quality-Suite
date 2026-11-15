@@ -21,7 +21,9 @@ Last release: 4.2.1. What changed: [CHANGELOG.md](CHANGELOG.md).
 
 - **6.0.0: special branches.** New final branches under `<v>/special` (spec in
   `docs/6.0.0/spec.md`), with auto-publish of new branches, the rules upgrade and the agent flow
-  as separate parts. TODO(confirm): the final scope is in the approved 6.0.0 spec, not here.
+  as separate parts, and the `merge` flow is removed (as [docs/UPDATING.md](docs/UPDATING.md) and
+  [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) say). The final scope is defined in the approved
+  6.0.0 spec.
 - **6.1.0 = 5.0.0-RC1 + 6.0.0**, combined with `git combinar` and published to `develop`:
   - auto-publish of new branches;
   - the rules upgrade on suite update (`git actualizar-suite` applies the rules-file changes);
@@ -29,6 +31,11 @@ Last release: 4.2.1. What changed: [CHANGELOG.md](CHANGELOG.md).
     `AGENTS.md`).
 - **6.1.1: more Conventional Commits types** accepted by the subject check and the changelog
   groups.
+- **7.0.0: GitHub project and Actions.** Repository settings and rulesets for `main`, `develop`,
+  `ORIGINAL` and `RELEASE` branches; GitHub Actions that re-run the gate and the branch-model
+  checks on every push. The hooks are still missing.
+- **7.1.0: documentation sweep and parallel agents.** Unified root docs; parallel agents and
+  prompt engineering; new repositories start on `main` instead of `master`.
 - AI layer ([docs/AI-SETUP.md](docs/AI-SETUP.md)): first Junta notifications into
   `knowledge/jda/inbox/`, then the skills that read them.
 - Build order step 4 of [docs/KNOWLEDGE-FLYWHEEL.md](docs/KNOWLEDGE-FLYWHEEL.md): LangGraph triage

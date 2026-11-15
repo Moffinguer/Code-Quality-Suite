@@ -377,7 +377,7 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
 - Never: `git push --force` on an `ORIGINAL`, `develop` or `main` (`git subir` uses
   `--force-with-lease` on final branches and on `<v>/RELEASE` only); `git merge` into a final
   branch; `git rebase` of an `ORIGINAL` by hand (`git integra` does it, squash flow only); a branch
-  named only `<version>`; a branch whose segment is `original`, `release` or `testing` in any case;
+  named only `<version>`; a branch whose segment is `original` or `release` in any case, or `testing` under the squash flow;
   merging a TESTING branch; editing `VERSION`, the `pom.xml` version or the README badge by hand
   (the commands write them); `--no-verify` to get around the gate.
 

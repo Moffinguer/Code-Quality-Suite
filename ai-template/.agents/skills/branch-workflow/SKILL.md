@@ -82,8 +82,10 @@ rebased, integrated or pushed to an ORIGINAL (the hooks refuse it).
 | pre-commit | every commit | the quality gate on the staged files |
 | pre-push | `git push`, `git subir` | branch names, a final branch contains its ORIGINAL, no force-push of shared branches, the gate |
 | pre-rebase | `git rebase` | finals rebase onto their parent; shared branches only onto their remote; TESTING never |
-| pre-merge-commit | `git merge` | into an ORIGINAL only its parent (children go up with `git integra`); never into a final; never TESTING |
+| pre-merge-commit (squash) | `git merge` | into an ORIGINAL only its parent (children go up with `git integra`); never into a final; never TESTING |
 | post-checkout | `git checkout`, `git switch` | refreshes config and aliases; warns about off-model names |
+| post-commit | `git commit`, `git amend` | checks the `Files:` block against the commit's files after commit/amend |
+| reference-transaction | any ref update | reports a non-TESTING branch that now contains TESTING commits (fast-forward or plumbing merge) |
 
 ## Rules
 
