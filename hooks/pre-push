@@ -60,7 +60,11 @@ check_ref() {
 			case "$entry" in 100755\ *) printf '%s\n' "${entry#*$'\t'}" ;; esac
 		done
 	} >"${STATE}/exec-files.txt"
-	local envf rc=0 rmount=()
+	local envf rc=0 rmount=() glevel=""
+	# why: a special branch (REFACTOR, QUARANTINE, CHECKPOINT...) is checked at the level of its type
+	if declare -F special_gate_level >/dev/null 2>&1 && [ "${QS_BR_ENFORCE:-block}" != off ]; then
+		glevel="$(special_gate_level "${PUSH_BRANCH:-}")"
+	fi
 	[ -f "$rules" ] && rmount=(-v "$(qs_hostpath "$rules"):/qs-rules.json:ro" -e QS_RULES=/qs-rules.json)
 	envf="$(qs_env_file "${HOOK_DIR}/quality-suite.env" "${STATE}/docker.env")"
 	qs_docker_opts
@@ -68,7 +72,7 @@ check_ref() {
 	docker run "${QS_DOCKER_OPTS[@]}" ${QS_GIT_OPTS[@]+"${QS_GIT_OPTS[@]}"} --env-file "$(qs_hostpath "$envf")" ${rmount[@]+"${rmount[@]}"} \
 		-e QUALITY_MODE=check -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
 		-e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
-		-e QS_BASE_REV="$base" -e QS_BRANCH="${PUSH_BRANCH:-}" \
+		-e QS_BASE_REV="$base" -e QS_BRANCH="${PUSH_BRANCH:-}" -e QS_GATE_LEVEL="$glevel" \
 		-v "$(qs_hostpath "$tree"):/workspace:ro" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
 		"$QUALITY_SUITE_IMAGE" run || rc=$?
 	rm -f "$envf"
@@ -143,6 +147,26 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 		fi
 	done
 	# --- end TESTING sandbox guard ---
+	# --- special branch guard (branches.special): push: never (CHECKPOINT) is refused; push_checks:
+	# full (MIGRATION) runs the full build after the checks below
+	SP_FULL=0
+	for ref in ${REFS[@]+"${REFS[@]}"}; do
+		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
+		[ "$QS_BR_ENFORCE" = off ] && break
+		[ "$local_sha" = "$Z40" ] && continue
+		case "$local_ref" in refs/heads/*) b="${local_ref#refs/heads/}" ;; *) continue ;; esac
+		kind="$(special_kind "$b")"
+		[ -n "$kind" ] || continue
+		[ "$(special_prop "$kind" PUSH_CHECKS)" != full ] || SP_FULL=1
+		if [ "$(special_prop "$kind" PUSH)" = never ]; then
+			echo "[quality-suite] pre-push: '$b' is a $kind branch: it is local only and is never pushed." >&2
+			if [ "$QS_BR_ENFORCE" = block ]; then
+				echo "[quality-suite] pre-push: push aborted (special branch rules)." >&2
+				exit 1
+			fi
+		fi
+	done
+	# --- end special branch guard ---
 	br_fail=0
 	br_err() {
 		echo "[quality-suite] pre-push: $*" >&2
@@ -202,6 +226,21 @@ if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/run-tes
 			echo "[quality-suite] pre-push: tests failed. Push aborted."
 			exit 1
 		}
+fi
+
+# Full build (push_checks: full, MIGRATION): the command QUALITY_BUILD_CMD (quality-suite.env), or the
+# heavy stage command when none is set. The heavy stage below runs that one: it is not run twice.
+if [ "${SP_FULL:-0}" = 1 ]; then
+	if [ -n "${QUALITY_BUILD_CMD:-}" ] && [ "${QUALITY_BUILD_CMD}" != "${QUALITY_HEAVY_CMD:-}" ]; then
+		echo "[quality-suite] pre-push: full build (MIGRATION) -> ${QUALITY_BUILD_CMD}"
+		(cd "${REPO_ROOT}" && eval "${QUALITY_BUILD_CMD}") ||
+			{
+				echo "[quality-suite] pre-push: full build failed. Push aborted."
+				exit 1
+			}
+	elif [ -z "${QUALITY_BUILD_CMD:-}${QUALITY_HEAVY_CMD:-}" ]; then
+		echo "[quality-suite] pre-push: WARN: a MIGRATION branch asks for the full build, but QUALITY_BUILD_CMD is not set." >&2
+	fi
 fi
 
 # Optional heavy stage (real project build). Runs on the host (needs its toolchain).

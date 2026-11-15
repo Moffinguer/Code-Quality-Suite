@@ -38,6 +38,14 @@ subject="$(printf '%s\n' "$msg" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
 	echo "commit-msg: empty message." >&2
 	exit 1
 }
+# Special branch rules (branches.special): CHECKPOINT commits are save points, so its message rules
+# are skipped; the other types fix the commit types and the trailers of their own commits.
+SP_KIND=""
+if [ "${QS_BR_ENFORCE:-block}" != off ] && declare -F special_kind >/dev/null 2>&1 &&
+	SP_BRANCH="$(git branch --show-current 2>/dev/null || true)" && [ -n "$SP_BRANCH" ]; then
+	SP_KIND="$(special_kind "$SP_BRANCH")"
+fi
+[ "$SP_KIND" != CHECKPOINT ] || exit 0
 # TESTING never reaches another branch through 'git merge --squash' (SQUASH_MSG lists its commits).
 # Only this commit's message counts: a commit made with its own message is not the squash.
 if [ "${QS_BR_ENFORCE:-block}" != off ] && declare -F testing_squash_hit >/dev/null 2>&1 &&
@@ -84,9 +92,22 @@ utf-8)
 	;;
 esac
 
-[ "${QS_COMMIT_CONVENTIONAL:-1}" = 1 ] || exit 0
 # Exempt merges, fixup/squash and automatic reverts from Conventional Commits (not from the charset).
 case "$subject" in "Merge "* | "fixup! "* | "squash! "* | "amend! "* | "Revert "*) exit 0 ;; esac
+if [ -n "$SP_KIND" ]; then
+	sp_out="$(special_check_trailers "$SP_KIND" "$msg" || true)"
+	if [ "${QS_COMMIT_CONVENTIONAL:-1}" = 1 ]; then
+		sp_out="$(printf '%s\n%s\n' "$sp_out" "$(special_check_commit_type "$SP_KIND" "$subject" || true)" | grep -v '^$' || true)"
+	fi
+	if [ -n "$sp_out" ]; then
+		{
+			echo "commit-msg: the message breaks the rules of the $SP_KIND branch '$SP_BRANCH':"
+			printf '%s\n' "$sp_out" | sed 's/^/  /'
+		} >&2
+		[ "${QS_BR_ENFORCE:-block}" = warn ] || exit 1
+	fi
+fi
+[ "${QS_COMMIT_CONVENTIONAL:-1}" = 1 ] || exit 0
 TYPES="${QS_COMMIT_TYPES}"
 MAX="${QS_COMMIT_SUBJECT_MAX}"
 if ! printf '%s' "$subject" | grep -qE "^(${TYPES})(\([^)]+\))?!?: .+"; then
