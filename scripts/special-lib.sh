@@ -289,3 +289,166 @@ special_summary() {
 	[ "$(special_prop "$t" PUSH)" = normal ] || out="$out, push $(special_prop "$t" PUSH)"
 	printf '%s' "$out"
 }
+
+# --- hook rules (6.0.0 hooks_rules): the checks of pre-commit, commit-msg and pre-push, all read
+# from the table (QS_SP_<TYPE>_<PROP>). A rule is refused only for the branch's own special type.
+
+# Expand the @tokens of a paths value into globs, one per line. It mirrors PATH_TOKENS of
+# engine/policy.py (tests/unit/test_special_hooks.py compares both).
+# Arguments: $1 a paths value: globs and @tokens joined with '|' (as QS_SP_<TYPE>_PATHS holds it).
+# Returns: 0; prints the globs in order, an unknown @token as is.
+special_expand_paths() {
+	local repo='README.md|CHANGELOG.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|SUPPORT.md|CONTRIBUTORS.md|MAINTAINERS.md|ROADMAP.md|FAQ.md|INSTALL.md|ARCHITECTURE.md|API.md|DEVELOPMENT.md|AUTHORS|LICENSE|CODEOWNERS|CITATION.cff'
+	local tests='src/test/**|**/test/**|**/tests/**|**/*_test.*|**/test_*.py|**/*.spec.*|**/*.test.*'
+	local item list=() parts=() rep=() tst=()
+	IFS='|' read -ra parts <<<"$1"
+	IFS='|' read -ra rep <<<"$repo"
+	IFS='|' read -ra tst <<<"$tests"
+	for item in ${parts[@]+"${parts[@]}"}; do
+		case "$item" in
+		@repo-files) list+=("${rep[@]}") ;;
+		@docs) list+=('*.md' '**/*.md' 'docs/**' "${rep[@]}") ;;
+		@tests) list+=("${tst[@]}") ;;
+		*) list+=("$item") ;;
+		esac
+	done
+	printf '%s\n' "${list[@]}" | awk '!seen[$0]++'
+}
+
+# Translate a glob into an extended regular expression: '**/' any folders, '**' anything, '*'
+# anything but '/', '?' one character but '/'.
+# Arguments: $1 glob. Returns: 0; prints the anchored regex.
+special_glob_regex() {
+	local g="$1" out="^" c i n="${#1}"
+	for ((i = 0; i < n; i++)); do
+		c="${g:i:1}"
+		case "$c" in
+		'*')
+			if [ "${g:i:2}" = '**' ]; then
+				if [ "${g:i+2:1}" = / ]; then
+					out+='(.*/)?'
+					i=$((i + 2))
+				else
+					out+='.*'
+					i=$((i + 1))
+				fi
+			else out+='[^/]*'; fi
+			;;
+		'?') out+='[^/]' ;;
+		'.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|') out+="\\$c" ;;
+		*) out+="$c" ;;
+		esac
+	done
+	printf '%s$' "$out"
+}
+
+# Whether a path matches any glob of a list.
+# Arguments: $1 path, $2.. globs. Returns: 0 when one matches; 1 otherwise.
+special_path_match() {
+	local p="$1" g re
+	shift
+	for g in "$@"; do
+		re="$(special_glob_regex "$g")"
+		[[ $p =~ $re ]] && return 0
+	done
+	return 1
+}
+
+# The gate level a special type imposes on its branches.
+# Arguments: $1 branch. Returns: 0; prints the level (nothing for an ordinary branch or a type
+# with level null).
+special_gate_level() {
+	local t
+	t="$(special_kind "$1")"
+	[ -n "$t" ] || return 0
+	special_prop "$t" LEVEL
+}
+
+# Whether a merge, squash, cherry-pick or rebase is in progress: the suite and git make those
+# commits; the rules of a type apply to the commits a person makes.
+# Arguments: none. Returns: 0 when one is in progress; 1 otherwise.
+special_in_progress() {
+	local f
+	for f in MERGE_HEAD SQUASH_MSG CHERRY_PICK_HEAD rebase-merge rebase-apply; do
+		[ -e "$(git rev-parse --git-path "$f")" ] && return 0
+	done
+	return 1
+}
+
+# Whether the badge between the qs:version markers of the README differs in the index and HEAD.
+# Arguments: none. Returns: 0 when it differs; 1 otherwise.
+special_badge_changed() {
+	local rx='<!-- qs:version -->.*<!-- /qs:version -->' old new
+	old="$(git show "HEAD:$QS_BR_README" 2>/dev/null | grep -o "$rx" || true)"
+	new="$(git show ":$QS_BR_README" 2>/dev/null | grep -o "$rx" || true)"
+	[ "$old" != "$new" ]
+}
+
+# Check the staged files of a commit against the table: paths of the type; the changelog and the
+# README badge only on DOCS (DOCS mode: DOCS enabled with on_release required).
+# Arguments: $1 branch, $2.. the staged paths (added, changed, renamed, deleted). Returns: 0 when
+# fine; 1 and one line per problem on stdout otherwise.
+special_check_staged() {
+	local b="$1" t f paths=() g bad=0 docs_mode=0
+	shift
+	t="$(special_kind "$b")"
+	g=""
+	[ -z "$t" ] || g="$(special_prop "$t" PATHS)"
+	if [ -n "$g" ]; then
+		mapfile -t paths < <(special_expand_paths "$g")
+		for f in "$@"; do
+			special_path_match "$f" "${paths[@]}" && continue
+			echo "$f: not allowed on a $t branch (paths: $g)"
+			bad=1
+		done
+	fi
+	if special_enabled DOCS && [ "$(special_prop DOCS ON_RELEASE)" = required ]; then docs_mode=1; fi
+	if [ "$docs_mode" = 1 ] && [ "$t" != DOCS ] && ! is_release_branch "$b" && ! is_ot_release_branch "$b" && ! is_mainline "$b"; then
+		for f in "$@"; do
+			[ "$f" = "$QS_BR_CHANGELOG" ] || continue
+			echo "$f: only the DOCS branch writes the changelog (git docs)"
+			bad=1
+		done
+		if printf '%s\n' "$@" | grep -qxF -- "$QS_BR_README" && special_badge_changed; then
+			echo "$QS_BR_README: the version badge changes only on the DOCS branch (git docs)"
+			bad=1
+		fi
+	fi
+	return "$bad"
+}
+
+# Check the Conventional Commits type of a message against the allowed types of a special type.
+# Arguments: $1 type (special), $2 subject. Returns: 0 when allowed (or when the subject has no
+# type: the conventional check reports it); 1 and the reason on stdout otherwise.
+special_check_commit_type() {
+	local t="$1" ct allowed
+	ct="$(printf '%s' "$2" | sed -nE 's/^([a-z]+)(\([^)]*\))?!?: .*/\1/p')"
+	[ -n "$ct" ] || return 0
+	allowed="$(special_prop "$t" TYPES)"
+	[ "$allowed" != '*' ] || return 0
+	case "|$allowed|" in
+	*"|$ct|"*) return 0 ;;
+	esac
+	if [ -z "$allowed" ]; then
+		echo "a $t branch takes no commits of its own"
+	else
+		echo "type '$ct' is not allowed on a $t branch (allowed: ${allowed//|/, })"
+	fi
+	return 1
+}
+
+# Check the trailers a special type requires on every commit of its own.
+# Arguments: $1 type, $2 the commit message. Returns: 0 when all are present; 1 and one line per
+# missing trailer on stdout otherwise.
+special_check_trailers() {
+	local t="$1" msg="$2" tr bad=0 list
+	list="$(special_prop "$t" TRAILERS)"
+	[ -n "$list" ] || return 0
+	local IFS='|'
+	for tr in $list; do
+		printf '%s\n' "$msg" | grep -qiE "^${tr}:[[:space:]]*[^[:space:]]" && continue
+		echo "missing trailer '$tr:' (required on $t branches)"
+		bad=1
+	done
+	return "$bad"
+}
