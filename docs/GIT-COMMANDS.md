@@ -141,7 +141,7 @@ git add -A && git commit -m "chore: initial project skeleton"
   Checks the new branch out.
 - **Use it when:** starting a version (from `develop`), an OT, or a group of tasks that will have
   several final branches.
-- **Who:** lead (a version: human).
+- **Who:** lead and systems-analyst (a version: human only).
 
 ```bash
 git checkout develop && git np patch      # 6.22.7/ORIGINAL
@@ -154,7 +154,7 @@ git np 188858                             # 6.22.7/188858/ORIGINAL
 - **Does:** a new **final** branch `<F>/<name>` from the current `ORIGINAL` (or `--from`).
 - **Use it when:** starting one task. In an agent worktree (the `ORIGINAL` is checked out
   elsewhere) always pass `--from`.
-- **Who:** anyone.
+- **Who:** lead and systems-analyst; developers never (the lead creates their branch).
 
 ```bash
 git nr login --from 6.22.7/188858/ORIGINAL
@@ -166,7 +166,7 @@ git nr login --from 6.22.7/188858/ORIGINAL
 - **Does:** the current final branch `<F>/<x>` becomes `<F>/<x>/ORIGINAL` (on origin too: delete
   and push, after confirmation).
 - **Use it when:** a task turns out to need sub-tasks.
-- **Who:** human (it renames a shared branch).
+- **Who:** lead (asks the human); developer, qa never (qa reports bugfix needs).
 
 ### git estructura / git es
 
@@ -175,7 +175,7 @@ git nr login --from 6.22.7/188858/ORIGINAL
   are only checked (`=`, with `N behind` when they need `git subir`); a new version gets its
   version commit. Validates everything before creating anything. `-n` shows the plan only.
 - **Use it when:** planning an OT with several tasks at once, or copying a structure.
-- **Who:** `-n` anyone; creating: lead.
+- **Who:** `-n` anyone; creating: lead and systems-analyst (after the approved plan).
 
 ```bash
 printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
@@ -190,7 +190,7 @@ printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
   source tree.
 - **Use it when:** a test or pre-release copy (`6.22.7-SNAPSHOT`, `6.22.7-rc.1`) that must live
   apart from the main tree.
-- **Who:** human.
+- **Who:** lead and systems-analyst (a version: human only).
 
 ### git arbol
 
@@ -281,7 +281,7 @@ origin) nothing else can be created in it. The commands below are described when
   check). The message is generated (`Refs`, commits, files); fill the subject: it becomes a line
   of `CHANGELOG.md`, so write it for the reader. Agents pass `-m`.
 - **Use it when:** a task (or a whole OT) is finished, reviewed and passes the gate.
-- **Who:** lead (into an `ORIGINAL`). A version is not integrated into `develop` with it: use
+- **Who:** lead and systems-analyst, after the human's OK (into an `ORIGINAL`). A version is not integrated into `develop` with it: use
   the release commands.
 
 ```bash
@@ -305,7 +305,7 @@ git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate
   `RELEASE` are refused). At release it is deleted, or set aside as `unmerged/...` when commits
   are still undistributed.
 - **Use it when:** you want to try branches together before integrating any of them.
-- **Who:** anyone.
+- **Who:** lead and systems-analyst (create); anyone works in a TESTING sandbox.
 
 ```bash
 git testing crear 6.22.7/188858/login 6.22.7/188858/menu
@@ -350,7 +350,7 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   A release given up by deleting `<v>/RELEASE` by hand leaves no state behind: the next
   `git release` says so (`stale release state ... is cleared`) and takes every OT that exists then.
 - **Use it when:** every OT of the version is integrated into `<version>/ORIGINAL`.
-- **Who:** human. Then review `CHANGELOG.md` on `<version>/RELEASE` (edit and commit there).
+- **Who:** human only. Then review `CHANGELOG.md` on `<version>/RELEASE` (edit and commit there).
 
 ### git release --reset
 
@@ -363,7 +363,7 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   left.
 - **Use it when:** a cancelled release must not be resumed: delete `<version>/RELEASE` by hand
   first, then reset. Usually not needed: the next `git release` clears a stale state by itself.
-- **Who:** human.
+- **Who:** human only.
 
 ### git publicar
 
@@ -372,7 +372,7 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   `CHANGELOG.md` entry), pushed, and deleted. With two or more `RELEASE` branches `--version` is
   required: one release at a time. Resumes if the push fails.
 - **Use it when:** the release was reviewed.
-- **Who:** human.
+- **Who:** human only.
 
 ### git combinar
 
@@ -395,7 +395,7 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   one `git push --atomic` to origin. On any conflict or failure nothing changes; if only the
   push fails, the local result is kept and the push to run is printed.
 - **Use it when:** several prepared versions must reach `develop` as one.
-- **Who:** human.
+- **Who:** human only.
 
 ## 8. Quality and repository files
 
