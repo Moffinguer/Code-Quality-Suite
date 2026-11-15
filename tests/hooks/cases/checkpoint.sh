@@ -44,9 +44,6 @@ git checkpoint "step 2" >/dev/null || fail "git checkpoint step 2"
 [ "$(git rev-list --count "$tip..$CK")" = 2 ] && ok "a second point extends the branch" || fail "points not chained"
 git cat-file -e "$CK:untracked.txt" 2>/dev/null && fail "deleted file kept in point 2" || ok "a deleted file leaves the next point"
 git checkpoint "" >/dev/null 2>&1 && fail "empty message accepted" || ok "empty message refused"
-git checkout -q 6.0.0/ot1/ORIGINAL
-git checkpoint "x" >/dev/null 2>&1 && fail "checkpoint on an ORIGINAL accepted" || ok "an ORIGINAL cannot be checkpointed"
-git checkout -q 6.0.0/ot1/a
 
 # --- CK2 list and go back
 out="$(git checkpoint --lista)"
@@ -65,3 +62,6 @@ git checkpoint --volver 9 >/dev/null 2>&1 && fail "unknown point accepted" || ok
 # --- CK3 never on origin
 git checkpoint "step 3" >/dev/null || fail "git checkpoint step 3"
 [ -z "$(git ls-remote origin "$CK")" ] && ok "checkpoint pushes nothing to origin" || fail "$CK on origin"
+git reset -q --hard
+git checkout -q 6.0.0/ot1/ORIGINAL
+git checkpoint "x" >/dev/null 2>&1 && fail "checkpoint on an ORIGINAL accepted" || ok "an ORIGINAL cannot be checkpointed"
