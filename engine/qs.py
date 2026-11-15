@@ -19,6 +19,7 @@
                            Common Changelog entry of a release (stdout);
                            --write merges it into CHANGELOG.md
   qs.py release-docs --version V [--date D]   README version badge and CITATION.cff
+  qs.py rules-upgrade <repo>   upgrade the repository's rules file to this suite, write the stamp
   qs.py repo-files [--force] [--dry-run] [NAME...]   create the missing standard repository files
 
 Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
@@ -1586,6 +1587,11 @@ def main(argv):
     """
     if argv and argv[0] in TOOL_COMMANDS:
         return tool_main(argv[0], argv[1:])
+    if argv and argv[0] == "rules-upgrade":
+        # why: no App and no rules loading; the upgrade must work on a file the engine rejects
+        return policy.rules_upgrade(
+            os.path.abspath(argv[1] if len(argv) > 1 else env("QS_ROOT", "."))
+        )
     cmd = (
         argv[0]
         if argv and argv[0] in ("run", "explain", "langs", "sync", "ask", "policy", "encoding")
