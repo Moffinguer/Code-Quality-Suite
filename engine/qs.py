@@ -20,6 +20,8 @@
                            --write merges it into CHANGELOG.md
   qs.py release-docs --version V [--date D]   README version badge and CITATION.cff
   qs.py repo-files [--force] [--dry-run] [NAME...]   create the missing standard repository files
+  qs.py format-check [--rev REV] [--fix] [PATH...]   FORMAT branch: each file is the formatter
+                           output of its version at REV (default HEAD); --fix formats in place
 
 Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
      QS_EXEC_FILES (file listing executable paths), QUALITY_LOG_LEVEL/FORMAT/FILE.
@@ -31,6 +33,7 @@ import datetime
 import importlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -1486,7 +1489,166 @@ def _tool_repo_files(ap, argv, where):
     return 0
 
 
+def _format_expand(root, paths):
+    """Files to format: the given files, directories walked, or every file of the tree.
+
+    Args:
+        root: the folder the paths are relative to.
+        paths: files or directories relative to root; empty means the whole tree.
+
+    Returns:
+        list[str]: the sorted file paths relative to root (the .git folder is skipped).
+    """
+    out = set()
+    for p in paths or ["."]:
+        full = os.path.join(root, p)
+        if os.path.isdir(full):
+            for base, dirs, names in os.walk(full):
+                dirs[:] = [d for d in dirs if d != ".git"]
+                out.update(
+                    os.path.relpath(os.path.join(base, n), root).replace(os.sep, "/") for n in names
+                )
+        elif os.path.isfile(full):
+            out.add(os.path.normpath(p).replace(os.sep, "/"))
+    return sorted(out)
+
+
+def _format_in_place(root, files, rules_path):
+    """Run the suite formatters on files of a folder, in place.
+
+    QS_FORMAT_CMD (a command line that takes one file path as its last argument and rewrites it;
+    the tests use it as a fake formatter) replaces the engine. Otherwise the engine runs in fix
+    mode over the files; its findings are not format differences and are ignored.
+
+    Args:
+        root: the folder holding the files (a copy, never the real work tree).
+        files: the paths relative to root.
+        rules_path: the rules file the engine reads ('' for the folder's own).
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: a file or the state folder cannot be written.
+    """
+    if not files:
+        return
+    cmd = os.environ.get("QS_FORMAT_CMD", "")
+    if cmd:
+        for f in files:
+            subprocess.run([*shlex.split(cmd), os.path.join(root, f)], cwd=root, check=False)
+        return
+    state = tempfile.mkdtemp(prefix="qs-format-")
+    try:
+        listing = os.path.join(state, "files.lst")
+        with open(listing, "wb") as fh:
+            fh.write(b"\0".join(f.encode("utf-8", "surrogateescape") for f in files) + b"\0")
+        child = dict(
+            os.environ,
+            QUALITY_MODE="fix",
+            QS_PERSIST="0",
+            QS_ROOT=root,
+            QS_STATE=state,
+            QS_FILES_FROM=listing,
+        )
+        if rules_path:
+            child["QS_RULES"] = rules_path
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "qs.py"), "run"],
+            cwd=root,
+            env=child,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    finally:
+        shutil.rmtree(state, ignore_errors=True)
+
+
+def format_blobs(items, rules_path=""):
+    """The formatter output of some file contents.
+
+    Args:
+        items: {path: bytes}, the contents to format (paths relative to a temporary folder).
+        rules_path: the rules file to give the engine ('' for none).
+
+    Returns:
+        dict[str, bytes]: the same paths with the formatted content.
+
+    Raises:
+        OSError: the temporary folder cannot be written.
+    """
+    tmp = tempfile.mkdtemp(prefix="qs-fmt-")
+    try:
+        for path, data in items.items():
+            full = os.path.join(tmp, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "wb") as fh:
+                fh.write(data)
+        copied = os.path.join(tmp, ".quality-rules.json")
+        if rules_path and os.path.isfile(rules_path):
+            shutil.copy(rules_path, copied)
+        _format_in_place(tmp, sorted(items), copied if os.path.isfile(copied) else "")
+        return {p: read_bytes(os.path.join(tmp, p)) for p in items}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _tool_format_check(ap, argv, where):
+    """qs.py format-check: is every file the formatter output of its previous version?
+
+    A FORMAT branch holds formatter output only. Check mode formats the content each path has at
+    --rev and compares it with the work tree file (what is staged). --fix instead formats the
+    files of the folder in place (git formatear runs it in a copy of the tree).
+
+    Args:
+        ap: the argument parser of the command.
+        argv: the command arguments: [--rev REV] [--fix] [PATH...]; without paths, QS_FILES_FROM
+            (the hooks' list) in check mode and the whole tree in --fix mode.
+        where: namespace with root, data, br and git.
+
+    Returns:
+        int: 0 when every file matches (or after --fix), 1 when some file differs, 2 on bad usage.
+    """
+    ap.add_argument("--rev", default="HEAD")
+    ap.add_argument("--fix", action="store_true")
+    ap.add_argument("paths", nargs="*")
+    a = ap.parse_args(argv)
+    rules_path = env("QS_RULES", os.path.join(where.root, ".quality-rules.json"))
+    paths = a.paths
+    if not paths and not a.fix and os.environ.get("QS_FILES_FROM"):
+        paths = read_list(os.environ["QS_FILES_FROM"])
+    if a.fix:
+        files = _format_expand(where.root, paths)
+        _format_in_place(where.root, files, rules_path if os.path.isfile(rules_path) else "")
+        print(f"formatted {len(files)} file(s)")
+        return 0
+    if not paths:
+        print("format-check: no files given", file=sys.stderr)
+        return 2
+    old = old_blobs(where.root, a.rev, paths)
+    bad = [
+        (p, f"is not in {a.rev}: a FORMAT branch only reformats existing files")
+        for p in paths
+        if p not in old
+    ]
+    known = [p for p in paths if p in old]
+    want = format_blobs({p: old[p] for p in known}, rules_path)
+    for p in known:
+        try:
+            have = read_bytes(os.path.join(where.root, p))
+        except OSError:
+            bad.append((p, "cannot be read"))
+            continue
+        if have != want[p]:
+            bad.append((p, "is not the formatter output of its previous version"))
+    for p, why in bad:
+        print(f"[format-check] {p}: {why}")
+    return 1 if bad else 0
+
+
 TOOL_COMMANDS = {
+    "format-check": _tool_format_check,
     "version-set": _tool_version_set,
     "version-get": _tool_version_get,
     "version-align": _tool_version_align,
