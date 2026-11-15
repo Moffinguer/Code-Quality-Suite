@@ -349,6 +349,14 @@ configure_repo() {
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
 	# QS_AMEND=1 tells prepare-commit-msg it is an amend
+	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit
+	local s n
+	for s in "$suite"/scripts/git-*.sh; do
+		[ -f "$s" ] || continue
+		for n in $(sed -n 's/^# qs-alias:[[:space:]]*//p' "$s" | head -n1); do
+			git config "alias.$n" "!bash '$s'"
+		done
+	done
 	git config alias.amend '!f() { QS_AMEND=1 git commit --amend "$@"; }; f'
 	git config alias.limpiar-unmerged "!bash '$suite/scripts/git-unmerged.sh'"
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"

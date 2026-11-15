@@ -195,9 +195,71 @@ printf '6.22.7\n  188858\n    login\n    bank/\n      bugfix\n' | git es -n
 
 - **Syntax:** `git arbol [prefix]`
 - **Does:** the tree with parents (`+`), finals (`-`), commits pending to integrate, branches
-  behind their parent, branches set aside (`~ unmerged/...`), and where you are.
+  behind their parent, branches set aside (`~ unmerged/...`), and where you are. Special
+  branches carry a marker (`[docs]`, `[migration]`, `[refactor]`, `[format]`, `[tests]`,
+  `[spike]`, `[attempt]`, `[review]`, `[quarantine]`, `[checkpoint]`, `[testing]`); an open
+  MIGRATION is warned about (`MIGRATION open: nothing else can be created`).
 - **Use it when:** before integrating or releasing; whenever you are lost.
 - **Who:** anyone.
+
+### Special branches (6.0.0)
+
+Reserved names (case-insensitive; exact case in their own place): `DOCS` and `MIGRATION` under
+the version, `REFACTOR`, `FORMAT`, `TESTS` and `SPIKE` under a node, `ATTEMPT-<n>` under a task,
+`REVIEW-<task>`, `QUARANTINE-<task>` and `CHECKPOINT-<task>` next to the task. `git np`, `git nr`
+and `git es` refuse them and name the command below; a type set to `false` in
+`branches.special` frees its name. While a version has an open MIGRATION (local or only on
+origin) nothing else can be created in it. The commands below are described when each arrives.
+
+### git migracion
+
+- **Syntax:** `git migracion` (stub: not available yet; creates `<version>/MIGRATION`)
+- **Who:** human.
+
+### git docs
+
+- **Syntax:** `git docs` (stub: not available yet; creates `<version>/DOCS`)
+- **Who:** human.
+
+### git refactor
+
+- **Syntax:** `git refactor` (stub: not available yet; creates `<node>/REFACTOR`)
+- **Who:** human.
+
+### git tests
+
+- **Syntax:** `git tests` (stub: not available yet; creates `<node>/TESTS`)
+- **Who:** human, qa, lead.
+
+### git formatear
+
+- **Syntax:** `git formatear [paths]` (stub: not available yet; creates `<node>/FORMAT`)
+- **Who:** human.
+
+### git spike
+
+- **Syntax:** `git spike` (stub: not available yet; creates `<node>/SPIKE`)
+- **Who:** anyone.
+
+### git intentos / git elegir
+
+- **Syntax:** `git intentos <task> <N>`, `git elegir <task>` (stub: not available yet)
+- **Who:** lead; the human confirms.
+
+### git revision
+
+- **Syntax:** `git revision <task>` (stub: not available yet; creates `<node>/REVIEW-<task>`)
+- **Who:** reviewer, author.
+
+### git cuarentena / git aceptar
+
+- **Syntax:** `git cuarentena <task>`, `git aceptar <c...> --a <branch>` (stub: not available yet)
+- **Who:** external-worker; lead or human.
+
+### git checkpoint
+
+- **Syntax:** `git checkpoint "<msg>"` (stub: not available yet; local save points)
+- **Who:** any agent.
 
 ## 6. Sync and integrate
 

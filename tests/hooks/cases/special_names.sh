@@ -110,3 +110,47 @@ git branch -q --no-track 6.0.0/MIGRATION/ORIGINAL 6.0.0/ORIGINAL
 out="$(git arbol 6.0.0 2>&1)"
 grep -q "6.0.0: MIGRATION open: nothing else can be created" <<<"$out" && grep -q "MIGRATION/ORIGINAL.*\[migration\]" <<<"$out" &&
 	ok "git arbol warns about an open MIGRATION" || fail "MIGRATION warning: $out"
+
+# --- N4 MIGRATION lock (6.0.0/MIGRATION/ORIGINAL exists locally)
+git checkout -q 6.0.0/ot1/ORIGINAL
+# locked CMD...: the command must fail and name MIGRATION.
+# Arguments: the command. Returns: 0 when refused naming MIGRATION; fails the case otherwise.
+locked() {
+	local out
+	out="$("$@" 2>&1)" && fail "not refused: $*"
+	grep -q "MIGRATION" <<<"$out" || fail "refusal without MIGRATION: $* -> $out"
+}
+locked git np ot2
+locked git nr x
+locked git nv 6.0.0
+out="$(printf '6.0.0/ot9/a\n' | git es 2>&1)" && fail "git es in a locked version"
+grep -q "MIGRATION" <<<"$out" || fail "git es lock message: $out"
+locked git testing crear 6.0.0/ot1/DOCS --nivel 6.0.0/ot1
+lib "special_migration_lock 6.0.0 6.0.0/DOCS" >/dev/null || fail "git docs lock helper"
+ok "MIGRATION lock: np, nr, es, nv, testing crear and docs refused"
+git checkout -q 6.0.0/MIGRATION/ORIGINAL
+git nr java17 >/dev/null && [ "$(git branch --show-current)" = 6.0.0/MIGRATION/java17 ] && ok "git nr java17 works inside MIGRATION" || fail "nr inside MIGRATION"
+git checkout -q develop
+git np 7.0.0 >/dev/null && git np ot1 >/dev/null && ok "another version is free" || fail "other version locked"
+# origin-only MIGRATION
+git checkout -q develop
+git np 8.0.0 >/dev/null
+git push -q origin 8.0.0/ORIGINAL:refs/heads/8.0.0/MIGRATION/ORIGINAL
+git show-ref --verify -q refs/heads/8.0.0/MIGRATION/ORIGINAL && fail "fixture: MIGRATION is local"
+locked git np ot1
+ok "MIGRATION only on origin locks the version"
+
+# --- N6 post-checkout line
+out="$(git checkout 6.0.0/DOCS 2>&1)"
+grep -q '^\[special\] DOCS: ' <<<"$out" || fail "post-checkout special line: $out"
+out="$(git checkout 6.0.0/ot1/ORIGINAL 2>&1)"
+grep -q '\[special\]' <<<"$out" && fail "post-checkout line on a normal branch: $out"
+ok "post-checkout prints one [special] line on special branches only"
+
+# --- N7 qs-alias header
+mkdir -p "$T/suite-n7/scripts"
+printf '#!/usr/bin/env bash\n# qs-alias: zeta zeta-largo\n' >"$T/suite-n7/scripts/git-zeta.sh"
+lib "configure_repo '$T/suite-n7'"
+[ "$(git config alias.zeta)" = "!bash '$T/suite-n7/scripts/git-zeta.sh'" ] && [ -n "$(git config alias.zeta-largo)" ] &&
+	ok "configure_repo registers scripts with a qs-alias header" || fail "qs-alias"
+lib "configure_repo '$SUITE'"

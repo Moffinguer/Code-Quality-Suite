@@ -248,3 +248,44 @@ special_arbol_warnings() {
 		done
 	return 0
 }
+
+# The open MIGRATION of a version, local or only on origin: '<v>/MIGRATION' or '<v>/MIGRATION/...'.
+# Arguments: $1 version. Returns: 0 and prints '<v>/MIGRATION' when the version has one; 1 when
+# MIGRATION is disabled or the version has none.
+special_migration_open() {
+	local v="$1" r
+	special_enabled MIGRATION || return 1
+	for r in refs/heads refs/remotes/origin; do
+		if git show-ref --verify -q "$r/$v/MIGRATION" ||
+			[ -n "$(git for-each-ref --count=1 "$r/$v/MIGRATION/")" ]; then
+			printf '%s/MIGRATION' "$v"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# The MIGRATION lock: while a version has an open MIGRATION nothing else can be created in it
+# (git np, nr, es, nv, docs, testing crear), except inside the MIGRATION subtree itself.
+# Arguments: $1 version, $2 the branch about to be created (empty when unknown). Returns: 0 and
+# prints the refusal when the version is locked for that branch; 1 when it is free.
+special_migration_lock() {
+	local v="$1" b="${2:-}" m
+	case "$b" in "$v"/MIGRATION | "$v"/MIGRATION/*) return 1 ;; esac
+	m="$(special_migration_open "$v")" || return 1
+	echo "$v has an open MIGRATION ($m): nothing else can be created until it is integrated (git integra) or deleted"
+}
+
+# One-line summary of the rules of a special type, for the post-checkout hook.
+# Arguments: $1 type. Returns: 0; prints "at <at>, integrates <how>, order <o>, ..." with only
+# the properties that are set.
+special_summary() {
+	local t="$1" p v out
+	out="at $(special_prop "$t" AT), integrates $(special_prop "$t" INTEGRATES), order $(special_prop "$t" ORDER)"
+	for p in TYPES PATHS LEVEL TRAILERS; do
+		v="$(special_prop "$t" "$p")"
+		[ -z "$v" ] || out="$out, $(printf '%s' "$p" | tr '[:upper:]' '[:lower:]') $v"
+	done
+	[ "$(special_prop "$t" PUSH)" = normal ] || out="$out, push $(special_prop "$t" PUSH)"
+	printf '%s' "$out"
+}
