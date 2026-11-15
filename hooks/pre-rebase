@@ -8,6 +8,7 @@
 #   flow squash    also '<F>/ORIGINAL' below the OT onto its parent ORIGINAL once all its
 #                  children are integrated (git integra); '<version>/RELEASE' onto develop
 #                  (its parent: git subir, git publicar), never onto anything else
+#   special        FORMAT never rebased; nothing rebased onto CHECKPOINT, QUARANTINE or REVIEW
 #   develop        never rebased in any flow (shared): git publicar adds one commit on top
 # git passes: $1 = upstream, $2 = branch being rebased (empty = current).
 set -euo pipefail
@@ -20,12 +21,21 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 [ -f "$LIB" ] && . "$LIB" || exit 0
 qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
-[ "${QUALITY_ALLOW_REBASE:-0}" = 1 ] && exit 0
 
 upstream="${1:-}"
 branch="${2:-$(current_branch || true)}"
 [ -n "$upstream" ] && [ -n "$branch" ] || exit 0
 valid_branch_name "$branch" >/dev/null 2>&1 || exit 0
+# --- special branches: FORMAT is never rebased; nothing is rebased onto CHECKPOINT, QUARANTINE or
+# REVIEW (not configurable, so QUALITY_ALLOW_REBASE does not lift it)
+# shellcheck disable=SC1091
+. "$(dirname "$LIB")/special-integra.sh"
+if sp_msg="$(si_rebase_refusal "$branch" "$upstream")"; then
+	echo "$sp_msg" >&2
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
+[ "${QUALITY_ALLOW_REBASE:-0}" = 1 ] && exit 0
 up="$(git rev-parse -q --verify "${upstream}^{commit}" 2>/dev/null)" || exit 0
 # --- TESTING sandbox guard (never rebased, either direction) ---
 if testing_blocks_rebase "$branch" "$upstream"; then
