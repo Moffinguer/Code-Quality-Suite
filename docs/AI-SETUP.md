@@ -1,5 +1,8 @@
 # AI environment: from zero to a first project
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+>
 > No API credits yet? `docs/AI-DEMO.md` runs the same setup with every role on free API keys.
 
 Minimal steps to reproduce the AI working environment on **Windows 11 + Git Bash + Docker
