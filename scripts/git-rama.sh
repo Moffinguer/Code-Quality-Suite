@@ -2073,7 +2073,10 @@ cmd_nueva_version() {
 		printf 'R\t%s/%s\t%s\n' "$v" "$QS_BR_LEAF" "$src"
 		if [ -n "$srcv" ] && [ "$full" = 1 ]; then
 			all_branches | awk -v p="$srcv/" -v t="$srcv/$QS_BR_LEAF" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
-				'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }'
+				'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }' |
+				while IFS=$'\t' read -r a b; do # why: special branches belong to one version
+					if [ -z "$(special_kind "$b")" ]; then printf '%s\t%s\n' "$a" "$b"; fi
+				done
 		elif [ -n "$node" ] && [ "$node" != "$srcv" ]; then
 			rel="${node#"$srcv"/}"
 			pre=""
