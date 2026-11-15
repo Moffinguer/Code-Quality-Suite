@@ -374,7 +374,7 @@ configure_repo() {
 				continue
 			fi
 			printf -v "$k" '%s' "$s"
-			git config "alias.$n" "!bash '$s'"
+			git config "alias.$n" "!QS_ALIAS=$n bash '$s'" # why: one script may serve several aliases
 		done
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
