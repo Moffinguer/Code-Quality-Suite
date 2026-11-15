@@ -58,12 +58,12 @@ ot_with_merge n n.py 'N = 1' n_side.txt
 git checkout -q develop
 out="$(git release --version "$V" --yes 2>&1)" || fail "R1: version release failed: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
-expected="$(printf '%s\n' "chore(version): $V" "chore(release): OT m of $V" "chore(release): OT n of $V" "docs(changelog): $V")"
+expected="$(printf '%s\n' "chore(version): $V" "chore(ot): OT m of $V" "chore(ot): OT n of $V" "docs(changelog): $V")"
 [ "$subjects" = "$expected" ] && [ -z "$(git rev-list --merges "develop..$V/RELEASE")" ] &&
 	[ "$(git show "$V/RELEASE:m.py")" = 'M = 1' ] && [ "$(git show "$V/RELEASE:m_side.txt")" = 'side of m' ] &&
 	[ "$(git show "$V/RELEASE:n.py")" = 'N = 1' ] && [ "$(git show "$V/RELEASE:n_side.txt")" = 'side of n' ] &&
 	ok "R1: each OT is one squash commit in OT order, no merge commit, nothing replayed" || fail "R1: $subjects / $out"
-body="$(git log -n1 --format=%B --grep="^chore(release): OT m of $V" "$V/RELEASE")"
+body="$(git log -n1 --format=%B --grep="^chore(ot): OT m of $V" "$V/RELEASE")"
 grep -qx "Squashed: $V/m/RELEASE [0-9a-f]\{40\}" <<<"$body" && grep -q "tag ot/$V/m" <<<"$body" && grep -q '^Files:' <<<"$body" &&
 	ok "R1: the squash message names the OT, its tag and Squashed: <ot RELEASE> <sha>" || fail "R1 message: $body"
 cl="$(git show "$V/RELEASE:CHANGELOG.md")"

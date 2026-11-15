@@ -88,7 +88,7 @@ grep -q 'reviewed by hand' <<<"$out" && grep -q "($bhash; b)" <<<"$out" && [ "$(
 # --- V2: the release; b (older work) before a ------------------------------------------------
 out="$(git release --version "$V" --yes 2>&1)" || fail "V2: version release failed: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE")"
-expected="$(printf '%s\n' "chore(version): $V" "chore(release): OT b of $V" "chore(release): OT a of $V" "docs(changelog): $V")"
+expected="$(printf '%s\n' "chore(version): $V" "chore(ot): OT b of $V" "chore(ot): OT a of $V" "docs(changelog): $V")"
 [ "$(git branch --show-current)" = "$V/RELEASE" ] && [ "$(grep -v '^docs(readme)' <<<"$subjects")" = "$expected" ] &&
 	ok "V2: $V/RELEASE = $V/ORIGINAL + one squash per OT, b then a (oldest first), then the release commits" ||
 	fail "V2: $subjects"
@@ -129,7 +129,7 @@ released_ot r r.txt 'from r' "feat(r): text r" "2020-03-01T10:00:00"
 git checkout -q develop
 out="$(git release --version "$V" --yes 2>&1)" && fail "V5: conflict not reported"
 grep -q "conflict while squashing OT q" <<<"$out" && grep -q 'git commit' <<<"$out" &&
-	[ "$(git log -1 --format=%s "$V/RELEASE")" = "chore(release): OT p of $V" ] &&
+	[ "$(git log -1 --format=%s "$V/RELEASE")" = "chore(ot): OT p of $V" ] &&
 	git rev-parse -q --verify "refs/heads/$V/ORIGINAL" >/dev/null &&
 	[ "$(git rev-parse "$V/q/RELEASE")" = "$(git rev-parse "origin/$V/q/RELEASE")" ] &&
 	ok "V5: the conflict stops with instructions; p is on RELEASE, the OT RELEASEs untouched" || fail "V5 stop: $out"
@@ -152,7 +152,7 @@ grep -q 'OT q: the squash finished by hand' <<<"$out" && grep -q 'was rejected; 
 rm -f "$CASE_REPO.git/hooks/pre-receive"
 out="$(git release --version "$V" --yes 2>&1)" || fail "V5: resume after the push: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
-[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(release): OT p of $V" "chore(release): OT q of $V" "chore(release): OT r of $V" "docs(changelog): $V")" ] &&
+[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(ot): OT p of $V" "chore(ot): OT q of $V" "chore(ot): OT r of $V" "docs(changelog): $V")" ] &&
 	[ "$(git show "$V/RELEASE:shared.txt")" = "$(printf 'from p\nfrom q')" ] && [ "$(git show "$V/RELEASE:r.txt")" = 'from r' ] &&
 	[ "$(git rev-parse "$V^{commit}")" = "$(git rev-parse "$V/RELEASE")" ] &&
 	[ "$(git ls-remote origin "refs/heads/$V/RELEASE" | cut -f1)" = "$(git rev-parse "$V/RELEASE")" ] &&
@@ -214,8 +214,8 @@ out="$(git changelog --version "$V" 2>&1)" || fail "abandon: preview: $out"
 out="$(git release --version "$V" --yes 2>&1)" || fail "abandon: rerun failed: $out"
 grep -q "stale release state of $V is cleared" <<<"$out" || fail "abandon: no note: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
-[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(release): OT p of $V" "chore(release): OT q of $V" \
-	"chore(release): OT r of $V" "chore(release): OT s of $V" "docs(changelog): $V")" ] &&
+[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(ot): OT p of $V" "chore(ot): OT q of $V" \
+	"chore(ot): OT r of $V" "chore(ot): OT s of $V" "docs(changelog): $V")" ] &&
 	[ "$(git show "$V/RELEASE:s.txt")" = 'from s' ] && [ "$(git show "$V/RELEASE:p.txt")" = 'from p' ] &&
 	[ -z "$(git config --get-regexp "^qs\.release\.$V\.(plan|ots|current)")" ] &&
 	[ "$(git config --get "qs.release.$V.tag")" = "$V" ] &&
@@ -245,5 +245,5 @@ grep -q "release state of $V forgotten" <<<"$out" && [ -z "$(git config --get-re
 out="$(git release --reset --version "$V" --yes 2>&1)" || fail "reset again: $out"
 grep -q "nothing to reset" <<<"$out" && ok "reset: nothing to reset when no state is left" || fail "reset again: $out"
 out="$(git release --version "$V" --yes 2>&1)" || fail "release after reset: $out"
-[ "$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -c '^chore(release): OT')" = 2 ] &&
+[ "$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -c '^chore(ot): OT')" = 2 ] &&
 	ok "reset: the next release takes every OT of the version" || fail "release after reset: $out"

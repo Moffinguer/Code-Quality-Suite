@@ -3137,7 +3137,7 @@ version_squash_message() {
 	local o="$1" rel="$2" base="$3" tip="$4" out="$5" tag
 	tag="$(render_ot_tag "$REL_VERSION/$o")"
 	{
-		echo "chore(release): OT $o of $REL_VERSION"
+		echo "chore(ot): OT $o of $REL_VERSION"
 		echo ""
 		echo "Release of OT $o ($rel)${tag:+, tag $tag}, brought in as one commit."
 		echo ""
