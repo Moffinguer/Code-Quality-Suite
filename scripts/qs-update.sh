@@ -6,6 +6,8 @@
 #      that are not versions (wt-textot) stay with a note
 #   2. builds the base image of this suite folder (no cache: nothing reused from before)
 #   3. re-points every installed repository (hooks, aliases) and the global git setup here
+#   4. upgrades each repository's .quality-rules.json to this version (policy.py rules-upgrade) and
+#      prints what changed; the stamp of each repository is the suite VERSION afterwards
 # Tools come back on the first commit of each repository that needs them, like a first install.
 #   qs-update.sh [--yes] [--lazy] [--keep-old] [--langs "java css ..."]
 #   qs-update.sh --status        version, image, installed tools, repositories
@@ -46,6 +48,33 @@ say() { echo "[update] $*"; }
 indent() {
 	local line
 	while IFS= read -r line; do printf '%s%s\n' "$1" "$line"; done
+}
+# Upgrade the rules file of a repository to this suite and print what changed (RU5).
+#   rules_upgrade <repo>
+# Prints "[update] <repo>: rules: <n> change(s)" and the changes indented, "rules: up to date" or
+# the note about a missing rules file; a failure is a warning (the next hook retries).
+# Exit status: always 0.
+rules_upgrade() {
+	local out py
+	for py in python3 python; do
+		command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1 && break
+		py=""
+	done
+	[ -n "$py" ] || {
+		echo "[update] WARN: no working python3/python: rules file of $1 not upgraded (the next hook does it)" >&2
+		return 0
+	}
+	if ! out="$("$py" "$QUALITY_SUITE_DIR/engine/policy.py" rules-upgrade "$1" 2>&1)"; then
+		echo "[update] WARN: rules file of $1 not upgraded (the next hook retries): $out" >&2
+	elif [ -z "$out" ]; then
+		say "$1: rules: up to date"
+	elif [ "$out" = "no rules file (created on the first commit)" ]; then
+		say "$1: $out"
+	else
+		say "$1: rules: $(grep -cE '^(added|migrated) ' <<<"$out" || true) change(s)"
+		indent '[update]   ' <<<"$out"
+	fi
+	return 0
 }
 docker info >/dev/null 2>&1 || {
 	echo "[update] Docker is not running; start Docker Desktop and retry." >&2
@@ -116,8 +145,9 @@ qs_unlock
 # 4. repositories and global git setup
 n=0
 while IFS= read -r r; do
-	if QS_SKIP_IMAGE=1 "$QUALITY_SUITE_DIR/install.sh" "$r" >/dev/null 2>&1; then
+	if QS_SKIP_IMAGE=1 QS_SKIP_RULES_UPGRADE=1 "$QUALITY_SUITE_DIR/install.sh" "$r" >/dev/null 2>&1; then
 		n=$((n + 1))
+		rules_upgrade "$r"
 		# why: the AI files carry the suite path and the manual of this version; they are not in git
 		if [ -f "$r/AGENTS.md" ]; then
 			if ia_out="$(bash "$QUALITY_SUITE_DIR/scripts/ai-init.sh" --actualizar "$r" 2>&1)"; then
