@@ -80,7 +80,7 @@ skill="$repo/.agents/skills/git-commands/SKILL.md"
 mkdir -p "$(dirname "$skill")"
 {
 	printf -- '---\nname: git-commands\n'
-	printf 'description: Manual of every git command of this repository (np, nr, nv, es, subir, integra, arbol, changelog, release, publicar, combinar, encoding, repo-files, iniciar, instalar, ia, ayuda): syntax, when to use each and who runs it. Read it before running any git command here.\n---\n\n'
+	printf 'description: Manual of every git command of this repository (np, nr, nv, es, subir, integra, arbol, changelog, release, publicar, combinar, encoding, repo-files, iniciar, instalar, ia, ayuda): syntax, when to use each and which role runs it (the Who line of each command). Read it before running any git command here.\n---\n\n'
 	sed -e 's/ *<!--[^>]*-->//g' "$SUITE/docs/GIT-COMMANDS.md"
 } >"$skill.tmp"
 mv "$skill.tmp" "$skill"
