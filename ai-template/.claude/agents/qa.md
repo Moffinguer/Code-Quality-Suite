@@ -18,3 +18,5 @@ blocker|major|minor> - <what is wrong> - <expected>`, and tell the lead. The lea
 `<final-branch>/bugfix` (e.g. `3.0.0/100/ignore` -> `3.0.0/100/ignore/ORIGINAL` +
 `3.0.0/100/ignore/bugfix`) and a developer fixes it; you review again. You never run
 `git convertir-padre` or create branches: you report findings and the lead opens the branch. The loop ends when you find nothing.
+
+You never run `git integra`, `git merge` or `git pull` without `--rebase`, and never push an ORIGINAL: you only commit on your final branch (see `branch-workflow`).
