@@ -742,9 +742,12 @@ copy_integrated() {
 		echo "an ancestor of $3"
 		return 0
 	fi
-	squash_in "$1" "$2" "$3" "$4" || return 1
-	sha="$(squash_commit "$2" "$3" "$4")" || return 1
-	echo "integrated as $sha"
+	if squash_in "$1" "$2" "$3" "$4" && sha="$(squash_commit "$2" "$3" "$4")"; then
+		echo "integrated as $sha"
+		return 0
+	fi
+	squashed_in_chain "$1" "$4" || return 1
+	echo "in a branch squashed into $3"
 }
 
 # limpiar_verdict <branch> <original>: decide whether git arbol --limpiar may delete a branch.
@@ -2529,6 +2532,7 @@ ot_testing_clean() {
 ot_branch_in() {
 	local b="$1" p="$2" bt pt tree
 	branch_integrated "$b" "$p" 2>/dev/null && return 0
+	squashed_in_chain "$(best_ref "$b" || true)" "$(best_ref "$p" || true)" && return 0
 	bt="$(branch_tip "$b")"
 	pt="$(branch_tip "$p")"
 	tree="$(git merge-tree --write-tree "$pt" "$bt" 2>/dev/null)" || return 1

@@ -346,6 +346,23 @@ squash_in() {
 	[ "$squashed" = 0 ] || [ "$found" = 1 ]
 }
 
+# squashed_in_chain <tipref> <pref>: succeed when the tip of <tipref> is an ancestor of, or has no
+# change left against (a simulated merge that changes nothing), any 'Squashed: <branch> <sha>'
+# recorded on <pref>, whatever <branch> is. It covers a grandchild integrated by merge into a
+# parent that was then squashed into the ORIGINAL.
+# Arguments: $1 ref of the branch copy, $2 ref searched (a copy of the ORIGINAL). Returns: 0 in, 1 not.
+squashed_in_chain() {
+	local tip sha tree
+	tip="$(git rev-parse "$1^{commit}" 2>/dev/null)" || return 1
+	while IFS= read -r sha; do
+		{ [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null; } || continue
+		git merge-base --is-ancestor "$tip" "$sha" 2>/dev/null && return 0
+		tree="$(git merge-tree --write-tree "$sha" "$tip" 2>/dev/null)" || continue
+		[ "$(head -n1 <<<"$tree")" = "$(git rev-parse "$sha^{tree}")" ] && return 0
+	done < <(git log -F --grep='Squashed: ' --format='%B' "$2" -- 2>/dev/null | awk '$1 == "Squashed:" { print $3 }')
+	return 1
+}
+
 # squash_commit <child> <original> <pref>: print the short id of the commit of <pref> whose body
 # has the line 'Refs: <child> -> <original>'. Returns: 0 and the id; 1 when there is none.
 squash_commit() {
