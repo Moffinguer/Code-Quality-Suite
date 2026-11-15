@@ -145,6 +145,58 @@ The branch model and its keys are described in `docs/GIT-WORKFLOW.md` (including
 keys `release_leaf`, `archive_prefix`, `version_file`, `changelog_file`, `readme_file`,
 `pom_version`, `tag_url`, `commit_url`).
 
+### Special branches (`branches.special`)
+
+One table says which reserved branch types exist and what rules each one has. The defaults
+(6.0.0) are in `engine/policy.py`; the JSON schema lists every property. A project overrides
+one property (`"TESTS": {"paths": ["qa/**"]}`: the other properties keep their defaults) or
+disables a whole type (`"FORMAT": false`): a disabled type is not reserved, a branch with that
+name is an ordinary branch. TESTING (`branches.testing_leaf`) is not in the table.
+
+| Type | Where (`at`) | Integrates | Order | Notes |
+| --- | --- | --- | --- | --- |
+| `MIGRATION` | version | squash | first, locks the version | build commits, no `feat`; full build on push |
+| `DOCS` | version, no children | squash | last | docs and chore commits, paths `@docs`; the only place for CHANGELOG.md and the badge |
+| `REFACTOR` | node | squash | last | refactor commits, gate level `strict` |
+| `FORMAT` | node, no children | squash, never rebased | alone | `style` commits |
+| `TESTS` | node | squash | any | test and chore commits, paths `@tests` |
+| `SPIKE` | node | `apply` (commits are taken out) | any | deleted at the release |
+| `ATTEMPT-<n>` | task | `choose` (only the attempt choice) | any | counts in the task changelog |
+| `REVIEW-<task>` | task | `apply` | any | deleted at the release |
+| `QUARANTINE-<task>` | task | `apply` | any | `Generated-by` trailer, gate level `strict` |
+| `CHECKPOINT-<task>` | task, no children | never | any | never pushed, gate level `format` |
+
+Properties of an entry:
+
+| Property | Values | Meaning |
+| --- | --- | --- |
+| `at` | `version`, `node`, `task` | where the branch may live |
+| `children` | bool | may become `<X>/ORIGINAL` with children |
+| `suffix` | `none`, `n`, `task` | `ATTEMPT-<n>`, `REVIEW-<task>` |
+| `integrates` | `squash`, `never`, `choose`, `apply` | how the integration treats the branch |
+| `order` | `any`, `first`, `last`, `alone` | when it integrates among its siblings |
+| `rebase` | bool | `false` for FORMAT: regenerated, never rebased |
+| `types` | list of Conventional Commits types, `["*"]` = all, `[]` = no own commits | allowed commit types |
+| `paths` | list of globs and `@repo-files`, `@docs`, `@tests`; `[]` = any | allowed paths |
+| `level` | `off`, `syntax`, `format`, `standard`, `strict` or `null` | gate level for the branch |
+| `push` | `normal`, `never` | CHECKPOINT never pushes |
+| `push_checks` | `default`, `full` | `full`: full build and tests on push |
+| `trailers` | list | trailers every own commit must carry |
+| `locks` | bool | while it exists no other branch of the version may be created |
+| `on_release` | `required`, `optional`, `delete`, `set_aside` | what the version release does with it |
+| `changelog` | `none`, `changed`, `task` | how it appears in the changelog |
+
+Not configurable (the validation refuses another value): `FORMAT.rebase` (`false`),
+`ATTEMPT.integrates` (`choose`), `CHECKPOINT.push` (`never`). Also refused: an unknown type
+(`HOTFIX`), an unknown property, a bad value and a type named like `parent_leaf`,
+`release_leaf` or `testing_leaf` (ignoring case).
+
+`DOCS.on_release` is `required` in new files (DOCS writes the changelog). A file written by
+5.x gets `optional` when the suite migrates it (`branches.model` 6), so the 5.x changelog
+writer keeps working until the project sets `required` (see `docs/UPDATING.md`). The hooks and
+scripts read the table as `QS_SP_NAMES` (enabled types) and `QS_SP_<TYPE>_<PROP>` from
+`policy.env` (booleans `1`/`0`, lists joined with `|`).
+
 ## Repository files (`qs-repo-files`)
 
 A built-in check of the repository checks (`global`, always on) validates the standard files

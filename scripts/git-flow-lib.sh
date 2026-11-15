@@ -13,6 +13,9 @@
 # '<F>/<leaf>' = '<F>/ORIGINAL'. Siblings share <F>. Derived from the name: same for everyone.
 # Policy (leaf name, level patterns, tag...) comes from .quality-rules.json -> "branches".
 
+# shellcheck source=scripts/special-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
+
 mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
@@ -33,6 +36,44 @@ qs_policy_defaults() {
 	QS_BR_LEVEL_1='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 	# level 2 (the OT): ASCII letters and digits, no '-' or '_'; numeric OTs match too
 	QS_BR_LEVEL_2='^[A-Za-z0-9]+$'
+	qs_special_defaults
+}
+
+# Set the built-in defaults of the special-branch table: QS_SP_NAMES (enabled types) and one
+# QS_SP_<TYPE>_<PROP> per property, as engine/policy.py special_env exports them (booleans 1/0,
+# a null level '', lists joined with '|', types '*' = all). A unit test keeps both in step.
+# Arguments: none. Returns: 0.
+# shellcheck disable=SC2034 # why: the QS_SP_* variables are read by the scripts that source this file
+qs_special_defaults() {
+	QS_SP_NAMES='MIGRATION DOCS REFACTOR FORMAT TESTS SPIKE ATTEMPT REVIEW QUARANTINE CHECKPOINT'
+	QS_SP_MIGRATION_AT=version QS_SP_MIGRATION_CHILDREN=1 QS_SP_MIGRATION_SUFFIX=none QS_SP_MIGRATION_INTEGRATES=squash QS_SP_MIGRATION_ORDER=first QS_SP_MIGRATION_REBASE=1 QS_SP_MIGRATION_TYPES='build|fix|refactor|perf|test|docs|chore|ci|style' QS_SP_MIGRATION_PATHS=''
+	QS_SP_MIGRATION_LEVEL='' QS_SP_MIGRATION_PUSH=normal QS_SP_MIGRATION_PUSH_CHECKS=full QS_SP_MIGRATION_TRAILERS='' QS_SP_MIGRATION_LOCKS=1 QS_SP_MIGRATION_ON_RELEASE=required QS_SP_MIGRATION_CHANGELOG=changed
+	QS_SP_DOCS_AT=version QS_SP_DOCS_CHILDREN=0 QS_SP_DOCS_SUFFIX=none QS_SP_DOCS_INTEGRATES=squash QS_SP_DOCS_ORDER=last QS_SP_DOCS_REBASE=1 QS_SP_DOCS_TYPES='docs|chore' QS_SP_DOCS_PATHS='@docs'
+	QS_SP_DOCS_LEVEL='' QS_SP_DOCS_PUSH=normal QS_SP_DOCS_PUSH_CHECKS=default QS_SP_DOCS_TRAILERS='' QS_SP_DOCS_LOCKS=0 QS_SP_DOCS_ON_RELEASE=required QS_SP_DOCS_CHANGELOG=none
+	QS_SP_REFACTOR_AT=node QS_SP_REFACTOR_CHILDREN=1 QS_SP_REFACTOR_SUFFIX=none QS_SP_REFACTOR_INTEGRATES=squash QS_SP_REFACTOR_ORDER=last QS_SP_REFACTOR_REBASE=1 QS_SP_REFACTOR_TYPES='refactor|style|perf|test|docs|chore' QS_SP_REFACTOR_PATHS=''
+	QS_SP_REFACTOR_LEVEL=strict QS_SP_REFACTOR_PUSH=normal QS_SP_REFACTOR_PUSH_CHECKS=default QS_SP_REFACTOR_TRAILERS='' QS_SP_REFACTOR_LOCKS=0 QS_SP_REFACTOR_ON_RELEASE=set_aside QS_SP_REFACTOR_CHANGELOG=none
+	QS_SP_FORMAT_AT=node QS_SP_FORMAT_CHILDREN=0 QS_SP_FORMAT_SUFFIX=none QS_SP_FORMAT_INTEGRATES=squash QS_SP_FORMAT_ORDER=alone QS_SP_FORMAT_REBASE=0 QS_SP_FORMAT_TYPES=style QS_SP_FORMAT_PATHS=''
+	QS_SP_FORMAT_LEVEL='' QS_SP_FORMAT_PUSH=normal QS_SP_FORMAT_PUSH_CHECKS=default QS_SP_FORMAT_TRAILERS='' QS_SP_FORMAT_LOCKS=0 QS_SP_FORMAT_ON_RELEASE=set_aside QS_SP_FORMAT_CHANGELOG=none
+	QS_SP_TESTS_AT=node QS_SP_TESTS_CHILDREN=1 QS_SP_TESTS_SUFFIX=none QS_SP_TESTS_INTEGRATES=squash QS_SP_TESTS_ORDER=any QS_SP_TESTS_REBASE=1 QS_SP_TESTS_TYPES='test|chore' QS_SP_TESTS_PATHS='@tests'
+	QS_SP_TESTS_LEVEL='' QS_SP_TESTS_PUSH=normal QS_SP_TESTS_PUSH_CHECKS=default QS_SP_TESTS_TRAILERS='' QS_SP_TESTS_LOCKS=0 QS_SP_TESTS_ON_RELEASE=set_aside QS_SP_TESTS_CHANGELOG=none
+	QS_SP_SPIKE_AT=node QS_SP_SPIKE_CHILDREN=1 QS_SP_SPIKE_SUFFIX=none QS_SP_SPIKE_INTEGRATES=apply QS_SP_SPIKE_ORDER=any QS_SP_SPIKE_REBASE=1 QS_SP_SPIKE_TYPES='*' QS_SP_SPIKE_PATHS=''
+	QS_SP_SPIKE_LEVEL='' QS_SP_SPIKE_PUSH=normal QS_SP_SPIKE_PUSH_CHECKS=default QS_SP_SPIKE_TRAILERS='' QS_SP_SPIKE_LOCKS=0 QS_SP_SPIKE_ON_RELEASE=delete QS_SP_SPIKE_CHANGELOG=none
+	QS_SP_ATTEMPT_AT=task QS_SP_ATTEMPT_CHILDREN=1 QS_SP_ATTEMPT_SUFFIX=n QS_SP_ATTEMPT_INTEGRATES=choose QS_SP_ATTEMPT_ORDER=any QS_SP_ATTEMPT_REBASE=1 QS_SP_ATTEMPT_TYPES='*' QS_SP_ATTEMPT_PATHS=''
+	QS_SP_ATTEMPT_LEVEL='' QS_SP_ATTEMPT_PUSH=normal QS_SP_ATTEMPT_PUSH_CHECKS=default QS_SP_ATTEMPT_TRAILERS='' QS_SP_ATTEMPT_LOCKS=0 QS_SP_ATTEMPT_ON_RELEASE=delete QS_SP_ATTEMPT_CHANGELOG=task
+	QS_SP_REVIEW_AT=task QS_SP_REVIEW_CHILDREN=1 QS_SP_REVIEW_SUFFIX=task QS_SP_REVIEW_INTEGRATES=apply QS_SP_REVIEW_ORDER=any QS_SP_REVIEW_REBASE=1 QS_SP_REVIEW_TYPES='*' QS_SP_REVIEW_PATHS=''
+	QS_SP_REVIEW_LEVEL='' QS_SP_REVIEW_PUSH=normal QS_SP_REVIEW_PUSH_CHECKS=default QS_SP_REVIEW_TRAILERS='' QS_SP_REVIEW_LOCKS=0 QS_SP_REVIEW_ON_RELEASE=delete QS_SP_REVIEW_CHANGELOG=none
+	QS_SP_QUARANTINE_AT=task QS_SP_QUARANTINE_CHILDREN=1 QS_SP_QUARANTINE_SUFFIX=task QS_SP_QUARANTINE_INTEGRATES=apply QS_SP_QUARANTINE_ORDER=any QS_SP_QUARANTINE_REBASE=1 QS_SP_QUARANTINE_TYPES='*' QS_SP_QUARANTINE_PATHS=''
+	QS_SP_QUARANTINE_LEVEL=strict QS_SP_QUARANTINE_PUSH=normal QS_SP_QUARANTINE_PUSH_CHECKS=default QS_SP_QUARANTINE_TRAILERS=Generated-by QS_SP_QUARANTINE_LOCKS=0 QS_SP_QUARANTINE_ON_RELEASE=delete QS_SP_QUARANTINE_CHANGELOG=task
+	QS_SP_CHECKPOINT_AT=task QS_SP_CHECKPOINT_CHILDREN=0 QS_SP_CHECKPOINT_SUFFIX=task QS_SP_CHECKPOINT_INTEGRATES=never QS_SP_CHECKPOINT_ORDER=any QS_SP_CHECKPOINT_REBASE=1 QS_SP_CHECKPOINT_TYPES='*' QS_SP_CHECKPOINT_PATHS=''
+	QS_SP_CHECKPOINT_LEVEL=format QS_SP_CHECKPOINT_PUSH=never QS_SP_CHECKPOINT_PUSH_CHECKS=default QS_SP_CHECKPOINT_TRAILERS='' QS_SP_CHECKPOINT_LOCKS=0 QS_SP_CHECKPOINT_ON_RELEASE=delete QS_SP_CHECKPOINT_CHANGELOG=none
+}
+
+# Refuse special branches while the repository still uses the 4.x merge flow (branches.flow).
+# Arguments: none. Returns: 0 with the squash flow; 1 with a message on stderr with the merge flow.
+qs_special_need_squash() {
+	[ "${QS_BR_FLOW:-squash}" != merge ] && return 0
+	echo "[rama] ERROR: special branches need the squash flow (set branches.flow to squash)" >&2
+	return 1
 }
 
 # Load the commit/branch policy into QS_* variables. The engine writes <state>/policy.env on
@@ -144,7 +185,7 @@ branch_ot() {
 
 # parent_branch <branch> -> parent per the model; empty for main/master/unknown.
 parent_branch() {
-	local b="$1" node up
+	local b="$1" node up sp
 	qs_policy_load
 	case "$b" in main | master) return 0 ;; esac
 	if [ "$b" = "$QS_BR_MAINLINE" ]; then
@@ -164,6 +205,11 @@ parent_branch() {
 	is_archived_branch "$b" && return 0 # set aside: no parent
 	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
+	sp="$(special_parent "$b")"
+	if [ -n "$sp" ]; then
+		echo "$sp"
+		return 0
+	fi
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
 		case "$node" in */*)
@@ -190,6 +236,16 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	# why: the special table decides its own names and their placement (special-lib.sh)
+	local rc=0
+	special_parse "$b" || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		echo "$SP_WHY"
+		return 1
+		;;
+	esac
 	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;
@@ -274,7 +330,7 @@ require_clean() {
 
 # configure_repo <suite_dir> - repo-LOCAL config + aliases (idempotent).
 configure_repo() {
-	local suite="$1" a
+	local suite="$1" a claimed=" "
 	git config pull.rebase true
 	git config rebase.autoStash true
 	git config branch.autoSetupRebase always
@@ -290,6 +346,36 @@ configure_repo() {
 		publicar:publicar repo-files:repo-files ficheros-repo:repo-files \
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
+		claimed="$claimed${a%%:*} "
+	done
+	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit;
+	# a name that is a git command or an alias of the suite, or claimed by another script, is skipped
+	local s n builtins k other
+	builtins=" $(git --list-cmds=main,nohelpers 2>/dev/null | tr '\n' ' ') commit "
+	for a in amend limpiar-unmerged encoding testing; do claimed="$claimed$a "; done
+	for s in "$suite"/scripts/git-*.sh; do
+		[ -f "$s" ] || continue
+		for n in $(sed -n 's/^# qs-alias:[[:space:]]*//p' "$s" | head -n1); do
+			case "$builtins" in *" $n "*)
+				echo "[git-flow] WARN: $s: qs-alias '$n' is a git command; skipped" >&2
+				continue
+				;;
+			esac
+			if [[ $claimed == *" $n "* ]]; then
+				echo "[git-flow] WARN: $s: qs-alias '$n' is already defined by the suite; skipped" >&2
+				continue
+			fi
+			k="qs_owner_$(printf '%s' "$n" | tr -c 'A-Za-z0-9' '_')"
+			other="${!k:-}"
+			if [ -n "$other" ]; then
+				echo "[git-flow] WARN: qs-alias '$n' claimed by both $other and $s; skipped" >&2
+				git config --unset "alias.$n" 2>/dev/null || true
+				claimed="$claimed$n "
+				continue
+			fi
+			printf -v "$k" '%s' "$s"
+			git config "alias.$n" "!bash '$s'"
+		done
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
 	# QS_AMEND=1 tells prepare-commit-msg it is an amend
