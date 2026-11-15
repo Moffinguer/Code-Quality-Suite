@@ -19,6 +19,7 @@ unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
 [ -f "$LIB" ] && . "$LIB" || exit 0
+qs_suite_stamp_check
 qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 

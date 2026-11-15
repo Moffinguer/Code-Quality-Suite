@@ -15,6 +15,7 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
 . "$LIB"
 configure_repo "${QUALITY_SUITE_DIR}" 2>/dev/null || true
+qs_suite_stamp_check
 QS_POLICY_NO_DOCKER=1 qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 b="$(current_branch || true)"
