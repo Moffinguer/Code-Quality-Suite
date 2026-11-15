@@ -95,3 +95,81 @@ grep -q -- "- $RF/a .*(+1 pending)" <<<"$OUT" && ok "A3 merge flow prints the 4.
 ! grep -q "integrated\|TESTING\|RELEASE" <<<"$OUT" && ok "A3 no squash annotations" || fail "A3 annotations: $OUT"
 OUT="$(git arbol --limpiar --yes 2>&1)" && fail "A3 limpiar accepted with flow merge"
 grep -q "branches.flow = squash" <<<"$OUT" && ok "A3 --limpiar needs flow squash" || fail "A3 limpiar message: $OUT"
+
+# fresh_tree: a new squash sandbox with the tree $V/500/RF1, ORIGINAL branches pushed, and one
+# integrated branch RF/a (on both sides), the current branch being RF/ORIGINAL.
+fresh_tree() {
+	case_sandbox squash
+	git np "$V" >/dev/null && git np 500 >/dev/null && git np RF1 >/dev/null || fail "tree $RF"
+	integrate_keep a a.py
+	git checkout -q "$RF/ORIGINAL"
+	QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$RF/ORIGINAL" 2>/dev/null || fail "push ORIGINAL"
+	git fetch -q origin
+}
+
+# local_has BRANCH: succeed when the local branch exists.
+local_has() { git rev-parse -q --verify "refs/heads/$1" >/dev/null; }
+
+# --- A4 diverged copies: local is the integrated one, origin has other commits: keep both
+fresh_tree
+L="$(git rev-parse "$RF/a")"
+D="$(git commit-tree "$L^{tree}" -p "$L^" -m "feat: other work")" || fail "A4 commit-tree"
+git push -q -f origin "$D:refs/heads/$RF/a" 2>/dev/null || fail "A4 push divergent"
+git fetch -q origin
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)" || fail "A4 limpiar failed: $OUT"
+local_has "$RF/a" && on_origin "$RF/a" && [ "$(git rev-parse "origin/$RF/a")" = "$D" ] &&
+	grep -q "kept '$RF/a'.*diverged" <<<"$OUT" && ok "A4 diverged branch kept and reported" ||
+	fail "A4 diverged: $OUT"
+
+# --- A5 squash only in the local ORIGINAL: nothing is deleted, push the parent first
+fresh_tree
+git -C "$CASE_REPO.git" update-ref "refs/heads/$RF/ORIGINAL" "$(git rev-parse "$RF/ORIGINAL~1")" ||
+	fail "A5 rewind origin ORIGINAL"
+git fetch -q origin
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)" || fail "A5 limpiar failed: $OUT"
+local_has "$RF/a" && on_origin "$RF/a" && grep -q "kept '$RF/a'.*git push origin $RF/ORIGINAL" <<<"$OUT" &&
+	ok "A5 unpushed squash keeps both copies and suggests pushing the parent" || fail "A5 unpushed: $OUT"
+git push -q origin "$RF/ORIGINAL" 2>/dev/null || QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$RF/ORIGINAL" ||
+	fail "A5 push parent"
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)" || fail "A5 second limpiar failed: $OUT"
+! local_has "$RF/a" && ! on_origin "$RF/a" && ok "A5 after pushing the parent the branch is cleaned" ||
+	fail "A5 after push: $OUT"
+
+# --- A6 origin refuses the deletion: atomic, nothing deleted locally, accurate message, exit 1
+fresh_tree
+integrate_keep c c.py
+git checkout -q "$RF/ORIGINAL"
+QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$RF/ORIGINAL" 2>/dev/null || fail "A6 push ORIGINAL"
+git fetch -q origin
+cat >"$CASE_REPO.git/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+while read -r o n r; do
+	case "$n" in 000*) case "$r" in */c) exit 1 ;; esac ;; esac
+done
+HOOK
+chmod +x "$CASE_REPO.git/hooks/pre-receive"
+set +e
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)"
+RC=$?
+set -e
+[ "$RC" != 0 ] && grep -q "could not delete on origin" <<<"$OUT" && ! grep -q "deleted '" <<<"$OUT" &&
+	local_has "$RF/a" && local_has "$RF/c" && on_origin "$RF/a" && on_origin "$RF/c" &&
+	ok "A6 failed remote deletion is atomic, keeps the local copies and says so" || fail "A6 atomic: rc=$RC $OUT"
+rm -f "$CASE_REPO.git/hooks/pre-receive"
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)" || fail "A6 retry failed: $OUT"
+! local_has "$RF/a" && ! local_has "$RF/c" && ! on_origin "$RF/a" && ! on_origin "$RF/c" &&
+	grep -q "deleted '$RF/a'" <<<"$OUT" && ok "A6 retry deletes after the origin accepts" || fail "A6 retry: $OUT"
+
+# --- A7 a bugfix that is an ancestor of its ORIGINAL (merged by ancestry) is cleaned
+fresh_tree
+git nr z >/dev/null || fail "A7 nr z"
+add_commit z.py "Z = 1" "feat: add z"
+git push -q origin "$RF/z" 2>/dev/null || fail "A7 push z"
+git checkout -q "$RF/ORIGINAL"
+git merge -q --ff-only "$RF/z" || fail "A7 merge z by ancestry"
+add_commit after.py "N = 1" "feat: later work"
+QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$RF/ORIGINAL" 2>/dev/null || fail "A7 push ORIGINAL"
+git fetch -q origin
+OUT="$(git arbol --limpiar --yes "$V" 2>&1)" || fail "A7 limpiar failed: $OUT"
+! local_has "$RF/z" && ! on_origin "$RF/z" && grep -q "ancestor of $RF/ORIGINAL" <<<"$OUT" &&
+	ok "A7 branch merged by ancestry is cleaned" || fail "A7 ancestor: $OUT"

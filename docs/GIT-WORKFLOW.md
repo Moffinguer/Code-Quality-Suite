@@ -75,7 +75,7 @@ The full manual, with syntax, when to use each command and who runs it:
 | `git convertir-padre` | `<F>/<x>` -> `<F>/<x>/ORIGINAL` (local rename; on origin: delete + push, after confirmation) |
 | `git subir` | final: rebase onto its `ORIGINAL`, push `--force-with-lease`. Parent: merge its remote and its parent if behind, push. `<v>/RELEASE`: rebase onto `develop`, push `--force-with-lease` |
 | `git integra` | squash the current branch into its parent (rules above), with a generated Conventional Commits message; `-m "<subject>" [-m "<body>"]` skips the editor |
-| `git arbol [prefix]` | the tree with parents (`+`), finals (`-`), pending commits and the current branch |
+| `git arbol [prefix] [--limpiar [--yes]]` | the tree with parents (`+`), finals (`-`), pending commits and the current branch; `--limpiar` (flow squash) deletes the integrated branches, locally and on origin, only when every copy is integrated into its parent on the same side (one atomic push with a lease; diverged or unpushed-squash branches are kept and reported) |
 | `git estructura [file]` (`git es`) | reads a whole tree from stdin (or files) and creates every missing branch from its parent; existing branches are only checked (below) |
 | `git changelog [tag]` | preview of the release that `git release` would run (OT or version): the entry, the plan; changes nothing |
 | `git release [tag]` | OT release (inside `<v>/<ot>/...`) or version release (on `<v>/ORIGINAL`, `develop`, or with `--version <v>`) |

@@ -729,15 +729,70 @@ checked_out_anywhere() {
 	git worktree list --porcelain | grep -qxF "branch refs/heads/$1"
 }
 
+# copy_integrated <ref> <branch> <original> <pref>: print how the copy <ref> of a branch is in
+# <pref> (a copy of its ORIGINAL): "integrated as <sha>" (squash trailer) or "an ancestor of
+# <original>". A copy whose tip is the tip of <pref> is not integrated (an empty new branch).
+# Arguments: $1 branch copy ref, $2 branch, $3 ORIGINAL name, $4 ORIGINAL copy ref. Returns: 0 in
+# (prints the text), 1 not in or <pref> missing.
+copy_integrated() {
+	local sha
+	exists_ref "$4" || return 1
+	[ "$(git rev-parse "$1^{commit}")" != "$(git rev-parse "$4^{commit}")" ] || return 1
+	if git merge-base --is-ancestor "$1" "$4" 2>/dev/null; then
+		echo "an ancestor of $3"
+		return 0
+	fi
+	squash_in "$1" "$2" "$3" "$4" || return 1
+	sha="$(squash_commit "$2" "$3" "$4")" || return 1
+	echo "integrated as $sha"
+}
+
+# limpiar_verdict <branch> <original>: decide whether git arbol --limpiar may delete a branch.
+# EVERY existing copy must be integrated in the copy of the ORIGINAL on the same side: the local
+# copy in the local ORIGINAL, the origin copy in origin/<original>. Diverged copies are kept.
+# Sets LV_DESC (how it is integrated) and LV_WHY (why it is kept, empty when it is just pending
+# and not worth a line). Arguments: $1 branch, $2 ORIGINAL name. Returns: 0 deletable, 1 kept.
+limpiar_verdict() {
+	local b="$1" p="$2" lb="refs/heads/$1" rb="refs/remotes/origin/$1"
+	local lp="refs/heads/$2" rp="refs/remotes/origin/$2" ld="" rd="" rld=""
+	LV_DESC="" LV_WHY=""
+	if exists_ref "$lb"; then ld="$(copy_integrated "$lb" "$b" "$p" "$lp")" || ld=""; fi
+	if exists_ref "$rb"; then
+		rd="$(copy_integrated "$rb" "$b" "$p" "$rp")" || rd=""
+		rld="$(copy_integrated "$rb" "$b" "$p" "$lp")" || rld=""
+	fi
+	if exists_ref "$lb" && exists_ref "$rb" &&
+		! git merge-base --is-ancestor "$lb" "$rb" && ! git merge-base --is-ancestor "$rb" "$lb"; then
+		[ -z "$ld$rd$rld" ] || LV_WHY="local and origin copies diverged"
+		return 1
+	fi
+	if exists_ref "$lb" && [ -z "$ld" ]; then
+		[ -z "$rd" ] || LV_WHY="the local copy is not integrated (the origin one is)"
+		return 1
+	fi
+	if exists_ref "$rb" && [ -z "$rd" ]; then
+		if [ -n "$rld" ]; then
+			LV_WHY="$rld, but not in origin/$p: git push origin $p"
+		elif [ -n "$ld" ]; then
+			LV_WHY="the origin copy is not integrated (the local one is)"
+		fi
+		return 1
+	fi
+	LV_DESC="${ld:-$rd}"
+	return 0
+}
+
 # arbol_limpiar <prefix>: git arbol --limpiar (branches.flow = squash). Lists the branches that
-# git integra squashed into their ORIGINAL (integrated_sha: a 'Refs:' trailer, not just ancestry)
-# and deletes them locally and on origin after a confirmation (--yes skips it). Never deleted: an
-# ORIGINAL with children not integrated yet, a RELEASE, a TESTING sandbox, an 'unmerged/...'
-# branch, a mainline branch, anything checked out in a worktree. Arguments: $1 version prefix
-# (may be empty). Returns: 0; exits through die with flow = merge.
+# git integra squashed into their ORIGINAL (a 'Refs:' trailer) or that are ancestors of it, and
+# deletes them after a confirmation (--yes skips it), only when every copy is integrated (see
+# limpiar_verdict). The origin copies go in one 'git push --atomic' with a lease on each expected
+# sha; the local copies are deleted only after that succeeded. Never deleted: an ORIGINAL with
+# children not integrated yet, a RELEASE, a TESTING sandbox, an 'unmerged/...' branch, a mainline
+# branch, anything checked out in a worktree. Arguments: $1 version prefix (may be empty).
+# Returns: 0; 1 when a deletion failed; exits through die with flow = merge.
 arbol_limpiar() {
-	local prefix="$1" b p sha pending where n
-	local -a gone=() shas=()
+	local prefix="$1" b p pending where n failed=0
+	local -a gone=() descs=() delete_args=()
 	[ "${QS_BR_FLOW:-merge}" = squash ] || die "--limpiar needs branches.flow = squash (with merge the branches are ancestors: git branch -d)"
 	fetch_origin
 	while IFS= read -r b; do
@@ -749,21 +804,24 @@ arbol_limpiar() {
 		{ is_release_branch "$b" || is_ot_release_branch "$b"; } && continue
 		p="$(parent_branch "$b")"
 		[ -n "$p" ] || continue
-		exists_ref "refs/heads/$p" || continue
-		sha="$(integrated_sha "$b" "$p")" || continue
+		exists_ref "refs/heads/$p" || exists_ref "refs/remotes/origin/$p" || continue
+		if ! limpiar_verdict "$b" "$p"; then
+			[ -z "$LV_WHY" ] || say "kept '$b': $LV_WHY"
+			continue
+		fi
 		if checked_out_anywhere "$b"; then
-			say "kept '$b': integrated as $sha, but checked out in a worktree"
+			say "kept '$b': $LV_DESC, but checked out in a worktree"
 			continue
 		fi
 		if is_parent_branch "$b"; then
 			pending="$(children_pending "$b")"
 			if [ -n "$pending" ]; then
-				say "kept '$b': integrated as $sha, but children not integrated: $pending"
+				say "kept '$b': $LV_DESC, but children not integrated: $pending"
 				continue
 			fi
 		fi
 		gone+=("$b")
-		shas+=("$sha")
+		descs+=("$LV_DESC")
 	done < <(
 		{
 			git for-each-ref --format='%(refname:short)' refs/heads/
@@ -779,29 +837,40 @@ arbol_limpiar() {
 		where="origin only"
 		exists_ref "refs/heads/$b" && where="local"
 		exists_ref "refs/heads/$b" && exists_ref "refs/remotes/origin/$b" && where="local and origin"
-		say "integrated: $b = integrated as ${shas[$n]} ($where)"
+		say "integrated: $b = ${descs[$n]} ($where)"
 	done
 	confirm "delete these ${#gone[@]} branch(es), locally and on origin?" 2>/dev/null || {
 		say "nothing deleted"
 		return 0
 	}
 	for b in "${gone[@]}"; do
-		if exists_ref "refs/heads/$b"; then
-			git branch -q -D "$b" || say "could not delete '$b' locally"
-		fi
-		if exists_ref "refs/remotes/origin/$b"; then
-			git push -q origin --delete "$b" || say "could not delete '$b' on origin"
-		fi
-		say "deleted '$b'"
+		exists_ref "refs/remotes/origin/$b" || continue
+		delete_args+=("--force-with-lease=refs/heads/$b:$(git rev-parse "refs/remotes/origin/$b")" ":refs/heads/$b")
 	done
-	return 0
+	if [ "${#delete_args[@]}" -gt 0 ]; then
+		if ! git push -q --atomic origin "${delete_args[@]}"; then
+			say "could not delete on origin (atomic push refused: a branch moved, or no permission); nothing was deleted"
+			return 1
+		fi
+	fi
+	for b in "${gone[@]}"; do
+		if exists_ref "refs/heads/$b"; then
+			if git branch -q -D "$b"; then say "deleted '$b'"; else
+				say "could not delete '$b' locally"
+				failed=1
+			fi
+		else
+			say "deleted '$b' (origin)"
+		fi
+	done
+	return "$failed"
 }
 
 # cmd_arbol [prefix] [--limpiar]: print the branch tree (parents '+', finals '-', pending commits,
 # behind state). With branches.flow = squash it reads the 'Refs:'/'Squashed:' trailers like git
 # integra (an integrated branch shows '= integrated as <sha>') and marks TESTING sandboxes (with
 # their sources) and the OT and version RELEASE; flow = merge prints exactly what 4.x did.
-# --limpiar deletes the integrated branches (arbol_limpiar). Returns: 0; die on unknown options.
+# --limpiar deletes the integrated branches (arbol_limpiar). Returns: 0 (1 when a deletion failed); die on unknown options.
 cmd_arbol() {
 	local cur prefix="" a clean=0 squash=0
 	for a in "$@"; do
@@ -817,7 +886,7 @@ cmd_arbol() {
 	if [ -z "$prefix" ] && [ -n "$cur" ] && ! is_mainline "$cur"; then prefix="$(branch_version "$cur")"; fi
 	if [ "$clean" = 1 ]; then
 		arbol_limpiar "$prefix"
-		return 0
+		return $?
 	fi
 	{
 		git for-each-ref --format='%(refname:short)' refs/heads/
