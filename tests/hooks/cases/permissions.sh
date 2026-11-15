@@ -23,7 +23,7 @@ PY
 
 # PM2: ai-sync.sh writes permission.bash per role.
 R="$T/pm2"
-mkdir -p "$R/.claude"
+mkdir -p "$R/.claude" "$R/.agents/skills"
 cp -R "$SUITE/ai-template/.claude/agents" "$R/.claude/agents"
 echo '{}' >"$R/opencode.json"
 bash "$SUITE/scripts/ai-sync.sh" "$R" >/dev/null
