@@ -9,6 +9,9 @@ enter the repository unless it passes. Everything runs in Docker, offline, on Li
 (Git Bash + Docker Desktop) and macOS. On top of the gate: a branch model with versioned
 releases (git aliases), the standard repository files, and an AI-agent layer.
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 ## Requirements
 
 - **Git** 2.38 or newer (Git Bash on Windows) and **Docker** running.

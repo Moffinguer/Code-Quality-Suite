@@ -1,5 +1,8 @@
 # Goose - install and configure (AI agent layer)
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 Goose is the open-source agent runtime we use instead of a custom orchestrator. It
 runs locally (desktop app + CLI), talks to 25+ model providers plus local models via
 Ollama, and supports a conductor -> subagents hierarchy: a strong model plans and
