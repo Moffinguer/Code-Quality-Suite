@@ -47,9 +47,9 @@ skills and in `knowledge/`.
 | Role | Model | Does | Never |
 | --- | --- | --- | --- |
 | main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | writes large code itself |
-| systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | edits source code, creates branches |
+| systems-analyst | opus | spec, plan, branch tree (`git es`, `git np`, `git nr`), one task per final branch, `git integra` after the human's OK, merge-conflict suggestions | edits source code |
 | developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
-| reviewer | opus | reviews diffs against norms and quality rules | edits code |
+| reviewer | opus | reviews diffs against norms and quality rules; commits only on REVIEW-<task> | edits code of the reviewed branch |
 | qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | changes production code |
 | docs-writer | haiku | documentation from recipes | invents requirements |
 | intern | haiku | boilerplate, renames, small mechanical edits | touches security code |
@@ -57,7 +57,9 @@ skills and in `knowledge/`.
 
 Flow: skill `team-flow`. Other models work as developers through OpenCode `role-dev` or
 `external-worker`, for non-regulated data only. Human checkpoints: approve the spec, approve the
-plan, approve each merge (bottom-up) and the merge into `develop`.
+plan, approve each merge (bottom-up) and the merge into `develop`. Who creates, works on,
+integrates and pushes which branch: the matrix in `team-flow` and the `## Branches` section of
+each agent. `git release`, `git publicar` and `git combinar` are human only.
 
 ## Where things are
 
