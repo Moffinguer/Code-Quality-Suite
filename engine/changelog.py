@@ -183,7 +183,36 @@ def _entry_ot(c, src, ot, ot_rx):
     return ot or _ot_of(src or _refs_src(c["body"]), ot_rx)
 
 
-def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # noqa: PLR0913
+def hidden_kind(src, special):
+    """Special type of a branch whose squash is not a changelog line of its own.
+
+    Args:
+        src: the integrated branch name ('<v>/<ot>/REFACTOR'), or None.
+        special: the effective table of special branches (branches.special: {TYPE: properties})
+            or None. A type whose `changelog` is `none` (REFACTOR, FORMAT, TESTS, SPIKE, REVIEW,
+            CHECKPOINT) or `task` (ATTEMPT, QUARANTINE: counted inside the line of its task) is
+            hidden; `changed` (MIGRATION) is shown.
+
+    Returns:
+        str | None: the type of the first special segment of src that is hidden, else None.
+    """
+    for seg in (src or "").split("/"):
+        for name, props in (special or {}).items():
+            if not isinstance(props, dict) or props.get("changelog", "none") == "changed":
+                continue
+            sfx = props.get("suffix", "none")
+            if (
+                (sfx == "none" and seg == name)
+                or (sfx == "n" and re.fullmatch(re.escape(name) + r"-\d+", seg))
+                or (sfx == "task" and seg.startswith(name + "-") and len(seg) > len(name) + 1)
+            ):
+                return name
+    return None
+
+
+def entries(  # noqa: PLR0913
+    gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot="", special=None
+):
     """Changes between base and tip, one per integrated final branch (the 'git integra' merge
     subject) and one per direct commit.
 
@@ -196,6 +225,9 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
             by default the policy default of branches.levels[1] (letters and digits).
         ot: OT given to every change (the tip is the ORIGINAL of that OT, so no 'Refs:'
             line is needed); '' derives it from the 'Refs:' line of each change.
+        special: the table of special branches (branches.special) or None; the squash of a
+            branch of a type whose `changelog` is not `changed` is left out of the entries
+            (see hidden_kind) and listed in the omitted subjects.
 
     Returns:
         tuple: (entries, omitted subjects). An entry is {group, breaking, text, ref, ot,
@@ -219,7 +251,7 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # 
         if RELEASE_SUBJECT.match(c["subject"]):
             return
         group, breaking, text = classify(c["subject"], c["body"])
-        if group is None:
+        if group is None or hidden_kind(src or _refs_src(c["body"]), special):
             omitted.append(c["subject"])
             return
         found = _entry_ot(c, src, ot, ot_rx)

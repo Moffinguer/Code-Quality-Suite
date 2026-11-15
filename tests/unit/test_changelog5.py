@@ -199,6 +199,53 @@ class FromGit(unittest.TestCase):
         self.assertNotIn(";", changelog.render("5.0.0", "2026-11-02", items).split("- ")[1])
 
 
+SPECIAL = {
+    "MIGRATION": {"suffix": "none", "changelog": "changed"},
+    "REFACTOR": {"suffix": "none", "changelog": "none"},
+    "ATTEMPT": {"suffix": "n", "changelog": "task"},
+    "REVIEW": {"suffix": "task", "changelog": "none"},
+}
+
+
+class Hidden(unittest.TestCase):
+    """hidden_kind() and entries(special=...): the special squashes the changelog never shows."""
+
+    def test_hidden_kinds(self):
+        for src, kind in (
+            ("6.0.0/ot1/REFACTOR", "REFACTOR"),
+            ("6.0.0/ot1/a/ATTEMPT-2", "ATTEMPT"),
+            ("6.0.0/ot1/REVIEW-a", "REVIEW"),
+            ("6.0.0/ot1/REFACTOR/x", "REFACTOR"),
+        ):
+            self.assertEqual(changelog.hidden_kind(src, SPECIAL), kind, src)
+
+    def test_shown_kinds(self):
+        for src in ("6.0.0/MIGRATION/ORIGINAL", "6.0.0/ot1/a", "6.0.0/ot1/ATTEMPT-x", None, ""):
+            self.assertIsNone(changelog.hidden_kind(src, SPECIAL), src)
+        self.assertIsNone(changelog.hidden_kind("6.0.0/ot1/REFACTOR", None))
+
+    def test_entries_skip_hidden_squash(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, ignore_errors=True)
+        _run(d, "init", "-q", "-b", "main")
+        msgs = (
+            "chore: base",
+            "feat(a): module a\n\nRefs: 6.0.0/ot1/a -> 6.0.0/ot1/ORIGINAL",
+            "refactor(ot1): tidy\n\nRefs: 6.0.0/ot1/REFACTOR -> 6.0.0/ot1/ORIGINAL",
+        )
+        for i, msg in enumerate(msgs):
+            with open(os.path.join(d, f"f{i}"), "w", encoding="utf-8") as fh:
+                fh.write(msg)
+            _run(d, "add", f"f{i}")
+            _run(d, "commit", "-q", "-m", msg)
+        base, tip = _run(d, "rev-parse", "HEAD~2"), _run(d, "rev-parse", "HEAD")
+        items, omitted = changelog.entries(GIT + ["-C", d], tip, base, special=SPECIAL)
+        self.assertEqual([e["text"] for e in items], ["Module a"])
+        self.assertEqual(omitted, ["refactor(ot1): tidy"])
+        items, _ = changelog.entries(GIT + ["-C", d], tip, base)
+        self.assertEqual(len(items), 2)
+
+
 class GateLevel(unittest.TestCase):
     """repofiles.check() passes the version being written to the changelog validation."""
 
