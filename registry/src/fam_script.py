@@ -59,10 +59,6 @@ fmt_tool(
                 "--quiet",
                 "--exit-zero",
                 ["--config", "{config}"],
-                # why: isort tells first-party imports by the folders under src; a format
-                # check runs on copies in a temp root, so src must name the real repository
-                "--config",
-                "src = ['{repo}']",
                 "{files}",
             ],
             [
@@ -73,6 +69,38 @@ fmt_tool(
                 ["--config", "{config}"],
                 "{args}",
                 "{files}",
+            ],
+        ]
+    },
+    # why: isort tells first-party imports by the project layout (src, relative to the
+    # working directory or the config found from the path); a check on copies in a temp
+    # root lost it, so the check pipes the real file through stdin with its real path
+    check={
+        "pipe": [
+            [
+                "ruff",
+                "check",
+                "--no-cache",
+                "--select",
+                "I",
+                "--fix",
+                "--quiet",
+                "--exit-zero",
+                ["--config", "{config}"],
+                "--stdin-filename",
+                "{file}",
+                "-",
+            ],
+            [
+                "ruff",
+                "format",
+                "--no-cache",
+                "--quiet",
+                ["--config", "{config}"],
+                "{args}",
+                "--stdin-filename",
+                "{file}",
+                "-",
             ],
         ]
     },

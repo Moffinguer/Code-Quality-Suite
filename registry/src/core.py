@@ -5,7 +5,8 @@ every family module, validates cross references and writes registry/registry.jso
 
 Tool fields (consumed by engine/runner.py):
   role      syntax | marker | format | lint | deep   (one formatter per file type)
-  cmd       {"fix": [...], "check": [...] | "diff", "stdout": [...], "builtin": name}
+  cmd       {"fix": [...], "check": [...] | "diff" | {"pipe": [cmd, ...]}, "stdout": [...],
+            "builtin": name}  (pipe: a format check feeding the real file on stdin)
             tokens: {files} {file} {args} {config} {config_dir} {root} {repo} {tmp} {group}
                     ({root} is the temp copy in a format check, {repo} always the repository)
                     {found_dir} {v} {v_nodot} {v_major} {v_minor} {var:NAME}
