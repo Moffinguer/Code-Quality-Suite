@@ -508,7 +508,7 @@ def _special_list_error(kind, val):
         if p.startswith("@"):
             if p not in PATH_TOKENS:
                 return f"unknown token {p!r} (known: {', '.join(PATH_TOKENS)})"
-        elif not p or p.startswith("/") or ".." in p.split("/") or "\\" in p:
+        elif not p or p.startswith("/") or ".." in p.split("/") or "\\" in p or "|" in p:
             return f"{p!r} is not a glob inside the repository"
     return ""
 

@@ -161,6 +161,10 @@ class ValidateTest(unittest.TestCase):
         for path in ("/etc/**", "../x", "a\\b", ""):
             self.assertIn("paths", errors_text(special(TESTS={"paths": [path]})), path)
 
+    def test_pipe_refused_in_paths(self):
+        """A '|' in a path is refused: the shell export joins list items with it."""
+        self.assertIn("paths", errors_text(special(TESTS={"paths": ["a|b"]})))
+
     def test_not_configurable(self):
         """FORMAT rebase, ATTEMPT integrates and CHECKPOINT push cannot change."""
         cases = (("FORMAT", "rebase", True), ("ATTEMPT", "integrates", "squash"))
