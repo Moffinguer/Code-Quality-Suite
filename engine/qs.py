@@ -28,7 +28,6 @@ Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_ROOT, QS_STATE, QS_RULES, QS_PERS
 import argparse
 import concurrent.futures as cf
 import datetime
-import importlib
 import json
 import os
 import shutil
@@ -53,9 +52,7 @@ import semver  # noqa: E402
 import versions  # noqa: E402
 import writers  # noqa: E402
 
-# why: an import statement is classified differently inside the repository (first-party, the
-# `registry/` folder) and in the temporary copy of the format check; the call is immune to it
-registry = importlib.import_module("registry")
+import registry  # noqa: E402
 
 SUITE = os.path.dirname(HERE)
 SKIP_REASONS = ("excluded", "not a regular file")
