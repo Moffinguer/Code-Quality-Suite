@@ -240,6 +240,7 @@ cmd_nueva() {
 	local kind="$1" seg="${2:-}" cur node new base
 	[ -n "$seg" ] || die "usage: git $([ "$kind" = padre ] && echo np || echo nr) <name>"
 	testing_reserved_segment "$seg" && die "'$seg' is reserved for the TESTING sandbox: git testing crear"
+	special_refusal "$seg" >/dev/null && die "$(special_refusal "$seg")"
 	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF" | "$QS_BR_RELEASE_LEAF") die "'$seg' is reserved" ;; esac
 	if [ -n "$FROM" ]; then
 		fetch_origin
@@ -270,6 +271,7 @@ cmd_nueva() {
 	local why
 	why="$(valid_branch_name "$new")" || die "invalid name '$new': $why"
 	fetch_origin
+	why="$(special_migration_lock "${new%%/*}" "$new")" && die "$why"
 	taken "${new%/"$QS_BR_LEAF"}" && die "'${new%/"$QS_BR_LEAF"}' already exists (as a branch or a folder of branches)"
 	base="$(best_ref "$cur")"
 	base="${base:-$cur}"
@@ -746,9 +748,10 @@ cmd_arbol() {
 				fi
 			fi
 			exists_ref "refs/heads/$b" || st="$st (remote only)"
-			printf '%s%s %s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
-				"$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
+			printf '%s%s %s%s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
+				"$(special_marker "$b")" "$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
 		done
+	special_arbol_warnings "$prefix"
 	return 0
 }
 
@@ -846,6 +849,16 @@ cmd_estructura() {
 	while IFS=$'\t' read -r kind node <&3; do
 		if [ "$kind" = P ]; then b="$node/$QS_BR_LEAF"; else b="$node"; fi
 		# why: '<v>/<ot>/RELEASE' and '<F>/TESTING' are valid names, but only their commands create them
+		if why="$(special_migration_lock "${node%%/*}" "$b")"; then
+			echo "  ! $b: $why" >&2
+			errs=$((errs + 1))
+			continue
+		fi
+		if why="$(special_node_refusal "$node")"; then
+			echo "  ! $b: $why" >&2
+			errs=$((errs + 1))
+			continue
+		fi
 		if reserved_leaf_segment "${node##*/}"; then
 			echo "  ! $b: '${node##*/}' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF, ${QS_BR_TESTING:-TESTING}, in any case)" >&2
 			errs=$((errs + 1))
@@ -2042,6 +2055,7 @@ cmd_nueva_version() {
 	[ -n "$src" ] || src="$(current_branch)" || die "detached HEAD: add --from <branch>"
 	exists_branch "$src" || die "branch '$src' not found"
 	why="$(valid_branch_name "$v/$QS_BR_LEAF")" || die "invalid version '$v': $why"
+	why="$(special_migration_lock "$v" "$v/$QS_BR_LEAF")" && die "$why"
 	taken "$v" && die "'$v' already exists (as a branch or a version tree)"
 	# the copies keep their path below the version ('6.22.6/188858/login' -> '<v>/188858/login'):
 	# the branches below the chosen one, the parents between the version and it, or (--arbol-completo)
@@ -2059,7 +2073,10 @@ cmd_nueva_version() {
 		printf 'R\t%s/%s\t%s\n' "$v" "$QS_BR_LEAF" "$src"
 		if [ -n "$srcv" ] && [ "$full" = 1 ]; then
 			all_branches | awk -v p="$srcv/" -v t="$srcv/$QS_BR_LEAF" -v r="$srcv/$QS_BR_RELEASE_LEAF" \
-				'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }'
+				'index($0, p) == 1 && $0 != t && $0 != r { print "C\t" $0 }' |
+				while IFS=$'\t' read -r a b; do # why: special branches belong to one version
+					if [ -z "$(special_kind "$b")" ]; then printf '%s\t%s\n' "$a" "$b"; fi
+				done
 		elif [ -n "$node" ] && [ "$node" != "$srcv" ]; then
 			rel="${node#"$srcv"/}"
 			pre=""
@@ -2255,7 +2272,7 @@ ot_release_branches() {
 version_ots() {
 	local o
 	while IFS= read -r o; do
-		[ -n "$o" ] && ! reserved_leaf_segment "$o" && printf '%s\n' "$o"
+		[ -n "$o" ] && ! reserved_leaf_segment "$o" && [ -z "$(special_segment_type "$o")" ] && printf '%s\n' "$o"
 	done < <(all_branches | awk -F/ -v v="$1" '$1 == v && NF >= 3 { print $2 }' | LC_ALL=C sort -u)
 	return 0
 }

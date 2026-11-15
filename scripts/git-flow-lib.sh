@@ -13,6 +13,9 @@
 # '<F>/<leaf>' = '<F>/ORIGINAL'. Siblings share <F>. Derived from the name: same for everyone.
 # Policy (leaf name, level patterns, tag...) comes from .quality-rules.json -> "branches".
 
+# shellcheck source=scripts/special-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
+
 mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
@@ -182,7 +185,7 @@ branch_ot() {
 
 # parent_branch <branch> -> parent per the model; empty for main/master/unknown.
 parent_branch() {
-	local b="$1" node up
+	local b="$1" node up sp
 	qs_policy_load
 	case "$b" in main | master) return 0 ;; esac
 	if [ "$b" = "$QS_BR_MAINLINE" ]; then
@@ -202,6 +205,11 @@ parent_branch() {
 	is_archived_branch "$b" && return 0 # set aside: no parent
 	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
+	sp="$(special_parent "$b")"
+	if [ -n "$sp" ]; then
+		echo "$sp"
+		return 0
+	fi
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
 		case "$node" in */*)
@@ -228,6 +236,16 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	# why: the special table decides its own names and their placement (special-lib.sh)
+	local rc=0
+	special_parse "$b" || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		echo "$SP_WHY"
+		return 1
+		;;
+	esac
 	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;
@@ -312,7 +330,7 @@ require_clean() {
 
 # configure_repo <suite_dir> - repo-LOCAL config + aliases (idempotent).
 configure_repo() {
-	local suite="$1" a
+	local suite="$1" a claimed=" "
 	git config pull.rebase true
 	git config rebase.autoStash true
 	git config branch.autoSetupRebase always
@@ -328,6 +346,36 @@ configure_repo() {
 		publicar:publicar repo-files:repo-files ficheros-repo:repo-files \
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
+		claimed="$claimed${a%%:*} "
+	done
+	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit;
+	# a name that is a git command or an alias of the suite, or claimed by another script, is skipped
+	local s n builtins k other
+	builtins=" $(git --list-cmds=main,nohelpers 2>/dev/null | tr '\n' ' ') commit "
+	for a in amend limpiar-unmerged encoding testing; do claimed="$claimed$a "; done
+	for s in "$suite"/scripts/git-*.sh; do
+		[ -f "$s" ] || continue
+		for n in $(sed -n 's/^# qs-alias:[[:space:]]*//p' "$s" | head -n1); do
+			case "$builtins" in *" $n "*)
+				echo "[git-flow] WARN: $s: qs-alias '$n' is a git command; skipped" >&2
+				continue
+				;;
+			esac
+			if [[ $claimed == *" $n "* ]]; then
+				echo "[git-flow] WARN: $s: qs-alias '$n' is already defined by the suite; skipped" >&2
+				continue
+			fi
+			k="qs_owner_$(printf '%s' "$n" | tr -c 'A-Za-z0-9' '_')"
+			other="${!k:-}"
+			if [ -n "$other" ]; then
+				echo "[git-flow] WARN: qs-alias '$n' claimed by both $other and $s; skipped" >&2
+				git config --unset "alias.$n" 2>/dev/null || true
+				claimed="$claimed$n "
+				continue
+			fi
+			printf -v "$k" '%s' "$s"
+			git config "alias.$n" "!bash '$s'"
+		done
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
 	# QS_AMEND=1 tells prepare-commit-msg it is an amend
