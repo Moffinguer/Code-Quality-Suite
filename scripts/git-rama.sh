@@ -41,10 +41,10 @@
 #                         ORIGINAL tip, RELEASE and tag pushed, the OT subtree deleted (resumable);
 #                         git changelog there previews it. On '<v>/ORIGINAL', develop or with
 #                         --version <v>: the version release, refused while an OT lacks its RELEASE;
-#                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first),
+#                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE squashed in as one commit (oldest first),
 #                         version, CHANGELOG.md (union of the OT sections) and badge commits, local
 #                         tag on its tip, one atomic push, OT RELEASEs and '<v>/ORIGINAL' deleted
-#                         (resumable; after a conflict: git rebase --continue, then git release).
+#                         (resumable; after a conflict: git commit, then git release).
 #                         --reset --version <v> [--yes]: forgets the resume state of a version
 #                         release given up (refused while '<v>/RELEASE' exists); a release whose
 #                         '<v>/RELEASE' was deleted by hand is also forgotten by the next git release
@@ -807,7 +807,12 @@ arbol_limpiar() {
 		{ is_release_branch "$b" || is_ot_release_branch "$b"; } && continue
 		p="$(parent_branch "$b")"
 		[ -n "$p" ] || continue
-		exists_ref "refs/heads/$p" || exists_ref "refs/remotes/origin/$p" || continue
+		if ! exists_ref "refs/heads/$p" && ! exists_ref "refs/remotes/origin/$p"; then
+			# its parent was squashed and deleted: the nearest ORIGINAL above holds the work
+			p="$(REL_TOP="" nearest_original "$b")"
+			[ -n "$p" ] || continue
+			exists_ref "refs/heads/$p" || exists_ref "refs/remotes/origin/$p" || continue
+		fi
 		if ! limpiar_verdict "$b" "$p"; then
 			[ -z "$LV_WHY" ] || say "kept '$b': $LV_WHY"
 			continue
@@ -3124,20 +3129,39 @@ version_rebase_done() {
 	git config --unset "qs.release.$REL_VERSION.current" 2>/dev/null || true
 }
 
-# version_rebase_ot <ot>: put the commits of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE': git rebase
-# -i --onto <RELEASE> <version ORIGINAL> <OT RELEASE sha> on a detached HEAD (the OT RELEASE ref is
-# not moved), its commits that only change QS_BR_CHANGELOG dropped (docs(changelog) subjects: the OT
-# changelog commit and its reviews, whose text goes into the union entry); commits that become empty are dropped.
-# Then '<v>/RELEASE' moves to the result. Skipped when the OT is already done (qs.release.<v>.ots);
-# after a conflict solved with 'git rebase --continue' the result is taken as it is
-# (qs.release.<v>.current: '<ot> <RELEASE sha> <OT RELEASE sha>').
+# version_squash_message <ot> <rel> <base> <tip> <file>: write the message of the squash commit of
+# an OT into '<v>/RELEASE': a subject, the OT and its tag, the Files: block of base..tip and the
+# trailer 'Squashed: <ot RELEASE> <sha>'. Arguments: $1 OT, $2 OT RELEASE branch, $3 base commit,
+# $4 OT RELEASE tip, $5 output file. Returns: 0.
+version_squash_message() {
+	local o="$1" rel="$2" base="$3" tip="$4" out="$5" tag
+	tag="$(render_ot_tag "$REL_VERSION/$o")"
+	{
+		echo "chore(release): OT $o of $REL_VERSION"
+		echo ""
+		echo "Release of OT $o ($rel)${tag:+, tag $tag}, brought in as one commit."
+		echo ""
+		squash_files_block "$base" "$tip"
+		echo ""
+		echo "Squashed: $rel $tip"
+	} >"$out"
+}
+
+# version_rebase_ot <ot>: put the work of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE' as ONE squash
+# commit: the tree difference of the OT RELEASE against its base, applied (git merge --squash, on a
+# detached HEAD) onto the '<v>/RELEASE' tip, never its individual commits (the OT history may hold
+# merge commits). CHANGELOG.md is kept as '<v>/RELEASE' has it: the union entry is written later
+# from the OT sections. Skipped when the OT is already done (qs.release.<v>.ots); after a conflict
+# solved by hand and committed the result is taken as it is (qs.release.<v>.current: '<ot> <RELEASE
+# sha> <OT RELEASE sha>'). Then '<v>/RELEASE' moves to the result.
 # Arguments: $1 OT; reads REL_VERSION REL_TIP REL_RELEASE. Returns: 0; exits through die on a
-# conflict (with the instructions) or a failed rebase.
+# conflict (with the instructions) or a failed merge.
 version_rebase_ot() {
-	local o="$1" rel cur onto tip head c drop=""
+	local o="$1" rel cur onto tip head c msg base gd
 	case " $(version_cfg ots) " in *" $o "*) return 0 ;; esac
 	rel="$REL_VERSION/$o/$QS_BR_RELEASE_LEAF"
 	onto="$(git rev-parse "refs/heads/$REL_RELEASE")"
+	gd="$(git rev-parse --absolute-git-dir)"
 	cur="$(version_cfg current)"
 	if [ "${cur%% *}" = "$o" ]; then
 		read -r _ c tip <<<"$cur"
@@ -3147,31 +3171,49 @@ version_rebase_ot() {
 		fi
 		head="$(git rev-parse -q --verify HEAD || true)"
 		if [ -z "$(current_branch || true)" ] && [ -n "$head" ] && [ "$head" != "$onto" ] && [ "$head" != "$tip" ] &&
-			git merge-base --is-ancestor "$onto" "$head"; then # finished with git rebase --continue
+			git merge-base --is-ancestor "$onto" "$head"; then # committed by hand after the conflict
 			git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
 			version_rebase_done "$o"
-			say "OT $o: the rebase finished by hand is now on $REL_RELEASE"
+			say "OT $o: the squash finished by hand is now on $REL_RELEASE"
+			return 0
+		fi
+		if [ -z "$(current_branch || true)" ] && [ "$head" = "$onto" ] && [ -f "$gd/SQUASH_MSG" ]; then
+			[ -z "$(git diff --name-only --diff-filter=U)" ] ||
+				die "OT $o still has conflicts. Solve them: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git reset --hard $REL_RELEASE"
+			git commit -q -F "$gd/SQUASH_MSG" || die "the squash commit of OT $o was rejected (see the hook messages); $REL_AGAIN"
+			git update-ref "refs/heads/$REL_RELEASE" "$(git rev-parse HEAD)" "$onto"
+			version_rebase_done "$o"
 			return 0
 		fi
 	fi
 	tip="$(git rev-parse "$(best_ref "$rel")")" || die "'$rel' is gone; the version release cannot go on (git config --get qs.release.$REL_VERSION.plan)"
-	while IFS= read -r c; do
-		[ -n "$c" ] && [ "$(git diff-tree --no-commit-id --name-only -r "$c")" = "$QS_BR_CHANGELOG" ] &&
-			git log -1 --format=%s "$c" | grep -q '^docs(changelog)' && drop="$drop $c"
-	done < <(git rev-list --no-merges "$tip" "^$REL_TIP" --)
+	base="$(git merge-base "$onto" "$tip")" || die "'$rel' has nothing in common with $REL_RELEASE"
 	version_cfg current "$o $onto $tip"
-	say "rebasing $rel onto $REL_RELEASE..."
-	# why: -i only to drop the changelog commits; the todo is edited by awk, nobody is asked
-	# shellcheck disable=SC2016 # why: expanded by the shell git runs for the sequence editor
-	if ! QS_RELEASE_DROP="$drop" GIT_SEQUENCE_EDITOR='f() { awk -v d="$QS_RELEASE_DROP" '\''BEGIN { n = split(d, a, " ") } $1 == "pick" { for (i = 1; i <= n; i++) if (index(a[i], $2) == 1) { $1 = "drop"; break } } { print }'\'' "$1" >"$1.qs" && mv -f "$1.qs" "$1"; }; f' \
-		git rebase -q -i --empty=drop --onto "$onto" "$REL_TIP" "$tip"; then
-		rebase_in_progress && die "conflict while rebasing OT $o onto $REL_RELEASE. Solve it: edit the files, git add them, git rebase --continue (repeat while it stops); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git rebase --abort"
-		die "the rebase of $rel onto $REL_RELEASE failed (see above); $REL_AGAIN"
+	say "squashing $rel into $REL_RELEASE..."
+	git checkout -q --detach "$onto"
+	msg="$gd/SQUASH_MSG"
+	git merge --squash --ff -q "$tip" >/dev/null || [ -n "$(git diff --name-only --diff-filter=U)" ] || die "the squash of $rel into $REL_RELEASE failed (see above); $REL_AGAIN"
+	# why: the changelog is rebuilt from the OT sections, never merged line by line
+	if git cat-file -e "$onto:$QS_BR_CHANGELOG" 2>/dev/null; then
+		git checkout -q "$onto" -- "$QS_BR_CHANGELOG"
+	else git rm -q -f --ignore-unmatch -- "$QS_BR_CHANGELOG"; fi
+	version_squash_message "$o" "$rel" "$base" "$tip" "$msg"
+	if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+		die "conflict while squashing OT $o into $REL_RELEASE, in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Solve it: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git reset --hard $REL_RELEASE"
 	fi
+	if git diff --cached --quiet; then
+		rm -f "$msg"
+		git reset -q --hard "$onto"
+		version_rebase_done "$o"
+		say "OT $o: nothing to bring in ($REL_RELEASE already has it)"
+		return 0
+	fi
+	git commit -q -F "$msg" || die "the squash commit of OT $o was rejected (see the hook messages); $REL_AGAIN"
+	rm -f "$msg"
 	head="$(git rev-parse HEAD)"
 	git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
 	version_rebase_done "$o"
-	say "OT $o: $(git rev-list --count "$onto..$head") commit(s) on $REL_RELEASE"
+	say "OT $o: 1 squash commit on $REL_RELEASE"
 }
 
 # version_tag_message <file>: write the message of the version tag: 'Release <tag> (<v>)', a blank
@@ -3246,7 +3288,7 @@ version_release_report() {
 	echo
 	echo "## Plan"
 	echo
-	echo "$i. $REL_RELEASE at $REL_TOP; the OT RELEASEs rebased into it, oldest first (changelog-only commits dropped):${REL_VOTS[*]+ ${REL_VOTS[*]}}"
+	echo "$i. $REL_RELEASE at $REL_TOP; each OT RELEASE squashed into it as one commit, oldest first (CHANGELOG.md kept):${REL_VOTS[*]+ ${REL_VOTS[*]}}"
 	i=$((i + 1))
 	echo "$i. up to three commits: $(version_subject "$REL_VERSION"), docs(changelog): $REL_VERSION (union of the OT sections), docs(readme): version $REL_VERSION"
 	i=$((i + 1))
@@ -3325,6 +3367,8 @@ version_release_run() {
 version_release() {
 	local o
 	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort), then run git release --version $REL_VERSION again"
+	[ -z "$(git config --get "qs.release.$REL_VERSION.current" 2>/dev/null)" ] || [ -z "$(git diff --name-only --diff-filter=U)" ] ||
+		die "the squash of an OT into $REL_VERSION/$QS_BR_RELEASE_LEAF still has conflicts. Solve them: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again. To start the OT again: git reset --hard $REL_VERSION/$QS_BR_RELEASE_LEAF"
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then

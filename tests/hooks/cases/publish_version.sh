@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Version release with branches.flow = squash (5.0.0-RC1/git/publish/version, ACs V1-V6): git
 # release --version <v> is refused while an OT lacks its '<v>/<ot>/RELEASE'; then '<v>/RELEASE' =
-# '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first, changelog commits dropped), the
+# '<v>/ORIGINAL' + every OT RELEASE squashed in as one commit (oldest first, CHANGELOG.md kept), the
 # CHANGELOG.md entry = union of the reviewed OT sections, the annotated tag on its tip (local),
 # the OT RELEASEs and '<v>/ORIGINAL' deleted; a conflict, a failed tag and a rejected push are all
 # resumed by running git release again; flow = merge keeps the 4.x git release.
@@ -88,9 +88,9 @@ grep -q 'reviewed by hand' <<<"$out" && grep -q "($bhash; b)" <<<"$out" && [ "$(
 # --- V2: the release; b (older work) before a ------------------------------------------------
 out="$(git release --version "$V" --yes 2>&1)" || fail "V2: version release failed: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE")"
-expected="$(printf '%s\n' "chore(version): $V" "fix(b): repair module b" "feat(a): add module a" "docs(changelog): $V")"
+expected="$(printf '%s\n' "chore(version): $V" "chore(release): OT b of $V" "chore(release): OT a of $V" "docs(changelog): $V")"
 [ "$(git branch --show-current)" = "$V/RELEASE" ] && [ "$(grep -v '^docs(readme)' <<<"$subjects")" = "$expected" ] &&
-	ok "V2: $V/RELEASE = $V/ORIGINAL + b then a (oldest first), no OT changelog commits, then the release commits" ||
+	ok "V2: $V/RELEASE = $V/ORIGINAL + one squash per OT, b then a (oldest first), then the release commits" ||
 	fail "V2: $subjects"
 [ "$(git show "$V/RELEASE:b.py")" = 'B = 1' ] && [ "$(git show "$V/RELEASE:a.py")" = 'A = 1' ] ||
 	fail "V2: content of the OTs missing"
@@ -120,7 +120,7 @@ cl="$(git show "$V/RELEASE:CHANGELOG.md")"
 	fail "V6: $(git branch -a)"
 out="$(git release --version "$V" --yes 2>&1)" && grep -q 'already prepared' <<<"$out" || fail "release again: $out"
 
-# --- V5: a conflict between OTs stops; after git rebase --continue it resumes with the next OT --
+# --- V5: a conflict between OTs stops; after git commit it resumes with the next OT --
 V=9.3.0
 version_sandbox
 released_ot p shared.txt 'from p' "feat(p): shared text p" "2020-01-01T10:00:00"
@@ -128,17 +128,16 @@ released_ot q shared.txt 'from q' "feat(q): shared text q" "2020-02-01T10:00:00"
 released_ot r r.txt 'from r' "feat(r): text r" "2020-03-01T10:00:00"
 git checkout -q develop
 out="$(git release --version "$V" --yes 2>&1)" && fail "V5: conflict not reported"
-grep -q "conflict while rebasing OT q" <<<"$out" && grep -q 'git rebase --continue' <<<"$out" &&
-	[ -d "$(git rev-parse --git-path rebase-merge)" ] &&
-	[ "$(git log -1 --format=%s "$V/RELEASE")" = "feat(p): shared text p" ] &&
+grep -q "conflict while squashing OT q" <<<"$out" && grep -q 'git commit' <<<"$out" &&
+	[ "$(git log -1 --format=%s "$V/RELEASE")" = "chore(release): OT p of $V" ] &&
 	git rev-parse -q --verify "refs/heads/$V/ORIGINAL" >/dev/null &&
 	[ "$(git rev-parse "$V/q/RELEASE")" = "$(git rev-parse "origin/$V/q/RELEASE")" ] &&
 	ok "V5: the conflict stops with instructions; p is on RELEASE, the OT RELEASEs untouched" || fail "V5 stop: $out"
-out="$(git release --version "$V" --yes 2>&1)" && fail "V5: ran during a stopped rebase"
-grep -q 'a rebase is stopped' <<<"$out" || fail "V5 stopped rebase: $out"
+out="$(git release --version "$V" --yes 2>&1)" && fail "V5: ran with the conflict unsolved"
+grep -q 'still has conflicts' <<<"$out" || fail "V5 unsolved conflict: $out"
 printf 'from p\nfrom q\n' >shared.txt
 git add shared.txt
-GIT_EDITOR=true git rebase --continue >/dev/null 2>&1 || fail "rebase --continue"
+git commit -q --no-edit || fail "commit of the solved squash"
 
 # a rejected push after the resume: nothing changes on origin, the rerun completes
 # shellcheck disable=SC2016
@@ -147,13 +146,13 @@ printf '#!/bin/sh\nwhile read o n r; do case "$r" in */RELEASE) exit 1 ;; esac; 
 chmod +x "$CASE_REPO.git/hooks/pre-receive"
 remote_before="$(git ls-remote origin)"
 out="$(git release --version "$V" --yes 2>&1)" && fail "V5: release passed a rejected push"
-grep -q 'OT q: the rebase finished by hand' <<<"$out" && grep -q 'was rejected; nothing changed on origin' <<<"$out" &&
+grep -q 'OT q: the squash finished by hand' <<<"$out" && grep -q 'was rejected; nothing changed on origin' <<<"$out" &&
 	[ "$(git ls-remote origin)" = "$remote_before" ] && git rev-parse -q --verify "refs/heads/$V/ORIGINAL" >/dev/null &&
-	ok "V5: resumed after git rebase --continue; a rejected push leaves origin untouched" || fail "V5 push: $out"
+	ok "V5: resumed after git commit; a rejected push leaves origin untouched" || fail "V5 push: $out"
 rm -f "$CASE_REPO.git/hooks/pre-receive"
 out="$(git release --version "$V" --yes 2>&1)" || fail "V5: resume after the push: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
-[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "feat(p): shared text p" "feat(q): shared text q" "feat(r): text r" "docs(changelog): $V")" ] &&
+[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(release): OT p of $V" "chore(release): OT q of $V" "chore(release): OT r of $V" "docs(changelog): $V")" ] &&
 	[ "$(git show "$V/RELEASE:shared.txt")" = "$(printf 'from p\nfrom q')" ] && [ "$(git show "$V/RELEASE:r.txt")" = 'from r' ] &&
 	[ "$(git rev-parse "$V^{commit}")" = "$(git rev-parse "$V/RELEASE")" ] &&
 	[ "$(git ls-remote origin "refs/heads/$V/RELEASE" | cut -f1)" = "$(git rev-parse "$V/RELEASE")" ] &&
@@ -215,8 +214,8 @@ out="$(git changelog --version "$V" 2>&1)" || fail "abandon: preview: $out"
 out="$(git release --version "$V" --yes 2>&1)" || fail "abandon: rerun failed: $out"
 grep -q "stale release state of $V is cleared" <<<"$out" || fail "abandon: no note: $out"
 subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs(readme)')"
-[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "feat(p): text p" "feat(q): text q" "feat(r): text r" \
-	"feat(s): text s" "docs(changelog): $V")" ] &&
+[ "$subjects" = "$(printf '%s\n' "chore(version): $V" "chore(release): OT p of $V" "chore(release): OT q of $V" \
+	"chore(release): OT r of $V" "chore(release): OT s of $V" "docs(changelog): $V")" ] &&
 	[ "$(git show "$V/RELEASE:s.txt")" = 'from s' ] && [ "$(git show "$V/RELEASE:p.txt")" = 'from p' ] &&
 	[ -z "$(git config --get-regexp "^qs\.release\.$V\.(plan|ots|current)")" ] &&
 	[ "$(git config --get "qs.release.$V.tag")" = "$V" ] &&
@@ -246,5 +245,5 @@ grep -q "release state of $V forgotten" <<<"$out" && [ -z "$(git config --get-re
 out="$(git release --reset --version "$V" --yes 2>&1)" || fail "reset again: $out"
 grep -q "nothing to reset" <<<"$out" && ok "reset: nothing to reset when no state is left" || fail "reset again: $out"
 out="$(git release --version "$V" --yes 2>&1)" || fail "release after reset: $out"
-[ "$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -c '^feat(')" = 2 ] &&
+[ "$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -c '^chore(release): OT')" = 2 ] &&
 	ok "reset: the next release takes every OT of the version" || fail "release after reset: $out"
