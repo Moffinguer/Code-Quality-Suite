@@ -52,6 +52,8 @@ git branch "$OT/RELEASE" "$OT/ORIGINAL" && git branch "$V/RELEASE" "$V/ORIGINAL"
 git branch unmerged/old develop
 git checkout -q "$RF/ORIGINAL"
 SHA="$(git log -n1 --format=%h --grep="Refs: $RF/a -> " "$RF/ORIGINAL")"
+QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$RF/ORIGINAL" 2>/dev/null || fail "push ORIGINAL"
+git fetch -q origin
 
 # --- A1 squash flow: integrated, pending, TESTING, RELEASE, unmerged
 OUT="$(git arbol "$V" 2>&1)" || fail "A1 arbol failed: $OUT"
