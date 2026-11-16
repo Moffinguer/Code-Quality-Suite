@@ -6,7 +6,7 @@
 # The files stay OUT of the repository: a managed .gitignore block lists them (and the personal
 # .quality-rules.json), and any of them already committed is taken out of the index (the files
 # stay on disk; commit afterwards). Existing files are kept; --actualizar rewrites the suite's own
-# files (skills, subagents, settings) but never AGENTS.md, CLAUDE.md, GEMINI.md, opencode.json or
+# files (skills, subagents), merges its rows into .claude/settings.json (yours stay), but never AGENTS.md, CLAUDE.md, GEMINI.md, opencode.json or
 # knowledge/ or dev_documents/, which are yours (the dev_documents/ templates are added only when missing).
 set -euo pipefail
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,7 +38,15 @@ while IFS= read -r -d '' f; do
 	rel="${f#"$tpl"/}"
 	dst="$repo/$rel"
 	if [ -e "$dst" ]; then
-		if [ "$update" = 1 ] && ! yours "$rel"; then
+		if [ "$update" = 1 ] && [ "$rel" = ".claude/settings.json" ]; then
+			# why: the project's own rows and keys stay; only the suite's rows are refreshed
+			sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$repo/.git/qs-settings-template.json"
+			before="$(cat "$dst")"
+			python3 "$SUITE/scripts/settings-merge.py" "$repo/.git/qs-settings-template.json" "$dst" \
+				"$repo/.git/qs-settings-owned.json"
+			rm -f "$repo/.git/qs-settings-template.json"
+			[ "$before" = "$(cat "$dst")" ] || updated=$((updated + 1))
+		elif [ "$update" = 1 ] && ! yours "$rel"; then
 			new="$(sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f")"
 			if [ "$new" != "$(cat "$dst")" ]; then
 				printf '%s\n' "$new" >"$dst"
@@ -52,6 +60,9 @@ while IFS= read -r -d '' f; do
 	fi
 	mkdir -p "$(dirname "$dst")"
 	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$dst"
+	# why: remember which rows the suite installed, so a later --actualizar can retire them
+	[ "$rel" != ".claude/settings.json" ] ||
+		python3 "$SUITE/scripts/settings-merge.py" "$dst" "$dst" "$repo/.git/qs-settings-owned.json"
 	added=$((added + 1))
 done < <(find "$tpl" -type f -print0)
 
