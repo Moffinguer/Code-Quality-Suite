@@ -280,28 +280,40 @@ cmd_nueva() {
 	[ "$cur" = "$QS_BR_MAINLINE" ] && version_commit "$new" "$seg"
 	git checkout -q "$new"
 	say "created '$new' from '$base' (parent: $(parent_branch "$new"))"
+	qs_publish_new "$new"
 	[ "$kind" = padre ] && say "children: git np <name> (parent) / git nr <name> (final)"
 	return 0
 }
 
 convert_branch() { # final branch '<F>/<x>' -> '<F>/<x>/ORIGINAL', local and on origin
-	local cur="$1" new remote=0
+	local cur="$1" new remote=0 sha pub=1
 	is_mainline "$cur" && die "'$cur' is a mainline branch"
 	is_parent_branch "$cur" && die "'$cur' is already a parent branch"
 	valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
 	new="$cur/$QS_BR_LEAF"
 	if has_origin && git ls-remote --exit-code --heads origin "refs/heads/$cur" >/dev/null 2>&1; then remote=1; fi
-	if [ "$remote" = 1 ]; then
+	qs_publish_on || pub=0
+	if [ "$remote" = 1 ] && [ "$pub" = 0 ]; then
 		echo "[rama] '$cur' exists on origin. Converting it deletes origin/$cur and pushes '$new'." >&2
 		echo "       Anyone else with '$cur' must run: git fetch --prune && git checkout $new" >&2
 		confirm "Continue?" || die "cancelled"
 	fi
 	# why: a branch that only exists on origin gets its local copy first, then the same rename
 	exists_ref "refs/heads/$cur" || git branch -q --no-track "$cur" "origin/$cur"
+	sha="$(git rev-parse -q --verify "refs/remotes/origin/$cur" || git rev-parse "refs/heads/$cur")"
 	git branch -m "$cur" "$new"
-	if [ "$remote" = 1 ]; then
+	if [ "$remote" = 1 ] && [ "$pub" = 0 ]; then
 		git push -q origin --delete "$cur"
 		git push -q -u origin "$new"
+	elif [ "$remote" = 1 ]; then
+		# why: one atomic push under a lease on the old tip; the human is asked only when it is lost
+		if qs_publish_rename "$cur" "$new" "$sha"; then
+			echo "[rama] origin: '$cur' is now '$new'. Anyone else with '$cur' must run: git fetch --prune && git checkout $new" >&2
+		else
+			echo "[rama] WARN: origin was not changed: the local rename to '$new' is kept. Ask the human before touching origin/$cur (someone may have pushed to it)" >&2
+		fi
+	else
+		qs_publish_new "$new"
 	fi
 }
 
@@ -342,7 +354,7 @@ cmd_subir() {
 		fi
 		has_origin && {
 			say "pushing $cur..."
-			git push -q origin "$cur"
+			git push -q -u origin "$cur"
 		}
 	else
 		base="$(best_ref "$parent")"
@@ -368,7 +380,7 @@ cmd_subir() {
 		fi
 		has_origin && {
 			say "pushing $cur (--force-with-lease)..."
-			git push -q --force-with-lease origin "$cur"
+			git push -q -u --force-with-lease origin "$cur"
 		}
 	fi
 	say "done."
@@ -748,6 +760,8 @@ cmd_arbol() {
 				fi
 			fi
 			exists_ref "refs/heads/$b" || st="$st (remote only)"
+			# why: a branch only here (offline, refused push, publish off) is not shared yet
+			if has_origin && exists_ref "refs/heads/$b" && ! exists_ref "refs/remotes/origin/$b"; then st="$st [local]"; fi
 			printf '%s%s %s%s%s%s\n' "$ind" "$(is_parent_branch "$b" && echo '+' || echo '-')" "$b" \
 				"$(special_marker "$b")" "$([ "$b" = "$cur" ] && echo '  <- you are here')" "$st"
 		done
@@ -817,7 +831,7 @@ behind_note() { # ' (N behind <parent>: git subir)' when the branch lacks commit
 
 cmd_estructura() {
 	local dry=0 push=0 conv=0 files=() f a plan kind node b p base errs=0 why planned=$'\n' versions=""
-	local topush=() n_new=0 n_ok=0
+	local topush=() created=() n_new=0 n_ok=0
 	for a in "$@"; do
 		case "$a" in
 		-n | --dry-run) dry=1 ;; --push) push=1 ;; --convertir) conv=1 ;;
@@ -916,6 +930,7 @@ cmd_estructura() {
 			printf '  + %-48s created from %s\n' "$b" "$base"
 			case "$node" in */*) ;; *) [ "$kind" = P ] && version_commit "$b" "$node" ;; esac
 			topush+=("$b")
+			created+=("$b")
 		fi
 		planned="$planned$b"$'\n'
 		n_new=$((n_new + 1))
@@ -926,6 +941,15 @@ cmd_estructura() {
 		return 0
 	fi
 	say "$n_new created, $n_ok already existing (current branch unchanged: $(current_branch || echo detached))"
+	# why: what this run created goes up in ONE push; --push is for the branches that already existed
+	if [ "${#created[@]}" -gt 0 ]; then
+		qs_publish_new "${created[@]}"
+		if qs_publish_on; then
+			local rest=() t
+			for t in "${topush[@]}"; do case " ${created[*]} " in *" $t "*) ;; *) rest+=("$t") ;; esac done
+			topush=(${rest[@]+"${rest[@]}"})
+		fi
+	fi
 	if [ "$push" = 1 ] && [ "${#topush[@]}" -gt 0 ]; then
 		if has_origin; then
 			say "pushing ${#topush[@]} branch(es) to origin..."
@@ -2123,7 +2147,7 @@ cmd_nueva_version() {
 	for n in ${left[@]+"${left[@]}"}; do
 		echo "[rama] WARN: $n conflicts with its new parent; bring it up to date by hand: git checkout $n && git subir" >&2
 	done
-	has_origin && say "share it: git push -u origin ${made[*]}"
+	qs_publish_new "${made[@]}"
 	return 0
 }
 
@@ -2200,7 +2224,11 @@ release_set_aside() {
 		if exists_ref "refs/heads/$b"; then
 			git branch -m "$b" "$new"
 		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
-		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then git push -q origin "refs/remotes/origin/$b:refs/heads/$new"; fi
+		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then
+			git push -q origin "refs/remotes/origin/$b:refs/heads/$new"
+		elif [ "$REL_PUSH" = 1 ]; then
+			qs_publish_new "$new" # why: a branch that never reached origin is published under its new name
+		fi
 		echo "[rama] WARN: $b had $n commit(s) not in $p: set aside as $new" >&2
 	done
 	return 0
