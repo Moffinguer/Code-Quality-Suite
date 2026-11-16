@@ -234,6 +234,8 @@ configure_repo() {
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
 	done
 	git config alias.encoding "!bash '$suite/scripts/qs-run.sh' --encoding"
+	# why: develop has no qs-alias auto-registration yet (6.0.0): register it by hand until then
+	git config alias.configurar-github "!bash '$suite/scripts/gh-settings.sh'"
 	# why: every version tree writes its version into VERSION and pom.xml; a merge driver keeps
 	# the branch's version (the released one on the mainline) instead of a conflict on every subir
 	git config merge.qs-version.name "code-quality-suite: version files keep the branch version"
