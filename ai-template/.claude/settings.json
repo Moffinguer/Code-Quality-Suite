@@ -32,9 +32,13 @@
       "Bash(bash <SUITE>/scripts/qs-run.sh:*)",
       "Bash(bash <SUITE>/scripts/ai-ask.sh:*)"
     ],
+    "ask": ["Bash(git push:*)"],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(git push -n --no-verify:*)",
+      "Bash(git release:*)",
       "Bash(git publicar:*)",
       "Bash(git combinar:*)",
       "Read(./.env)",
