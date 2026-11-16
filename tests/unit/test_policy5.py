@@ -113,6 +113,19 @@ class DefaultsTest(unittest.TestCase):
         for key in ("branches.flow", "branches.ot_tag", "branches.testing_leaf", "commit.files"):
             self.assertIn(key, text)
 
+    def test_publish_on_create(self):
+        """PB8: publish_on_create defaults to true, is exported and must be a boolean."""
+        self.assertIs(policy.DEFAULTS["branches"]["publish_on_create"], True)
+        self.assertIn("QS_BR_PUBLISH='1'\n", policy.shell_env({}))
+        off = {"branches": {"publish_on_create": False}}
+        self.assertIn("QS_BR_PUBLISH='0'\n", policy.shell_env(off))
+        self.assertEqual(policy.validate(off), [])
+        bad = policy.validate({"branches": {"publish_on_create": "yes"}})
+        self.assertTrue(any("branches.publish_on_create" in m for m in bad))
+        data = {"branches": {}}
+        self.assertIn("branches.publish_on_create", policy.populate(data))
+        self.assertIs(data["branches"]["publish_on_create"], True)
+
     def test_validate_accepts_empty_ot_tag(self):
         """An empty ot_tag means no tag and is valid."""
         self.assertEqual(policy.validate({"branches": {"ot_tag": ""}}), [])
