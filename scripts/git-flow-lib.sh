@@ -339,6 +339,11 @@ configure_repo() {
 	git config rerere.enabled true
 	git config rerere.autoupdate true
 	git config fetch.prune true # why: deleted/renamed branches would block 'a/b' -> 'a/b/ORIGINAL'
+	# why: 'git blame' skips the FORMAT squash commits listed there; git refuses a missing file,
+	# so it is set when the file exists (git formatear sets it when it writes the first sha)
+	if [ -f "$(git rev-parse --show-toplevel 2>/dev/null)/.git-blame-ignore-revs" ]; then
+		git config blame.ignoreRevsFile .git-blame-ignore-revs
+	fi
 	# why: git aliases (the team asked for plain git commands); short and long names
 	for a in np:nueva-padre nueva-padre:nueva-padre nr:nueva-final nueva-final:nueva-final \
 		convertir-padre:convertir-padre integra:integra subir:subir arbol:arbol \

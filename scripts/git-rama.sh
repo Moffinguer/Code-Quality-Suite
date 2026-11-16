@@ -285,11 +285,13 @@ cmd_nueva() {
 }
 
 convert_branch() { # final branch '<F>/<x>' -> '<F>/<x>/ORIGINAL', local and on origin
-	local cur="$1" new remote=0
+	local cur="$1" new why remote=0
 	is_mainline "$cur" && die "'$cur' is a mainline branch"
 	is_parent_branch "$cur" && die "'$cur' is already a parent branch"
 	valid_branch_name "$cur" >/dev/null || die "'$cur' does not follow the branch model"
 	new="$cur/$QS_BR_LEAF"
+	# why: a special branch without children (FORMAT, DOCS, CHECKPOINT) cannot become '<x>/ORIGINAL'
+	why="$(valid_branch_name "$new")" || die "'$cur' cannot become a parent: $why"
 	if has_origin && git ls-remote --exit-code --heads origin "refs/heads/$cur" >/dev/null 2>&1; then remote=1; fi
 	if [ "$remote" = 1 ]; then
 		echo "[rama] '$cur' exists on origin. Converting it deletes origin/$cur and pushes '$new'." >&2
