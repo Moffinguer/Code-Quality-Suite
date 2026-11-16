@@ -229,6 +229,7 @@ DEFAULTS = {
         "pom_version": "update",  # update | snapshot | check | off: pom.xml follows the version
         "tag_url": "",  # changelog links: '' = from origin, '-' = none, or '...{tag}'
         "commit_url": "",  # changelog references: '' = from origin, '-' = none, '...{commit}'
+        "publish_on_create": True,  # every branch a command creates is pushed to origin
         "special": SPECIAL_DEFAULTS,  # table of special branches (see SPECIAL_PROPS)
     },
 }
@@ -709,6 +710,8 @@ def _validate_branch_paths(br):
         v = br.get(key)
         if not isinstance(v, str) or v.startswith(("/", "-")) or ".." in v.split("/") or "\\" in v:
             errors.append(f"branches.{key}: a path inside the repository ('' = off)")
+    if not isinstance(br.get("publish_on_create"), bool):
+        errors.append("branches.publish_on_create: must be true or false")
     return errors
 
 
@@ -766,6 +769,7 @@ def shell_env(data):
         "QS_BR_LEAF_MERGE": br["leaf_merge"],
         "QS_BR_FLOW": br["flow"],
         "QS_BR_OT_TAG": br["ot_tag"],
+        "QS_BR_PUBLISH": "1" if br.get("publish_on_create", True) is not False else "0",
         "QS_BR_TESTING": br["testing_leaf"],
         "QS_BR_REQUIRE_CHILDREN": "1" if br.get("require_children_merged", True) else "0",
         "QS_BR_TAG": br["tag"],

@@ -60,7 +60,7 @@ The full manual, with syntax, when to use each command and who runs it:
 | `git np patch` / `minor` / `major` | from `develop`: the next version after the highest tag, version tree or `VERSION` (`6.22.6` -> `6.22.7` / `6.23.0` / `7.0.0`) |
 | `git nr <name>` (`git nueva-final`) | new final branch: from `<F>/ORIGINAL` -> `<F>/<name>`. `--from <F>/ORIGINAL` (also for `np`) works from any branch, e.g. an agent's worktree |
 | `git nueva-version <v> [--from <branch>]` (`git nv`) | a new version tree from any branch, next to the others (below) |
-| `git convertir-padre` | `<F>/<x>` -> `<F>/<x>/ORIGINAL` (local rename; on origin: delete + push, after confirmation) |
+| `git convertir-padre` | `<F>/<x>` -> `<F>/<x>/ORIGINAL` (local rename; a published branch is renamed on origin in one atomic push under a lease on its old tip) |
 | `git subir` | final: rebase onto its `ORIGINAL`, push `--force-with-lease`. Parent: merge its remote and its parent if behind, push |
 | `git integra` | integrate the current branch into its parent (rules above), with a generated Conventional Commits message; `-m "<subject>" [-m "<body>"]` skips the editor |
 | `git arbol [prefix]` | the tree with parents (`+`), finals (`-`), pending commits and the current branch |
@@ -368,6 +368,7 @@ Then `git publicar --version <version>`.
 | `allow` | `[]` | extra branch-name regexes (e.g. `^release/`) |
 | `leaf_merge` | `merge` | final -> ORIGINAL with `merge` (`--no-ff`) or `squash` |
 | `require_children_merged` | `true` | a parent goes up only when all its children are in |
+| `publish_on_create` | `true` | every branch a suite command creates is pushed to origin with `-u`; `false` (or `QS_PUBLISH=0` for one command) leaves it to `git subir` |
 | `tag` / `tag_level` | `{version}` / `1` | release tag (`{version}`, `{ot}`, `{date}`); `tag_level` also tags when a level-N `ORIGINAL` is integrated with `git integra` (`0` = never) |
 | `release_leaf` | `RELEASE` | `<version>/ORIGINAL` becomes `<version>/RELEASE` at `git release` |
 | `archive_prefix` | `unmerged` | branches never integrated are set aside as `unmerged/<name>` |

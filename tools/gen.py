@@ -399,6 +399,12 @@ def policy_schema():
                     "description": "applies to flow = merge only",
                 },
                 "require_children_merged": {"type": "boolean", "default": True},
+                "publish_on_create": {
+                    "type": "boolean",
+                    "default": d["branches"]["publish_on_create"],
+                    "description": "every branch a suite command creates is pushed to origin "
+                    "(false: publish with git subir; QS_PUBLISH=0 disables it for one command)",
+                },
                 "tag": {
                     "type": "string",
                     "default": "{version}",

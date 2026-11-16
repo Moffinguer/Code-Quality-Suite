@@ -143,7 +143,9 @@ A rejected message prints the offending lines and an ASCII suggestion
 
 The branch model and its keys are described in `docs/GIT-WORKFLOW.md` (including the release
 keys `release_leaf`, `archive_prefix`, `version_file`, `changelog_file`, `readme_file`,
-`pom_version`, `tag_url`, `commit_url`).
+`pom_version`, `tag_url`, `commit_url`) and `publish_on_create` (default `true`: every branch a suite
+command creates is pushed to origin with `-u`; `false`, or `QS_PUBLISH=0` for one command, leaves
+it to `git subir`).
 
 ### Special branches (`branches.special`)
 
