@@ -1229,4 +1229,8 @@ git init -q -b develop "$T/dd"
 	cat "$T/dd-act.out" 2>/dev/null
 	fail "git ia dev_documents"
 }
+for c in "$SUITE"/tests/hooks/cases/*.sh; do
+	[ -f "$c" ] || continue
+	bash "$c" || fail "case $(basename "$c")"
+done
 echo "all hook checks passed"
