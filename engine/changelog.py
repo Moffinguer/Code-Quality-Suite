@@ -15,6 +15,7 @@ references in parentheses; '**Breaking:**' first; link definitions at the end.
 """
 
 import datetime
+import html
 import re
 import subprocess
 
@@ -559,17 +560,23 @@ def _shields(v):
 
 
 def badge(version, link="CHANGELOG.md"):
-    """Markdown of the version badge.
+    """HTML of the version badge, on one line.
+
+    HTML (not Markdown) so GitHub renders it next to the qs:version markers: Markdown inside a
+    line that starts with an HTML comment is shown as literal text.
 
     Args:
         version: the version shown.
         link: where the badge points to.
 
     Returns:
-        str: the badge image link.
+        str: the badge as an anchor holding an image.
     """
     img = f"https://img.shields.io/badge/version-{_shields(version)}-blue"
-    return f"[![version {version}]({img})]({link})"
+    return (
+        f'<a href="{html.escape(link)}"><img alt="version {html.escape(version)}" '
+        f'src="{html.escape(img)}"></a>'
+    )
 
 
 def badge_version(text):
@@ -585,10 +592,12 @@ def badge_version(text):
     m = BADGE_RX.search(text or "")
     if not m:
         return None
-    v = re.search(r"!\[version ([^\]]+)\]", m.group(1)) or re.search(
-        r"version[ :]+(\S+)", m.group(1)
+    v = (
+        re.search(r'alt="version ([^"]+)"', m.group(1))
+        or re.search(r"!\[version ([^\]]+)\]", m.group(1))
+        or re.search(r"version[ :]+(\S+)", m.group(1))
     )
-    return v.group(1) if v else ""
+    return html.unescape(v.group(1)) if v else ""
 
 
 def set_badge(text, version):
