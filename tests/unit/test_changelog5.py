@@ -199,6 +199,50 @@ class FromGit(unittest.TestCase):
         self.assertNotIn(";", changelog.render("5.0.0", "2026-11-02", items).split("- ")[1])
 
 
+class MigrationLine(unittest.TestCase):
+    """The squash of '<v>/MIGRATION' is one Changed line whose OT is MIGRATION."""
+
+    def setUp(self):
+        """Make a repo: a base commit and two squashes with 'Refs:' lines of MIGRATION."""
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        _run(self.d, "init", "-q", "-b", "main")
+        commits = (
+            ("a", "chore: base"),
+            ("b", "build: Move to Java 17\n\nRefs: 6.0.0/MIGRATION -> 6.0.0/ORIGINAL"),
+            (
+                "c",
+                "build!: Raise the Java baseline\n\n"
+                "Refs: 6.0.0/MIGRATION/ORIGINAL -> 6.0.0/ORIGINAL",
+            ),
+        )
+        for name, msg in commits:
+            with open(os.path.join(self.d, name), "w", encoding="utf-8") as fh:
+                fh.write(name)
+            _run(self.d, "add", name)
+            _run(self.d, "commit", "-q", "-m", msg)
+        self.base = _run(self.d, "rev-parse", "HEAD~2")
+        self.tip = _run(self.d, "rev-parse", "HEAD")
+
+    def test_ot_of_migration(self):
+        self.assertEqual(changelog._ot_of("6.0.0/MIGRATION", changelog.policy.OT_RX), "MIGRATION")
+        self.assertEqual(
+            changelog._ot_of("6.0.0/MIGRATION/ORIGINAL", changelog.policy.OT_RX), "MIGRATION"
+        )
+        self.assertEqual(changelog._ot_of("6.0.0/ot1/a", changelog.policy.OT_RX), "ot1")
+        self.assertIsNone(changelog._ot_of("6.0.0/ORIGINAL", changelog.policy.OT_RX))
+
+    def test_lines_have_ot_migration_breaking_first(self):
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
+        self.assertEqual(changelog.without_ot(items), [])
+        block = changelog.render("6.0.0", "2026-11-16", items)
+        lines = [ln for ln in block.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("- **Breaking:** Raise the Java baseline ("))
+        self.assertTrue(lines[0].endswith("; MIGRATION)"))
+        self.assertTrue(lines[1].endswith("; MIGRATION)"))
+
+
 class GateLevel(unittest.TestCase):
     """repofiles.check() passes the version being written to the changelog validation."""
 

@@ -31,6 +31,7 @@ TYPE_GROUP = {
     "build": "Changed",
     "revert": "Changed",
 }
+MIGRATION_OT = "MIGRATION"  # the 'OT' shown for the squash of the version's MIGRATION branch
 OMIT_TYPES = {"docs", "test", "tests", "ci", "chore", "style"}
 CONVENTIONAL = re.compile(
     r"^(?P<type>[a-z][a-z0-9-]*)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?: (?P<desc>.+)$"
@@ -161,10 +162,14 @@ def _ot_of(src, ot_rx):
         ot_rx: regular expression an OT must match (re.match).
 
     Returns:
-        str | None: the second segment when the name has at least three segments and the
-        segment matches ot_rx, else None.
+        str | None: 'MIGRATION' for the special branch '<version>/MIGRATION' (or anything
+        below it: its change belongs to no OT and is shown as MIGRATION); otherwise the
+        second segment when the name has at least three segments and the segment matches
+        ot_rx, else None.
     """
     parts = (src or "").split("/")
+    if len(parts) > 1 and parts[1] == MIGRATION_OT:
+        return MIGRATION_OT
     return parts[1] if len(parts) > 2 and re.match(ot_rx, parts[1]) else None
 
 
