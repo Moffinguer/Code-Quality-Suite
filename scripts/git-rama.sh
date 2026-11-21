@@ -4,7 +4,9 @@
 #                         a Semantic Versioning version; 'git np patch|minor|major' takes the next one
 #                         after the highest tag / version tree / VERSION, and a first commit writes the
 #                         version to VERSION, the pom.xml files and package.json)
-#   git nr  <name>        new FINAL branch:  '<node>/<name>' (sibling of the current ORIGINAL's children)
+#                         --migracion (from develop only): also creates <version>/MIGRATION, as
+#                         git migracion does, and checks it out
+#   git nr <name>        new FINAL branch:  '<node>/<name>' (sibling of the current ORIGINAL's children)
 #                         --from <ORIGINAL|develop>: use that branch instead of the current one
 #                         (agents in their own worktree, where the ORIGINAL is checked out elsewhere)
 #   git convertir-padre   turn the current final branch into a parent ('x/y' -> 'x/y/ORIGINAL')
@@ -91,6 +93,9 @@ HOOK_ENV="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)/q
 # is installed (5.0.0-RC1/git/log); squash_files_block falls back to the same format without it
 # shellcheck disable=SC1091
 [ -f "$DIR/commit-files-lib.sh" ] && . "$DIR/commit-files-lib.sh"
+# why: git np --migracion and the MIGRATION squash of git integra use the creator of git migracion
+# shellcheck disable=SC1091
+. "$DIR/git-migracion.sh"
 qs_policy_load
 
 die() {
@@ -98,11 +103,12 @@ die() {
 	exit 1
 }
 say() { echo "[rama] $*"; }
-YES=0 FORCE=0 FROM="" MSG=() ARGS=()
+YES=0 FORCE=0 FROM="" MIGRACION=0 MSG=() ARGS=()
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--yes | -y) YES=1 ;;
 	--force) FORCE=1 ;;
+	--migracion) MIGRACION=1 ;;
 	--from)
 		[ "$#" -ge 2 ] || die "--from needs a branch"
 		FROM="$2"
@@ -242,6 +248,10 @@ cmd_nueva() {
 	testing_reserved_segment "$seg" && die "'$seg' is reserved for the TESTING sandbox: git testing crear"
 	special_refusal "$seg" >/dev/null && die "$(special_refusal "$seg")"
 	case "$seg" in */*) die "the name is one segment (no '/'): $seg" ;; "$QS_BR_LEAF" | "$QS_BR_RELEASE_LEAF") die "'$seg' is reserved" ;; esac
+	if [ "$MIGRACION" = 1 ]; then
+		[ "$kind" = padre ] || die "--migracion only goes with a new version: git np <version> --migracion"
+		special_enabled MIGRATION || die "MIGRATION is not enabled (it needs branches.flow: squash and branches.special.MIGRATION)"
+	fi
 	if [ -n "$FROM" ]; then
 		fetch_origin
 		cur="$FROM"
@@ -261,6 +271,8 @@ cmd_nueva() {
 			;;
 		esac
 		new="$seg/$QS_BR_LEAF"
+	elif [ "$MIGRACION" = 1 ]; then
+		die "--migracion goes only with a new version, from $QS_BR_MAINLINE: git np <version> --migracion (on a fresh '<version>/$QS_BR_LEAF': git migracion)"
 	elif is_parent_branch "$cur"; then
 		node="$(branch_node "$cur")"
 		new="$node/$seg"
@@ -281,6 +293,7 @@ cmd_nueva() {
 	git checkout -q "$new"
 	say "created '$new' from '$base' (parent: $(parent_branch "$new"))"
 	[ "$kind" = padre ] && say "children: git np <name> (parent) / git nr <name> (final)"
+	[ "$MIGRACION" = 1 ] && mg_create "${new%%/*}"
 	return 0
 }
 
@@ -573,17 +586,38 @@ squash_drop_child() {
 	say "deleted '$b' $where"
 }
 
+# migration_subject <subject>: the subject of the MIGRATION squash commit: a 'build' Conventional
+# Commit ('build: x', 'build(scope): x', 'build!: x') as it is; a plain text gets the 'build: '
+# prefix. Arguments: $1 the subject given with -m. Returns: 0 and prints the subject; 1 (after
+# printing why on stderr) when it is a Conventional Commit of another type.
+migration_subject() {
+	local s="$1"
+	if printf '%s' "$s" | grep -qE '^build(\([^)]*\))?!?: .'; then
+		printf '%s' "$s"
+	elif printf '%s' "$s" | grep -qE '^[a-z][a-z0-9-]*(\([^)]*\))?!?: '; then
+		echo "[rama] the MIGRATION squash subject is 'build: <subject>' (or 'build!: <subject>'), not '$s'" >&2
+		return 1
+	else
+		printf 'build: %s' "$s"
+	fi
+}
+
 # integra_squash <branch> <parent>: git integra with branches.flow = squash. A final branch, or a
 # '<F>/ORIGINAL' below the OT whose children are all integrated (--force: even when not), is
 # rebased onto <parent> and lands there as ONE single-parent commit (message: subject and body
 # from -m or the editor, Commits:, Files:, Norms:, Refs:, Squashed:); then it is deleted
 # (confirmation unless --yes). Refused: '<v>/<ot>/ORIGINAL' and '<v>/ORIGINAL' (git release),
 # <branch> or <parent> checked out in another worktree, nothing to integrate.
+# MIGRATION: '<v>/MIGRATION' and '<v>/MIGRATION/ORIGINAL' (all children in) squash into '<v>/ORIGINAL'
+# with the subject 'build: <subject>' (or 'build!:'); afterwards what is left under
+# '<v>/MIGRATION/' goes (mg_after_squash) and '<v>/DOCS' is created in DOCS mode.
 # Returns 0; exits through die when refused or on a conflict (nothing changed).
 integra_squash() {
-	local cur="$1" parent="$2" pending bypass=0 tpl editor subject text="" m
+	local cur="$1" parent="$2" pending="" bypass=0 tpl editor subject text="" m mig=0 first=""
+	# why: the MIGRATION branch of a version (or its folder) squashes into '<v>/ORIGINAL' as a build commit
+	case "$cur" in "${cur%%/*}"/MIGRATION | "${cur%%/*}/MIGRATION/$QS_BR_LEAF") [ "$(special_kind "$cur")" = MIGRATION ] && mig=1 ;; esac
 	if is_parent_branch "$cur"; then
-		[ "$(branch_depth "$cur")" -ge 3 ] ||
+		[ "$mig" = 1 ] || [ "$(branch_depth "$cur")" -ge 3 ] ||
 			die "'$cur' goes up through a release, not git integra (branches.flow = squash): git release"
 		pending="$(children_pending "$cur")"
 		if [ -n "$pending" ]; then
@@ -605,10 +639,14 @@ integra_squash() {
 	mkdir -p "$(dirname "$tpl")"
 	[ "${#MSG[@]}" -gt 1 ] && text="$(printf '%s\n' "${MSG[@]:1}")"
 	compose_squash_message "$cur" "$parent" "$tpl" "$text"
+	if [ "$mig" = 1 ]; then
+		sed -i '1s/^feat([^)]*): DESCRIPCION_BREVE$/build: DESCRIPCION_BREVE/' "$tpl"
+		[ "${#MSG[@]}" -eq 0 ] || first="$(migration_subject "${MSG[0]}")" || exit 1
+	elif [ "${#MSG[@]}" -gt 0 ]; then first="${MSG[0]}"; fi
 	if [ "${#MSG[@]}" -gt 0 ]; then
 		# why: agents cannot drive an editor; their Norms: lines go into the Norms: trailer
 		{
-			printf '%s\n\n' "${MSG[0]}"
+			printf '%s\n\n' "$first"
 			for m in "${MSG[@]:1}"; do
 				m="$(printf '%s\n' "$m" | grep -v '^Norms:' || true)"
 				[ -z "$m" ] || printf '%s\n\n' "$m"
@@ -621,6 +659,10 @@ integra_squash() {
 	fi
 	subject="$(grep -vE '^[[:space:]]*#' "$tpl" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
 	case "$subject" in *DESCRIPCION_BREVE* | "") die "subject not filled in; nothing was integrated ('$cur' is rebased onto '$parent')" ;; esac
+	if [ "$mig" = 1 ]; then
+		printf '%s\n' "$subject" | grep -qE '^build(\([^)]*\))?!?: .' ||
+			die "the MIGRATION squash subject is 'build: <subject>' (or 'build!: <subject>'); nothing was integrated ('$cur' is rebased onto '$parent')"
+	fi
 	say "$cur -> $parent (squash)"
 	git checkout -q "$parent"
 	if ! quiet_merge -c merge.ff=true merge -q --squash "$cur" || ! git commit -q --allow-empty --cleanup=strip -F "$tpl"; then
@@ -630,6 +672,9 @@ integra_squash() {
 	fi
 	say "done: '$cur' integrated into '$parent' as $(git rev-parse --short HEAD). Push: git push origin $parent"
 	squash_drop_child "$cur"
+	# shellcheck disable=SC2086 # why: pending is a space separated list of branch names (no spaces)
+	[ "$mig" = 0 ] || mg_after_squash "${cur%%/*}" $pending
+	return 0
 }
 
 cmd_integra() {
