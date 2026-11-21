@@ -121,3 +121,22 @@ for n in a b c; do
 done
 [ ! -f "$FAKE_DOCKER_DIR/$OLD_IMG" ] && ok "update: the image of the older suite version is gone (no leftover versions)" ||
 	fail "update: the old image is still there"
+
+# ---- MSYS paths: a native Windows python cannot open /c/... paths; the calls must go through cygpath -m
+WIN="$T/winbin"
+mkdir -p "$WIN"
+REAL_PY="$(command -v python3)"
+# why: the $1 inside the fake script is expanded when the fake runs, not here
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n# fake cygpath: -m maps /x to W:/x, like Git Bash maps /c/x to C:/x\nshift\nprintf "W:%%s" "$1"\n' >"$WIN/cygpath"
+# fake native python: rejects a script path that is not in the W:/ form, then runs the real one
+# why: the $1 and $@ inside the fake script are expanded when the fake runs, not here
+# shellcheck disable=SC2016
+printf '#!/bin/sh\ncase "$1" in -c) exec "%s" "$@" ;; W:*) ;; *) echo "native python: cannot open file $1" >&2; exit 9 ;; esac\nfor a in "$@"; do shift; set -- "$@" "${a#W:}"; done\nexec "%s" "$@"\n' "$REAL_PY" "$REAL_PY" >"$WIN/python3"
+chmod +x "$WIN/cygpath" "$WIN/python3"
+cd "$REPO" || fail "cannot enter $REPO"
+printf '{"branches": {"mainline": "develop"}}' >.quality-rules.json
+printf '0.0.1\n' >.git/quality-suite/suite-version
+out="$(PATH="$WIN:$PATH" QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/git-flow-lib.sh"; qs_suite_stamp_check' 2>&1)"
+case "$out" in *"cannot open"* | *"WARN"*) fail "MSYS: hook check warned: $out" ;; *) ok "MSYS: the hook check passes native paths (no warning)" ;; esac
+[ "$(stamp_of "$REPO")" = "$VERSION_NOW" ] && ok "MSYS: the stamp was written" || fail "MSYS: stamp not written"

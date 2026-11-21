@@ -141,10 +141,13 @@ grep -qxF "$REPO_TOP" "$QS_HOME/repos.list" || printf '%s\n' "$REPO_TOP" >>"$QS_
 # why: rules-upgrade also writes the suite stamp (<git common dir>/quality-suite/suite-version)
 # (git actualizar-suite runs it itself afterwards, to show the changes: QS_SKIP_RULES_UPGRADE=1)
 _up_out="$(mktemp)"
+# why: a native Windows python cannot open /c/... paths (Git Bash); cygpath -m gives C:/...
+# Arguments: $1 path. Returns: 0 and the path in the form python reads.
+_native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 if [ "${QS_SKIP_RULES_UPGRADE:-0}" != 1 ]; then
 	_migrated=0
 	for _py in python3 python; do
-		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$SCRIPT_DIR/engine/policy.py" rules-upgrade "$REPO_TOP" >"$_up_out"; then
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$(_native "$SCRIPT_DIR/engine/policy.py")" rules-upgrade "$(_native "$REPO_TOP")" >"$_up_out"; then
 			_migrated=1
 			break
 		fi

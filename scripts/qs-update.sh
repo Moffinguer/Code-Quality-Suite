@@ -64,7 +64,8 @@ rules_upgrade() {
 		echo "[update] WARN: no working python3/python: rules file of $1 not upgraded (the next hook does it)" >&2
 		return 0
 	}
-	if ! out="$("$py" "$QUALITY_SUITE_DIR/engine/policy.py" rules-upgrade "$1" 2>&1)"; then
+	# why: a native Windows python cannot open /c/... paths (Git Bash); qs_hostpath gives C:/...
+	if ! out="$("$py" "$(qs_hostpath "$QUALITY_SUITE_DIR/engine/policy.py")" rules-upgrade "$(qs_hostpath "$1")" 2>&1)"; then
 		echo "[update] WARN: rules file of $1 not upgraded (the next hook retries): $out" >&2
 	elif [ -z "$out" ]; then
 		say "$1: rules: up to date"

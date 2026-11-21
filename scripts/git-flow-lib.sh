@@ -76,6 +76,13 @@ qs_special_need_squash() {
 	return 1
 }
 
+# Print a path in the form native Windows programs read (C:/dir/file) where cygpath exists
+# (Git Bash), unchanged elsewhere.
+# Arguments: $1 path. Returns: 0 and the path.
+qs_native_path() {
+	if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+
 # Print the path of a working python (python3 or python); the Windows Store python3 stub exists
 # on Git Bash but fails, so each candidate is tried.
 # Arguments: none. Returns: 0 and the command name, or 1 when none works.
@@ -124,7 +131,8 @@ qs_suite_stamp_check() {
 		return 0
 	fi
 	err="$(mktemp)"
-	if out="$("$py" "$QUALITY_SUITE_DIR/engine/policy.py" rules-upgrade "$root" 2>"$err")"; then
+	# why: a native Windows python cannot open /c/... paths (Git Bash); cygpath -m gives C:/...
+	if out="$("$py" "$(qs_native_path "$QUALITY_SUITE_DIR/engine/policy.py")" rules-upgrade "$(qs_native_path "$root")" 2>"$err")"; then
 		n="$(grep -cE '^(added|migrated) ' <<<"$out" || true)"
 		[ "${n:-0}" = 0 ] || echo "[quality-suite] rules file upgraded to suite $sv: $n change(s) (git actualizar-suite shows them)" >&2
 		[ ! -s "$err" ] || cat "$err" >&2
