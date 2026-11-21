@@ -27,3 +27,5 @@ run the gate on every changed file and let the hooks pass (`git subir` runs pre-
 with `git subir`, then `git switch -` (frees the final branch so the lead can
 integrate it), and a short report: branch, what changed, tests run, anything you could not do.
 Never merge into an ORIGINAL.
+
+You never run `git integra`, `git merge` or `git pull` without `--rebase`, and never push an ORIGINAL: you only commit on your final branch (see `branch-workflow`).

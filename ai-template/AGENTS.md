@@ -24,8 +24,12 @@ skills and in `knowledge/`.
 4. **Commits.** Conventional Commits, subject <= 50 characters, **ASCII only** (no accents, n-tilde
    or diaeresis: write "anadir validacion", not "añadir validación").
 5. **Branches.** Use the git aliases (skill `git-commands` is the manual of all of them; `git ayuda
-   <command>` prints one): `git np` (parent), `git nr` (final branch), `git subir`, `git integra`. Never rebase or force-push an `ORIGINAL` branch. Versions,
-   CHANGELOG.md and the README badge are written by `git np` / `git release`, not by hand.
+   <command>` prints one): `git np` (parent), `git nr` (final branch), `git subir`, `git integra`.
+   Never rebase or force-push an `ORIGINAL` branch, with one exception: under `branches.flow =
+   squash`, `git integra` rebases a `<F>/ORIGINAL` onto its parent `ORIGINAL` before it squashes
+   it up (only when all its children are in; never a `<v>/ORIGINAL` or an OT `ORIGINAL`, and
+   never a force push by hand). Versions, CHANGELOG.md and the README badge are written by
+   `git np` / `git release`, not by hand.
 6. **Data class.** `regulated` code and data never go to free model tiers or third-party
    endpoints that train on prompts; only to local models or paid no-training endpoints.
 7. **Lessons.** When something surprised you (a failed approach, a hidden rule), record it with
@@ -41,6 +45,11 @@ skills and in `knowledge/`.
 10. **Co-authors.** Human co-authors are fine. Never add Claude or any AI model as co-author
     (no `Co-Authored-By:` naming an AI) nor a "Generated with ..." line in commits or PRs.
     `.claude/settings.json` sets `attribution` to empty (legacy key: `includeCoAuthoredBy: false`).
+11. **Integration flow.** Under `branches.flow = squash` an ORIGINAL moves only through
+    `git integra` (one single-parent commit): never `git merge`, `git pull` without `--rebase`,
+    cherry-pick or a push of a rebuilt ORIGINAL. Integrate from the main checkout only (a worktree
+    may lack the real `.quality-rules.json`), and check `git log -1 --format=%P <ORIGINAL>` shows
+    one parent before pushing. Details: skill `branch-workflow`.
 
 ## Roles (Claude Code subagents in .claude/agents; OpenCode gets the same ones in .opencode/agents)
 

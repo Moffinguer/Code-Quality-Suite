@@ -5,9 +5,14 @@
 #                  of its own commits (an upstream that already contains the ORIGINAL tip)
 #   ORIGINAL/develop/main  only onto their own remote ('git pull'); they are shared, and
 #                  rewriting them breaks every branch built on them
+#   flow squash    also '<F>/ORIGINAL' below the OT onto its parent ORIGINAL once all its
+#                  children are integrated (git integra); '<version>/RELEASE' onto develop
+#                  (its parent: git subir, git publicar), never onto anything else
+#   develop        never rebased in any flow (shared): git publicar adds one commit on top
 # git passes: $1 = upstream, $2 = branch being rebased (empty = current).
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
@@ -17,22 +22,54 @@ qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 [ "${QUALITY_ALLOW_REBASE:-0}" = 1 ] && exit 0
 
-upstream="${1:-}"; branch="${2:-$(current_branch || true)}"
+upstream="${1:-}"
+branch="${2:-$(current_branch || true)}"
 [ -n "$upstream" ] && [ -n "$branch" ] || exit 0
 valid_branch_name "$branch" >/dev/null 2>&1 || exit 0
 up="$(git rev-parse -q --verify "${upstream}^{commit}" 2>/dev/null)" || exit 0
+# --- TESTING sandbox guard (never rebased, either direction) ---
+if testing_blocks_rebase "$branch" "$upstream"; then
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
+# --- end TESTING sandbox guard ---
 # onto (an ancestor of) its own remote: the 'git pull --rebase' case
-if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 \
-   && git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
+if git rev-parse -q --verify "refs/remotes/origin/$branch" >/dev/null 2>&1 &&
+	git merge-base --is-ancestor "$up" "refs/remotes/origin/$branch"; then exit 0; fi
+# --- flow squash: '<v>/RELEASE' only onto develop (or an older develop commit), or a tidy-up of
+# its own commits; a RELEASE onto another RELEASE would publish that version too
+if [ "${QS_BR_FLOW:-merge}" = squash ] && is_release_branch "$branch"; then
+	rl_dev="$(best_ref "$QS_BR_MAINLINE" || true)"
+	if [ -n "$rl_dev" ] && { git merge-base --is-ancestor "$up" "$rl_dev" || git merge-base --is-ancestor "$up" "$branch"; }; then
+		exit 0
+	fi
+	echo "[pre-rebase] '$branch' is rebased only onto '$QS_BR_MAINLINE' (git subir, git publicar), not onto '$upstream'." >&2
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
+# --- flow squash: '<F>/ORIGINAL' goes up by rebase onto its parent + squash (git integra) ----
+# Only below the OT ('<v>/<ot>/ORIGINAL' and '<v>/ORIGINAL' go up through git release), only
+# onto (a descendant of) its parent ORIGINAL, and only when every child is integrated.
+if [ "${QS_BR_FLOW:-merge}" = squash ] && is_parent_branch "$branch" && [ "$(branch_depth "$branch")" -ge 3 ]; then
+	sq_parent="$(parent_branch "$branch")"
+	sq_ptip="$(best_ref "$sq_parent" || true)"
+	if [ -n "$sq_ptip" ] && git merge-base --is-ancestor "$sq_ptip" "$up"; then
+		sq_pending="$(children_pending "$branch")"
+		[ -z "$sq_pending" ] && exit 0
+		echo "[pre-rebase] '$branch' still has children not integrated: $sq_pending (git integra them first)." >&2
+		[ "$QS_BR_ENFORCE" = warn ] && exit 0
+		exit 1
+	fi
+fi
 if is_parent_branch "$branch" || is_mainline "$branch"; then
-  echo "[pre-rebase] '$branch' is shared (others build on it): never rebase it; merge instead (git subir)." >&2
-  echo "             Bypass once: QUALITY_ALLOW_REBASE=1 git rebase ..." >&2
+	echo "[pre-rebase] '$branch' is shared (others build on it): never rebase it; merge instead (git subir)." >&2
+	echo "             Bypass once: QUALITY_ALLOW_REBASE=1 git rebase ..." >&2
 else
-  parent="$(parent_branch "$branch")"
-  ptip="$(best_ref "$parent" || true)"
-  [ -z "$ptip" ] && exit 0
-  git merge-base --is-ancestor "$ptip" "$up" && exit 0
-  echo "[pre-rebase] '$branch' rebases onto its parent '$parent' (tried '$upstream'). Use: git subir" >&2
+	parent="$(parent_branch "$branch")"
+	ptip="$(best_ref "$parent" || true)"
+	[ -z "$ptip" ] && exit 0
+	git merge-base --is-ancestor "$ptip" "$up" && exit 0
+	echo "[pre-rebase] '$branch' rebases onto its parent '$parent' (tried '$upstream'). Use: git subir" >&2
 fi
 [ "$QS_BR_ENFORCE" = warn ] && exit 0
 exit 1

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# code-quality-suite hook
+# reference-transaction - TESTING content must never reach another branch except through
+# 'git testing repartir' (cherry-pick -x). A fast-forward (git merge --ff-only <F>/TESTING) fires
+# no merge hook, so this hook watches every update of refs/heads/*: when a non-TESTING branch
+# moves to a commit whose NEW history includes a TESTING marker commit (or a commit made on
+# TESTING), it prints the error and how to undo it. It also reports a merge or pull that moves a
+# TESTING branch: TESTING is recreated ('git testing crear --recrear'), never merged into.
+# Why state 'committed' and not 'prepared': at 'prepared' a refusal would abort the update, but a
+# fast-forward merge has already switched the index and work tree to the new tree by then, so the
+# refusal would leave a half-applied merge. At 'committed' the repository is consistent and
+# 'git reset --hard <old sha>' restores everything; the pre-push guard still blocks the push.
+# Fast: stdin is read first and the hook exits at once when no refs/heads/ ref is updated or no
+# TESTING branch exists; then only non-TESTING branches are looked at, and only the new commits
+# (new ^old) are searched. Stdin lines: <old sha> <new sha> <ref>. Argument 1: the state.
+set -uo pipefail
+[ "${1:-}" = committed ] || exit 0
+# why: read stdin first and bail out cheaply; most updates touch no branch or no sandbox exists
+UPDATES=()
+heads=0
+while read -r old new ref; do
+	UPDATES+=("$old $new $ref")
+	case "$ref" in refs/heads/*) heads=1 ;; esac
+done
+[ "$heads" = 1 ] || exit 0
+[ -n "$(git for-each-ref --count=1 --format=x 'refs/heads/**/TESTING' 2>/dev/null)" ] || exit 0
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
+[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
+# why: a hook must never break a ref update because of its own problem: any doubt -> allow
+# shellcheck disable=SC1090
+[ -f "$LIB" ] && . "$LIB" || exit 0
+qs_policy_load 2>/dev/null || exit 0
+[ "$QS_BR_ENFORCE" = off ] && exit 0
+
+Z40="0000000000000000000000000000000000000000"
+for upd in "${UPDATES[@]}"; do
+	read -r old new ref <<<"$upd"
+	case "$ref" in refs/heads/*) b="${ref#refs/heads/}" ;; *) continue ;; esac
+	[ "$new" = "$Z40" ] && continue # deleted
+	if is_testing_branch "$b"; then
+		# why: a merge or pull moving TESTING (fast-forward or not) puts another branch's commits in it
+		# why: plumbing (update-ref to a commit-tree merge) sets no reflog action, so a new tip
+		# with several parents whose first parent is the old tip is also a merge into TESTING
+		how=""
+		case "${GIT_REFLOG_ACTION:-}" in merge* | pull*) how="${GIT_REFLOG_ACTION%% *}" ;; esac
+		if [ -z "$how" ] && [ "$old" != "$Z40" ] &&
+			git rev-parse -q --verify "${new}^2" >/dev/null 2>&1 &&
+			[ "$(git rev-parse -q --verify "${new}^1" 2>/dev/null)" = "$old" ]; then
+			how="merge"
+		fi
+		case "$how" in
+		?*)
+			if [ "$old" != "$Z40" ]; then
+				{
+					echo "[quality-suite] reference-transaction: '$b' was moved by a $how."
+					testing_message
+					echo "  TESTING must be recreated ('git testing crear --recrear'), never merged into."
+					echo "  Undo: git reset --hard $old   (or, when $b is not checked out: git branch -f $b $old)"
+				} >&2
+			fi
+			;;
+		esac
+		continue
+	fi
+	leak="$(testing_leak_in_range "$new" "$old" "branches:$b")" || continue
+	{
+		echo "[quality-suite] reference-transaction: '$b' now contains TESTING commit ${leak:0:10}."
+		echo "  TESTING content can only reach other branches through 'git testing repartir'."
+		if [ "$old" = "$Z40" ]; then
+			echo "  Undo: git branch -D $b"
+		else
+			echo "  Undo: git reset --hard $old   (or, when $b is not checked out: git branch -f $b $old)"
+		fi
+		echo "  Pushing it is refused by the pre-push hook in any case."
+	} >&2
+done
+exit 0

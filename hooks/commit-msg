@@ -7,74 +7,102 @@
 # why ASCII: messages travel through Windows consoles, Azure DevOps, mail and old tools with
 # other codepages; a non-ASCII character turns into mojibake for someone downstream.
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
-if [ -f "$LIB" ]; then . "$LIB"; qs_policy_load; else
-  QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
-  QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1
+if [ -f "$LIB" ]; then
+	. "$LIB"
+	qs_policy_load
+else
+	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1
 fi
 
 MSG_FILE="$1"
-cc="$(git config core.commentChar 2>/dev/null || echo '#')"; [ "$cc" = auto ] && cc='#'
+# Files: block (commit.files block|warn|off): restored when missing or edited
+FILES_LIB="${QUALITY_SUITE_DIR:-}/scripts/commit-files-lib.sh"
+# shellcheck disable=SC1090
+if [ -f "$FILES_LIB" ]; then
+	. "$FILES_LIB"
+	qs_commit_files_enforce "$MSG_FILE"
+fi
+cc="$(git config core.commentChar 2>/dev/null || echo '#')"
+[ "$cc" = auto ] && cc='#'
 # the message as git will store it: up to the scissors line, without comment lines
 msg="$(sed -n "/^${cc} -\{24\} >8 -\{24\}\$/q;p" "$MSG_FILE" | grep -v "^${cc}" || true)"
 subject="$(printf '%s\n' "$msg" | grep -vE '^[[:space:]]*$' | head -n1 || true)"
-[ -n "$subject" ] || { echo "commit-msg: empty message." >&2; exit 1; }
+[ -n "$subject" ] || {
+	echo "commit-msg: empty message." >&2
+	exit 1
+}
+# TESTING never reaches another branch through 'git merge --squash' (SQUASH_MSG lists its commits).
+# Only this commit's message counts: a commit made with its own message is not the squash.
+if [ "${QS_BR_ENFORCE:-block}" != off ] && declare -F testing_squash_hit >/dev/null 2>&1 &&
+	sq="$(testing_squash_hit "$msg")"; then
+	echo "commit-msg: the squash merge contains TESTING commit ${sq:0:10}." >&2
+	echo "  TESTING content can only reach other branches through 'git testing repartir'." >&2
+	[ "${QS_BR_ENFORCE:-block}" = warn ] || exit 1
+fi
 
+# to_ascii: stdin -> stdout, replace common non-ASCII characters by ASCII ones (suggestion text).
+# shellcheck disable=SC1112  # the unicode quotes are the characters being replaced
 to_ascii() {
-  # why: literal byte sequences, no [...] classes: they split multibyte characters in the C locale
-  sed -e 's/á/a/g; s/à/a/g; s/ä/a/g; s/â/a/g; s/ã/a/g; s/Á/A/g; s/À/A/g; s/Ä/A/g; s/Â/A/g; s/Ã/A/g' \
-      -e 's/é/e/g; s/è/e/g; s/ë/e/g; s/ê/e/g; s/É/E/g; s/È/E/g; s/Ë/E/g; s/Ê/E/g; s/í/i/g; s/ì/i/g' \
-      -e 's/ï/i/g; s/î/i/g; s/Í/I/g; s/Ì/I/g; s/Ï/I/g; s/Î/I/g; s/ó/o/g; s/ò/o/g; s/ö/o/g; s/ô/o/g' \
-      -e 's/õ/o/g; s/Ó/O/g; s/Ò/O/g; s/Ö/O/g; s/Ô/O/g; s/Õ/O/g; s/ú/u/g; s/ù/u/g; s/ü/u/g; s/û/u/g' \
-      -e 's/Ú/U/g; s/Ù/U/g; s/Ü/U/g; s/Û/U/g; s/ñ/n/g; s/Ñ/N/g; s/ç/c/g; s/Ç/C/g; s/¿//g; s/¡//g' \
-      -e 's/º/o/g; s/ª/a/g; s/«/"/g; s/»/"/g; s/“/"/g; s/”/"/g; s/‘/'\''/g; s/’/'\''/g; s/´/'\''/g; s/–/-/g' \
-      -e 's/—/-/g; s/€/EUR/g; s/…/.../g'
+	# why: literal byte sequences, no [...] classes: they split multibyte characters in the C locale
+	sed -e 's/á/a/g; s/à/a/g; s/ä/a/g; s/â/a/g; s/ã/a/g; s/Á/A/g; s/À/A/g; s/Ä/A/g; s/Â/A/g; s/Ã/A/g' \
+		-e 's/é/e/g; s/è/e/g; s/ë/e/g; s/ê/e/g; s/É/E/g; s/È/E/g; s/Ë/E/g; s/Ê/E/g; s/í/i/g; s/ì/i/g' \
+		-e 's/ï/i/g; s/î/i/g; s/Í/I/g; s/Ì/I/g; s/Ï/I/g; s/Î/I/g; s/ó/o/g; s/ò/o/g; s/ö/o/g; s/ô/o/g' \
+		-e 's/õ/o/g; s/Ó/O/g; s/Ò/O/g; s/Ö/O/g; s/Ô/O/g; s/Õ/O/g; s/ú/u/g; s/ù/u/g; s/ü/u/g; s/û/u/g' \
+		-e 's/Ú/U/g; s/Ù/U/g; s/Ü/U/g; s/Û/U/g; s/ñ/n/g; s/Ñ/N/g; s/ç/c/g; s/Ç/C/g; s/¿//g; s/¡//g' \
+		-e 's/º/o/g; s/ª/a/g; s/«/"/g; s/»/"/g; s/“/"/g; s/”/"/g; s/‘/'\''/g; s/’/'\''/g; s/´/'\''/g; s/–/-/g' \
+		-e 's/—/-/g; s/€/EUR/g; s/…/.../g'
 }
 
 case "${QS_COMMIT_CHARSET:-ascii}" in
-  ascii)
-    tab="$(printf '\t')"
-    bad="$(printf '%s\n' "$msg" | LC_ALL=C grep -n "[^${tab} -~]" || true)"
-    if [ -n "$bad" ]; then
-      {
-        echo "commit-msg: the message has non-ASCII characters (accents, n-tilde, diaeresis...)."
-        echo "  Policy: commit.charset = ascii (.quality-rules.json). Lines:"
-        printf '%s\n' "$bad" | sed 's/^/    /'
-        echo "  Suggested ASCII version:"
-        printf '%s\n' "$msg" | to_ascii | sed 's/^/    | /'
-        echo "  Fix it with: git commit --amend (or edit and commit again)."
-      } >&2
-      exit 1
-    fi ;;
-  utf-8)
-    if command -v iconv >/dev/null 2>&1 && ! printf '%s' "$msg" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
-      echo "commit-msg: the message is not valid UTF-8 (check i18n.commitEncoding / the terminal codepage)." >&2
-      exit 1
-    fi ;;
+ascii)
+	tab="$(printf '\t')"
+	bad="$(printf '%s\n' "$msg" | LC_ALL=C grep -n "[^${tab} -~]" || true)"
+	if [ -n "$bad" ]; then
+		{
+			echo "commit-msg: the message has non-ASCII characters (accents, n-tilde, diaeresis...)."
+			echo "  Policy: commit.charset = ascii (.quality-rules.json). Lines:"
+			printf '%s\n' "$bad" | sed 's/^/    /'
+			echo "  Suggested ASCII version:"
+			printf '%s\n' "$msg" | to_ascii | sed 's/^/    | /'
+			echo "  Fix it with: git commit --amend (or edit and commit again)."
+		} >&2
+		exit 1
+	fi
+	;;
+utf-8)
+	if command -v iconv >/dev/null 2>&1 && ! printf '%s' "$msg" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1; then
+		echo "commit-msg: the message is not valid UTF-8 (check i18n.commitEncoding / the terminal codepage)." >&2
+		exit 1
+	fi
+	;;
 esac
 
 [ "${QS_COMMIT_CONVENTIONAL:-1}" = 1 ] || exit 0
 # Exempt merges, fixup/squash and automatic reverts from Conventional Commits (not from the charset).
-case "$subject" in "Merge "*|"fixup! "*|"squash! "*|"amend! "*|"Revert "*) exit 0 ;; esac
-TYPES="${QS_COMMIT_TYPES}"; MAX="${QS_COMMIT_SUBJECT_MAX}"
+case "$subject" in "Merge "* | "fixup! "* | "squash! "* | "amend! "* | "Revert "*) exit 0 ;; esac
+TYPES="${QS_COMMIT_TYPES}"
+MAX="${QS_COMMIT_SUBJECT_MAX}"
 if ! printf '%s' "$subject" | grep -qE "^(${TYPES})(\([^)]+\))?!?: .+"; then
-  {
-    echo "Message does not follow Conventional Commits."
-    echo "  Format:  <type>[(scope)][!]: <description>"
-    echo "  Types:   ${TYPES//|/, }"
-    echo "  Example: feat(parser): support empty arrays"
-    echo "  Yours:   ${subject}"
-  } >&2
-  exit 1
+	{
+		echo "Message does not follow Conventional Commits."
+		echo "  Format:  <type>[(scope)][!]: <description>"
+		echo "  Types:   ${TYPES//|/, }"
+		echo "  Example: feat(parser): support empty arrays"
+		echo "  Yours:   ${subject}"
+	} >&2
+	exit 1
 fi
 len=${#subject}
 if [ "$len" -gt "$MAX" ]; then
-  echo "Subject is ${len} characters (max ${MAX}, commit.subject_max):" >&2
-  echo "  ${subject}" >&2
-  exit 1
+	echo "Subject is ${len} characters (max ${MAX}, commit.subject_max):" >&2
+	echo "  ${subject}" >&2
+	exit 1
 fi
 exit 0

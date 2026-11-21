@@ -44,9 +44,17 @@ paths** in the main worktree.
    - it is already an ORIGINAL: `git nr bugfix` creates the child `<folder>/bugfix`;
    - a developer fixes the findings on `<final-branch>/bugfix`; qa reviews again;
    - repeat until qa finds nothing. Then the `reviewer` (opus) gives its verdict.
-6. **Integration**, bottom-up: from the deepest branches up to `<version>/ORIGINAL`, one level
-   at a time with `git integra -m "<subject>" -m "<why>"`. **Human checkpoint: approve each
-   merge.** Merging into `develop` (`git publicar`) is the human's.
+6. **Integration**, bottom-up: from the deepest branches up to the OT `ORIGINAL`, one level
+   at a time with `git integra -m "<subject>" -m "<why>"`: each level goes up as **one squash
+   commit** and the integrated branch is deleted (`--yes` answers the question). To try several
+   branches together first, `git testing crear <branch...>`, then `git testing repartir`.
+   Fix the last commit with `git amend`. **Human checkpoint: approve each integration.**
+   Integrate only from the main checkout (the real `.quality-rules.json`), check `"flow":` before
+   and `git log -1 --format='%P' <ORIGINAL>` (one parent) before pushing; see the "Commit and
+   merge flow" of `branch-workflow`.
+   The OT then closes with `git release` inside it, the version with `git release` on
+   `<version>/ORIGINAL`, and `git publicar` (one commit on `develop`): all the human's.
+   Afterwards `git limpiar-unmerged`. Manual: the `git-commands` skill.
 7. **Merge conflicts.** The `systems-analyst` reads both sides and suggests a resolution; the
    human decides and resolves it.
 
