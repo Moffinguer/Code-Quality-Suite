@@ -215,27 +215,27 @@ origin) nothing else can be created in it. The commands below are described when
 ### git migracion
 
 - **Syntax:** `git migracion` (stub: not available yet; creates `<version>/MIGRATION`)
-- **Who:** human.
+- **Who:** human only.
 
 ### git docs
 
 - **Syntax:** `git docs` (stub: not available yet; creates `<version>/DOCS`)
-- **Who:** human.
+- **Who:** human only.
 
 ### git refactor
 
 - **Syntax:** `git refactor` (stub: not available yet; creates `<node>/REFACTOR`)
-- **Who:** human.
+- **Who:** lead and systems-analyst.
 
 ### git tests
 
 - **Syntax:** `git tests` (stub: not available yet; creates `<node>/TESTS`)
-- **Who:** human, qa, lead.
+- **Who:** lead and qa.
 
 ### git formatear
 
 - **Syntax:** `git formatear [paths]` (stub: not available yet; creates `<node>/FORMAT`)
-- **Who:** human.
+- **Who:** human only.
 
 ### git spike
 
