@@ -105,10 +105,10 @@ qs_suite_stamp_check() {
 	sv="${sv%$'\r'}"
 	[ -n "$sv" ] || return 0
 	common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
-	root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
 	[ -f "$common/quality-suite/suite-version" ] && { read -r cur <"$common/quality-suite/suite-version" || true; }
 	cur="${cur%$'\r'}"
 	[ "$cur" != "$sv" ] || return 0
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
 	py="$(qs_python)" || {
 		echo "[quality-suite] WARN: no working python3/python: rules file not upgraded" >&2
 		return 0
@@ -116,6 +116,13 @@ qs_suite_stamp_check() {
 	# shellcheck disable=SC1091
 	. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"
 	qs_lock
+	# why: another repository's hook may have upgraded while this one waited for the lock
+	cur=""
+	[ -f "$common/quality-suite/suite-version" ] && { read -r cur <"$common/quality-suite/suite-version" || true; }
+	if [ "${cur%$'\r'}" = "$sv" ]; then
+		qs_unlock
+		return 0
+	fi
 	err="$(mktemp)"
 	if out="$("$py" "$QUALITY_SUITE_DIR/engine/policy.py" rules-upgrade "$root" 2>"$err")"; then
 		n="$(grep -cE '^(added|migrated) ' <<<"$out" || true)"
