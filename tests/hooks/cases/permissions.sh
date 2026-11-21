@@ -76,3 +76,52 @@ assert "Bash(git tests:*)" in a, "suite row not restored"
 assert len(a) == len(set(a))
 assert len(d["hooks"]["PostToolUse"]) == 1
 PY
+
+# PM3 in a linked worktree (.git is a file): fresh `git ia` and --actualizar both work.
+git -C "$P" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
+git -C "$P" worktree add -q "$T/pm3wt" -b wt
+bash "$SUITE/scripts/ai-init.sh" "$T/pm3wt" >/dev/null 2>&1 && [ -f "$T/pm3wt/.claude/settings.json" ] &&
+	bash "$SUITE/scripts/ai-init.sh" --actualizar "$T/pm3wt" >/dev/null 2>&1 &&
+	ok "PM3 works in a linked worktree" || fail "PM3 worktree"
+
+# PM3 reading: a BOM and // /* */ comments are accepted (BOM kept); invalid JSON only skips
+# the settings step.
+python3 - "$P/.claude/settings.json" <<'PY'
+import sys
+p = sys.argv[1]
+open(p, "w", encoding="utf-8").write(
+    '\ufeff// mine\n{"model": "x", /* c */ "permissions": {"allow": ["Bash(a://b:*)"]}}\n')
+PY
+bash "$SUITE/scripts/ai-init.sh" --actualizar "$P" >/dev/null 2>&1
+head -c 3 "$P/.claude/settings.json" | od -An -tx1 | grep -q 'ef bb bf' && ok "PM3 BOM kept" || fail "PM3 BOM lost"
+python3 - "$P/.claude/settings.json" <<'PY' && ok "PM3 comments accepted, rows kept" || fail "PM3 comments"
+import json, sys
+d = json.loads(open(sys.argv[1], encoding="utf-8-sig").read())
+assert d["model"] == "x" and "Bash(a://b:*)" in d["permissions"]["allow"]
+assert "Bash(git tests:*)" in d["permissions"]["allow"]
+PY
+printf '{ broken' >"$P/.claude/settings.json"
+bash "$SUITE/scripts/ai-init.sh" --actualizar "$P" >/dev/null 2>&1 &&
+	[ "$(cat "$P/.claude/settings.json")" = "{ broken" ] && [ -f "$P/AGENTS.md" ] &&
+	ok "PM3 invalid JSON skips only the settings step" || fail "PM3 invalid JSON"
+
+# PM3 rows: a retired suite row that the user also had is kept (a deny row always); no
+# duplicates.
+python3 - "$SUITE/scripts/settings-merge.py" <<'PY' && ok "PM3 row ownership and dedupe" || fail "PM3 ownership"
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("sm", sys.argv[1])
+sm = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(sm)
+tpl = {"permissions": {"allow": ["A"], "deny": ["D"]}}
+# the user had A and D before the suite shipped them: not owned
+r, mine = sm.merge(tpl, {"permissions": {"allow": ["A", "A", "U"], "deny": ["D"]}}, {})
+assert r["permissions"]["allow"] == ["A", "U"] and mine["permissions"] == {}
+# the suite later retires A and D: the user's A and D stay
+r, _ = sm.merge({"permissions": {}}, r, mine)
+assert r["permissions"]["allow"] == ["A", "U"] and r["permissions"]["deny"] == ["D"]
+# a row the suite added is dropped when retired, but a deny row never
+r, mine = sm.merge(tpl, {}, {})
+assert mine["permissions"] == {"allow": ["A"], "deny": ["D"]}
+r, _ = sm.merge({"permissions": {}}, r, mine)
+assert "allow" not in r["permissions"] and r["permissions"]["deny"] == ["D"]
+PY
