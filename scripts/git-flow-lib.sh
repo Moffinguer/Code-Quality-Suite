@@ -31,7 +31,7 @@ qs_policy_defaults() {
 	QS_BR_TAG='{version}' QS_BR_TAG_LEVEL=1 QS_BR_LEVELS=2 QS_BR_ALLOW=0
 	QS_BR_RELEASE_LEAF=RELEASE QS_BR_ARCHIVE=unmerged
 	QS_BR_VERSION_FILE=VERSION QS_BR_CHANGELOG=CHANGELOG.md QS_BR_README=README.md QS_BR_POM=update
-	QS_BR_TAG_URL='' QS_BR_COMMIT_URL=''
+	QS_BR_TAG_URL='' QS_BR_COMMIT_URL='' QS_BR_BUILD_CMD=''
 	# level 1: Semantic Versioning without build metadata (https://semver.org)
 	QS_BR_LEVEL_1='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 	# level 2 (the OT): ASCII letters and digits, no '-' or '_'; numeric OTs match too

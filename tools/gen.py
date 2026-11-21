@@ -463,6 +463,12 @@ def policy_schema():
                     "'-' = none, "
                     "or a URL with {commit}",
                 },
+                "build_cmd": {
+                    "type": "string",
+                    "default": "",
+                    "description": "command of the full build and tests that a push_checks: full "
+                    "special type (MIGRATION) runs on push ('' = QUALITY_HEAVY_CMD)",
+                },
                 "special": special_schema(),
             },
         },

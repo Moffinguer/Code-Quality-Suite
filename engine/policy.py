@@ -229,6 +229,7 @@ DEFAULTS = {
         "pom_version": "update",  # update | snapshot | check | off: pom.xml follows the version
         "tag_url": "",  # changelog links: '' = from origin, '-' = none, or '...{tag}'
         "commit_url": "",  # changelog references: '' = from origin, '-' = none, '...{commit}'
+        "build_cmd": "",  # full build of a push_checks: full type ('' = QUALITY_HEAVY_CMD)
         "special": SPECIAL_DEFAULTS,  # table of special branches (see SPECIAL_PROPS)
     },
 }
@@ -705,6 +706,8 @@ def _validate_branch_paths(br):
         v = br.get(key)
         if not isinstance(v, str) or (v not in ("", "-") and ph not in v):
             errors.append(f"branches.{key}: '' (from origin), '-' (none) or a URL with {ph}")
+    if not isinstance(br.get("build_cmd"), str):
+        errors.append("branches.build_cmd: a shell command ('' = the heavy stage command)")
     for key in ("version_file", "changelog_file", "readme_file"):
         v = br.get(key)
         if not isinstance(v, str) or v.startswith(("/", "-")) or ".." in v.split("/") or "\\" in v:
@@ -778,6 +781,7 @@ def shell_env(data):
         "QS_BR_POM": br["pom_version"],
         "QS_BR_TAG_URL": br["tag_url"],
         "QS_BR_COMMIT_URL": br["commit_url"],
+        "QS_BR_BUILD_CMD": br["build_cmd"],
         "QS_BR_LEVELS": len(br["levels"]),
         "QS_BR_ALLOW": len(br["allow"]),
     }
