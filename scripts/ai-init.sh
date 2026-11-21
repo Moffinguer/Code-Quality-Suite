@@ -34,17 +34,25 @@ yours() {
 	case "$1" in AGENTS.md | CLAUDE.md | GEMINI.md | opencode.json | knowledge/* | dev_documents/*) return 0 ;; esac
 	return 1
 }
+# merge_settings TEMPLATE DEST: merge the suite's settings.json rows into DEST (created when
+# missing), keeping the project's own keys and rows. The list of rows the suite installed lives in
+# the common git dir, so every worktree of the repository shares it. A settings file that cannot
+# be read only skips this step (settings-merge.py warns and exits 0).
+merge_settings() {
+	local tmp common
+	common="$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+	tmp="$(mktemp)"
+	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$1" >"$tmp"
+	python3 "$SUITE/scripts/settings-merge.py" "$tmp" "$2" "$common/qs-settings-owned.json" || true
+	rm -f "$tmp"
+}
 while IFS= read -r -d '' f; do
 	rel="${f#"$tpl"/}"
 	dst="$repo/$rel"
 	if [ -e "$dst" ]; then
 		if [ "$update" = 1 ] && [ "$rel" = ".claude/settings.json" ]; then
-			# why: the project's own rows and keys stay; only the suite's rows are refreshed
-			sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$repo/.git/qs-settings-template.json"
 			before="$(cat "$dst")"
-			python3 "$SUITE/scripts/settings-merge.py" "$repo/.git/qs-settings-template.json" "$dst" \
-				"$repo/.git/qs-settings-owned.json"
-			rm -f "$repo/.git/qs-settings-template.json"
+			merge_settings "$f" "$dst"
 			[ "$before" = "$(cat "$dst")" ] || updated=$((updated + 1))
 		elif [ "$update" = 1 ] && ! yours "$rel"; then
 			new="$(sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f")"
@@ -59,10 +67,11 @@ while IFS= read -r -d '' f; do
 		continue
 	fi
 	mkdir -p "$(dirname "$dst")"
-	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$dst"
-	# why: remember which rows the suite installed, so a later --actualizar can retire them
-	[ "$rel" != ".claude/settings.json" ] ||
-		python3 "$SUITE/scripts/settings-merge.py" "$dst" "$dst" "$repo/.git/qs-settings-owned.json"
+	if [ "$rel" = ".claude/settings.json" ]; then
+		merge_settings "$f" "$dst"
+	else
+		sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$dst"
+	fi
 	added=$((added + 1))
 done < <(find "$tpl" -type f -print0)
 
