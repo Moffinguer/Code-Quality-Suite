@@ -403,7 +403,7 @@ special_check_staged() {
 		done
 	fi
 	if special_enabled DOCS && [ "$(special_prop DOCS ON_RELEASE)" = required ]; then docs_mode=1; fi
-	if [ "$docs_mode" = 1 ] && [ "$t" != DOCS ] && ! is_release_branch "$b" && ! is_ot_release_branch "$b" && ! is_mainline "$b"; then
+	if [ "$docs_mode" = 1 ] && [ "$t" != DOCS ] && ! is_release_branch "$b" && ! is_ot_release_branch "$b" && ! is_mainline "$b" && ! is_archived_branch "$b"; then
 		for f in "$@"; do
 			[ "$f" = "$QS_BR_CHANGELOG" ] || continue
 			echo "$f: only the DOCS branch writes the changelog (git docs)"
