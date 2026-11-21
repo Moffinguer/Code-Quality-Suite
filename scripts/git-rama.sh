@@ -2220,7 +2220,7 @@ release_forget_remote() {
 # Arguments: none; reads REL_ARCHIVE ("<branch><TAB><new name><TAB><ORIGINAL><TAB><commits>").
 # Returns: 0; a failed git command ends the script (set -e).
 release_set_aside() {
-	local entry b new p n done_as aside_sha
+	local entry b new p n done_as aside_sha rc
 	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
 		IFS=$'\t' read -r b new p n <<<"$entry"
 		if done_as="$(aside_existing "$b")"; then
@@ -2237,9 +2237,10 @@ release_set_aside() {
 		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then
 			# why: the rename on origin is one atomic push under a lease on the old tip; a lost lease
 			# leaves origin as it is and the old name must not be deleted there later
-			if ! qs_publish_rename "$b" "$new" "$aside_sha"; then
-				echo "[rama] WARN: origin was not changed for '$b' ($new is local only). Ask the human before touching origin/$b (someone may have pushed to it)" >&2
-			fi
+			rc=0
+			qs_publish_rename "$b" "$new" "$aside_sha" || rc=$?
+			[ "$rc" != 1 ] || die "origin refused the rename of '$b' to '$new'; fix it and run git release again (it resumes)"
+			[ "$rc" = 0 ] || echo "[rama] WARN: origin was not changed for '$b' ($new is local only). Ask the human before touching origin/$b (someone pushed to it)" >&2
 			release_forget_remote "$b"
 		elif [ "$REL_PUSH" = 1 ]; then
 			qs_publish_new "$new" # why: a branch that never reached origin is published under its new name

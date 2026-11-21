@@ -116,8 +116,9 @@ qs_publish_new() {
 # changes nothing. When the server refuses the folder/file swap ('a' -> 'a/ORIGINAL') in one
 # push, the same lease is used in two pushes, the deletion first.
 # Arguments: $1 old name, $2 new name (a local branch), $3 the old tip the lease expects.
-# Returns: 0 when origin has the new name and no longer the old one; 1 when nothing changed on
-# origin (lease lost, origin unreachable, push refused), with the reason on stderr.
+# Returns: 0 when origin has the new name and no longer the old one; 2 when the lease was lost
+# (someone else pushed the old name: nothing changed on origin); 1 on any other failure (origin
+# unreachable, push refused), with the reason on stderr.
 qs_publish_rename() {
 	local old="$1" new="$2" sha="$3" lease cur
 	lease="--force-with-lease=refs/heads/$old:$sha"
@@ -131,7 +132,7 @@ qs_publish_rename() {
 	cur="${cur%%[[:space:]]*}"
 	if [ -n "$cur" ] && [ "$cur" != "$sha" ]; then
 		echo "[rama] origin/$old moved to ${cur:0:10} since ${sha:0:10}; nothing changed on origin" >&2
-		return 1
+		return 2
 	fi
 	if [ -n "$cur" ]; then
 		GIT_TERMINAL_PROMPT=0 git push -q "$lease" origin ":refs/heads/$old" >/dev/null 2>&1 </dev/null || {
