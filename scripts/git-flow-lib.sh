@@ -113,12 +113,15 @@ qs_publish_new() {
 
 # Move a published branch to its new name on origin in ONE atomic push: the new name is created
 # and the old one deleted under a lease on the old tip, so a push by someone else in between
-# changes nothing. When the server refuses the folder/file swap ('a' -> 'a/ORIGINAL') in one
-# push, the same lease is used in two pushes, the deletion first.
+# changes nothing. Only when the new name sits below the old one ('a' -> 'a/ORIGINAL': a folder
+# and a file ref cannot coexist in one push) the same lease is used in two pushes, the deletion
+# first, and only after a dry run proved that the new name is acceptable; should the second push
+# still fail, the old name is put back.
 # Arguments: $1 old name, $2 new name (a local branch), $3 the old tip the lease expects.
 # Returns: 0 when origin has the new name and no longer the old one; 2 when the lease was lost
 # (someone else pushed the old name: nothing changed on origin); 1 on any other failure (origin
-# unreachable, push refused), with the reason on stderr.
+# unreachable, push refused), with the reason on stderr; origin keeps the old name unless the
+# message says otherwise.
 qs_publish_rename() {
 	local old="$1" new="$2" sha="$3" lease cur
 	lease="--force-with-lease=refs/heads/$old:$sha"
@@ -134,16 +137,30 @@ qs_publish_rename() {
 		echo "[rama] origin/$old moved to ${cur:0:10} since ${sha:0:10}; nothing changed on origin" >&2
 		return 2
 	fi
-	if [ -n "$cur" ]; then
-		GIT_TERMINAL_PROMPT=0 git push -q "$lease" origin ":refs/heads/$old" >/dev/null 2>&1 </dev/null || {
-			echo "[rama] origin refused the deletion of $old; nothing changed on origin" >&2
-			return 1
-		}
-	fi
-	GIT_TERMINAL_PROMPT=0 git push -q -u origin "$new" >/dev/null 2>&1 </dev/null || {
-		echo "[rama] $old is gone from origin but $new was not pushed: git push -u origin $new" >&2
+	case "$new" in
+	"$old"/*) ;;
+	*)
+		echo "[rama] origin refused the rename of $old to $new; nothing changed on origin" >&2
 		return 1
-	}
+		;;
+	esac
+	# why: the new name is checked (hooks included) before the old one is deleted
+	if ! GIT_TERMINAL_PROMPT=0 git push -q --dry-run origin "refs/heads/$new:refs/heads/$new" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin would refuse $new; nothing changed on origin" >&2
+		return 1
+	fi
+	if [ -n "$cur" ] && ! GIT_TERMINAL_PROMPT=0 git push -q "$lease" origin ":refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin refused the deletion of $old; nothing changed on origin" >&2
+		return 1
+	fi
+	if ! GIT_TERMINAL_PROMPT=0 git push -q -u origin "$new" >/dev/null 2>&1 </dev/null; then
+		if [ -n "$cur" ] && GIT_TERMINAL_PROMPT=0 git push -q origin "$sha:refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+			echo "[rama] origin refused $new; $old was put back on origin" >&2
+		else
+			echo "[rama] origin refused $new and $old is gone from origin: git push origin $sha:refs/heads/$old" >&2
+		fi
+		return 1
+	fi
 	return 0
 }
 
