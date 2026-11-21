@@ -4,6 +4,8 @@
 #   into '<F>/ORIGINAL'  its direct children ('<F>/x', '<F>/x/ORIGINAL') or its parent (sync down)
 #   into develop         a '<version>/ORIGINAL' or '<version>/RELEASE' (git release), or main/master
 #   into a final branch  never: final branches are rebased onto their ORIGINAL (git subir)
+#   special branches    SPIKE (outside its subtree), ATTEMPT, REVIEW, QUARANTINE and CHECKPOINT are never
+#                        merged into an ORIGINAL (branches.special, special-integra.sh)
 #   flow squash          child -> ORIGINAL and version -> develop merge commits are refused too
 #                        (git integra squashes, git publicar lands one commit); develop is
 #                        never merged into '<version>/RELEASE' (git subir / publicar rebase it)
@@ -54,6 +56,15 @@ fi
 # --- end TESTING sandbox guard ---
 [ -n "$srcs" ] || exit 0 # merging a bare commit: no opinion
 valid_branch_name "$target" >/dev/null 2>&1 || exit 0
+# --- special branches that never go up (SPIKE outside its subtree, ATTEMPT, REVIEW, QUARANTINE,
+# CHECKPOINT) are not merged into an ORIGINAL
+# shellcheck disable=SC1091
+. "$(dirname "$LIB")/special-integra.sh"
+if sp_msg="$(si_merge_refusal "$target" "$srcs")"; then
+	echo "$sp_msg" >&2
+	[ "$QS_BR_ENFORCE" = warn ] && exit 0
+	exit 1
+fi
 
 # --- flow squash: children go up as one squash commit, versions as one commit on develop ------
 # why: a merge commit of a child into its ORIGINAL (or of a version into develop) is exactly

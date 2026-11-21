@@ -87,6 +87,8 @@ HOOK_ENV="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)/q
 : "${QUALITY_SUITE_DIR:=$SUITE}"
 # shellcheck disable=SC1091
 . "$DIR/git-flow-lib.sh"
+# shellcheck disable=SC1091
+. "$DIR/special-integra.sh" # integration order and refusals of the special branches
 # why: the Files block of the squash commits is rendered by the commit-message library when it
 # is installed (5.0.0-RC1/git/log); squash_files_block falls back to the same format without it
 # shellcheck disable=SC1091
@@ -314,7 +316,7 @@ cmd_convertir() {
 }
 
 cmd_subir() {
-	local cur parent base head resume=0
+	local cur parent base head resume=0 rc=0
 	cur="$(current_branch || true)"
 	if [ -z "$cur" ] && [ "${QS_BR_FLOW:-merge}" = squash ] && rebase_in_progress; then
 		# why: publish_stopped tells the human to re-run git subir while the RELEASE rebase is stopped
@@ -324,6 +326,9 @@ cmd_subir() {
 	fi
 	[ -n "$cur" ] || die "detached HEAD"
 	testing_refused "$cur" && exit 1 # TESTING sandbox guard
+	si_subir_check "$cur" || rc=$?
+	[ "$rc" != 1 ] || return 0 # CHECKPOINT: local, nothing to sync
+	[ "$rc" = 0 ] || exit 1    # FORMAT: regenerated, never synced
 	[ "$resume" = 1 ] || require_clean
 	parent="$(parent_branch "$cur")"
 	fetch_origin
@@ -640,6 +645,7 @@ cmd_integra() {
 	is_mainline "$cur" && die "'$cur' is a mainline branch; nothing to integrate"
 	parent="$(parent_branch "$cur")"
 	[ -n "$parent" ] || die "'$cur' has no parent"
+	si_integra_refuse "$cur" "$parent" || exit 1 # SPIKE, ATTEMPT, REVIEW, QUARANTINE, CHECKPOINT never go up
 	require_clean
 	fetch_origin
 	if ! exists_ref "refs/heads/$parent"; then
@@ -649,7 +655,9 @@ cmd_integra() {
 		git branch -q -f "$parent" "origin/$parent" 2>/dev/null || true # fast-forward the local parent
 	fi
 	if [ "${QS_BR_FLOW:-merge}" = squash ]; then
+		si_integra_order "$cur" "$parent" || exit 1
 		integra_squash "$cur" "$parent"
+		si_drop_task_extras "$cur"
 		return 0
 	fi
 	if is_parent_branch "$cur"; then
