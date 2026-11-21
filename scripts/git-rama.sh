@@ -1422,7 +1422,7 @@ cmd_release() { # step 1: RELEASE branch with version, changelog and README badg
 	release_set_aside
 	# 7. the rest of the tree (integrated branches, old names, the ORIGINAL)
 	if [ "$REL_PUSH" = 1 ] && has_origin && [ "${#REL_DELETE_REMOTE[@]}" -gt 0 ]; then
-		git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
+		release_delete_remote "${REL_DELETE_REMOTE[@]}"
 	fi
 	[ "${#REL_DELETE_LOCAL[@]}" -gt 0 ] && git branch -q -D "${REL_DELETE_LOCAL[@]}"
 	say "$REL_VERSION prepared on $REL_RELEASE: ${#REL_DELETE_LOCAL[@]} branch(es) of the tree deleted, ${#REL_ARCHIVE[@]} set aside"
@@ -2222,6 +2222,19 @@ release_forget_remote() {
 	REL_DELETE_REMOTE=(${keep[@]+"${keep[@]}"})
 }
 
+# release_delete_remote <branch>...: delete branches on origin, each under a lease on the tip the
+# last fetch saw, so a branch someone else pushed to since is kept.
+# Arguments: $@ branch names. Returns: 0; a failed push ends the script (set -e) as before.
+release_delete_remote() {
+	local x refs=() leases=()
+	for x in "$@"; do
+		exists_ref "refs/remotes/origin/$x" || continue
+		refs+=(":refs/heads/$x")
+		leases+=("--force-with-lease=refs/heads/$x:$(git rev-parse "refs/remotes/origin/$x")")
+	done
+	[ "${#refs[@]}" -eq 0 ] || git push -q "${leases[@]}" origin "${refs[@]}"
+}
+
 # release_set_aside: set every REL_ARCHIVE branch aside under its 'unmerged/...' name: renamed
 # locally (or a local copy of a branch only on origin) and renamed on origin, in one atomic push
 # under a lease, when REL_PUSH is 1 and there is an origin; one warning per branch on stderr.
@@ -2672,8 +2685,8 @@ ot_release_run() {
 	fi
 	release_set_aside
 	if [ "$REL_PUSH" = 1 ] && has_origin; then
-		[ "${#REL_DELETE_REMOTE[@]}" -eq 0 ] || git push -q origin --delete "${REL_DELETE_REMOTE[@]}"
-		! exists_ref "refs/remotes/origin/$REL_TOP" || git push -q origin --delete "$REL_TOP"
+		[ "${#REL_DELETE_REMOTE[@]}" -eq 0 ] || release_delete_remote "${REL_DELETE_REMOTE[@]}"
+		release_delete_remote "$REL_TOP"
 	fi
 	[ "${#REL_DELETE_LOCAL[@]}" -eq 0 ] || git branch -q -D "${REL_DELETE_LOCAL[@]}"
 	! exists_ref "refs/heads/$REL_TOP" || git branch -q -D "$REL_TOP"
