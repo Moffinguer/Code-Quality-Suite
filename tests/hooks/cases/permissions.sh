@@ -78,8 +78,9 @@ assert len(d["hooks"]["PostToolUse"]) == 1
 PY
 
 # PM3 in a linked worktree (.git is a file): fresh `git ia` and --actualizar both work.
-git -C "$P" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
-git -C "$P" worktree add -q "$T/pm3wt" -b wt
+git -C "$P" -c user.name=t -c user.email=t@example.com -c core.hooksPath=/dev/null \
+	commit -q --allow-empty -m init || fail "PM3 fixture: commit"
+git -C "$P" worktree add -q "$T/pm3wt" -b wt || fail "PM3 fixture: worktree add"
 bash "$SUITE/scripts/ai-init.sh" "$T/pm3wt" >/dev/null 2>&1 && [ -f "$T/pm3wt/.claude/settings.json" ] &&
 	bash "$SUITE/scripts/ai-init.sh" --actualizar "$T/pm3wt" >/dev/null 2>&1 &&
 	ok "PM3 works in a linked worktree" || fail "PM3 worktree"
