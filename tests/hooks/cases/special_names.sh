@@ -7,8 +7,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 case_sandbox squash
-# why: the REVIEW parent rules look at origin; branches stay local here (publish on create is off)
-export QS_PUBLISH=0
 
 # lib CODE: run CODE in a subshell that has the flow library loaded with the repo policy.
 # Arguments: $1 shell code. Returns: the status of CODE; its output is printed.
@@ -93,7 +91,7 @@ par() { lib "parent_branch '$1'"; }
 [ "$(par 6.0.0/ot1/REVIEW-login)" = 6.0.0/ot1/login ] && [ "$(par 6.0.0/ot1/CHECKPOINT-login)" = 6.0.0/ot1/login ] &&
 	ok "REVIEW and CHECKPOINT hang from the task" || fail "parent_branch of REVIEW"
 git checkout -q 6.0.0/ot1/login
-git branch -m 6.0.0/ot1/login 6.0.0/ot1/login/ORIGINAL
+git convertir-padre >/dev/null 2>&1 || fail "convertir-padre of login"
 [ "$(par 6.0.0/ot1/REVIEW-login)" = 6.0.0/ot1/login/ORIGINAL ] && ok "REVIEW of a task with attempts hangs from its ORIGINAL" || fail "parent_branch REVIEW attempts"
 [ -z "$(par 6.0.0/ot1/DOCS)" ] && ok "parent_branch of a misplaced name is empty" || fail "parent_branch misplaced"
 
