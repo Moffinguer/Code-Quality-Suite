@@ -157,7 +157,8 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 		case "$local_ref" in refs/heads/*) b="${local_ref#refs/heads/}" ;; *) continue ;; esac
 		kind="$(special_kind "$b")"
 		[ -n "$kind" ] || continue
-		[ "$(special_prop "$kind" PUSH_CHECKS)" != full ] || SP_FULL=1
+		# why: a push without new commits (a branch created at a published tip) has nothing to build
+		if [ "$(special_prop "$kind" PUSH_CHECKS)" = full ] && [ -n "$(git rev-list -n1 "$local_sha" --not --remotes 2>/dev/null)" ]; then SP_FULL=1; fi
 		if [ "$(special_prop "$kind" PUSH)" = never ]; then
 			echo "[quality-suite] pre-push: '$b' is a $kind branch: it is local only and is never pushed." >&2
 			if [ "$QS_BR_ENFORCE" = block ]; then
@@ -228,18 +229,18 @@ if [ -n "${QUALITY_SUITE_DIR:-}" ] && [ -x "${QUALITY_SUITE_DIR}/scripts/run-tes
 		}
 fi
 
-# Full build (push_checks: full, MIGRATION): the command QUALITY_BUILD_CMD (quality-suite.env), or the
-# heavy stage command when none is set. The heavy stage below runs that one: it is not run twice.
+# Full build (push_checks: full, MIGRATION): branches.build_cmd, or the heavy stage command when it is
+# empty (the heavy stage below runs that one: not twice). Only for a push with new commits.
 if [ "${SP_FULL:-0}" = 1 ]; then
-	if [ -n "${QUALITY_BUILD_CMD:-}" ] && [ "${QUALITY_BUILD_CMD}" != "${QUALITY_HEAVY_CMD:-}" ]; then
-		echo "[quality-suite] pre-push: full build (MIGRATION) -> ${QUALITY_BUILD_CMD}"
-		(cd "${REPO_ROOT}" && eval "${QUALITY_BUILD_CMD}") ||
+	if [ -n "${QS_BR_BUILD_CMD:-}" ] && [ "${QS_BR_BUILD_CMD}" != "${QUALITY_HEAVY_CMD:-}" ]; then
+		echo "[quality-suite] pre-push: full build (MIGRATION) -> ${QS_BR_BUILD_CMD}"
+		(cd "${REPO_ROOT}" && eval "${QS_BR_BUILD_CMD}") ||
 			{
 				echo "[quality-suite] pre-push: full build failed. Push aborted."
 				exit 1
 			}
-	elif [ -z "${QUALITY_BUILD_CMD:-}${QUALITY_HEAVY_CMD:-}" ]; then
-		echo "[quality-suite] pre-push: WARN: a MIGRATION branch asks for the full build, but QUALITY_BUILD_CMD is not set." >&2
+	elif [ -z "${QS_BR_BUILD_CMD:-}${QUALITY_HEAVY_CMD:-}" ]; then
+		echo "[quality-suite] pre-push: WARN: a MIGRATION branch asks for the full build, but branches.build_cmd is not set." >&2
 	fi
 fi
 

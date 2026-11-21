@@ -45,6 +45,17 @@ json.dump(d, open(p, "w"), indent=2)
 PY
 }
 
+# set_build COMMAND: write branches.build_cmd into the rules file.
+set_build() {
+	python3 - "$1" <<'PY'
+import json, sys
+p = ".quality-rules.json"
+d = json.load(open(p))
+d.setdefault("branches", {})["build_cmd"] = sys.argv[1]
+json.dump(d, open(p, "w"), indent=2)
+PY
+}
+
 # on BRANCH: create BRANCH from develop (or switch to it when it exists).
 on() { git checkout -q "$1" 2>/dev/null || git checkout -q -b "$1" develop; }
 
@@ -161,21 +172,54 @@ grep -q "never pushed" "$T/o" || fail "CHECKPOINT refusal text: $(cat "$T/o")"
 ok "HR6 CHECKPOINT is never pushed"
 git checkout -q 6.0.0/MIGRATION
 rm -f "$T/build.log"
-QUALITY_BUILD_CMD="echo ran >>'$T/build.log'" git push -q origin 6.0.0/MIGRATION >"$T/o" 2>&1 || fail "MIGRATION push with a good build: $(cat "$T/o")"
+set_build "echo ran >>'$T/build.log'"
+git push -q origin 6.0.0/MIGRATION >"$T/o" 2>&1 || fail "MIGRATION push with a good build: $(cat "$T/o")"
 [ "$(cat "$T/build.log")" = ran ] && ok "HR6 MIGRATION push runs the full build" || fail "build command not run"
 printf 'x\n' >j.txt
 git add j.txt
 git commit -q -m "build: more" >/dev/null 2>&1 || fail "second commit on MIGRATION"
-if QUALITY_BUILD_CMD="false" git push -q origin 6.0.0/MIGRATION >"$T/o" 2>&1; then fail "push with a failing build"; fi
+set_build false
+if git push -q origin 6.0.0/MIGRATION >"$T/o" 2>&1; then fail "push with a failing build"; fi
 grep -q "full build failed" "$T/o" && ok "HR6 a failing full build refuses the push" || fail "build failure text: $(cat "$T/o")"
 git checkout -q 6.0.0/ot1/b
 printf 'x\n' >p.txt
 git add p.txt
 git commit -q -m "feat: plain task" >/dev/null 2>&1 || fail "commit on a task"
 rm -f "$T/build.log"
-QUALITY_BUILD_CMD="echo ran >>'$T/build.log'" git push -q origin 6.0.0/ot1/b >/dev/null 2>&1 || fail "push of a plain task"
+set_build "echo ran >>'$T/build.log'"
+git push -q origin 6.0.0/ot1/b >/dev/null 2>&1 || fail "push of a plain task"
 [ ! -e "$T/build.log" ] && ok "HR6 a plain task does not run the full build" || fail "full build on a task"
 
-# --- HR7 suite commands are not blocked
-git checkout -q develop
+# decision 14: a MIGRATION created at a published tip has no new commits: no full build
+git branch 8.0.0/MIGRATION develop
+rm -f "$T/build.log"
+git push -q origin 8.0.0/MIGRATION >"$T/o" 2>&1 || fail "push of an empty MIGRATION: $(cat "$T/o")"
+[ ! -e "$T/build.log" ] && ok "HR6 a push without new commits runs no full build" || fail "full build without new commits"
+
+# --- HR7 suite commands are not blocked (a new sandbox: default rules, DOCS required)
+case_sandbox squash
 git np 7.0.0 >/dev/null 2>&1 && ok "HR7 git np makes its version commit" || fail "git np blocked"
+git push -q origin 7.0.0/ORIGINAL 2>/dev/null || fail "push 7.0.0/ORIGINAL"
+git np ot1 >/dev/null 2>&1 && git push -q origin 7.0.0/ot1/ORIGINAL 2>/dev/null || fail "OT ot1"
+git nr work >/dev/null 2>&1 || fail "nr work"
+accepted w.txt work "feat: work of the task"
+git integra --yes -m "feat(w): add the work" >/dev/null 2>&1 || fail "integra of the task"
+git push -q origin 7.0.0/ot1/ORIGINAL 2>/dev/null || fail "push the OT"
+git release --yes >"$T/o" 2>&1 && git release --version 7.0.0 --yes >>"$T/o" 2>&1 &&
+	ok "HR7 git release (OT and version) writes its commits" || fail "git release blocked: $(cat "$T/o")"
+git checkout -q develop
+git publicar --yes >"$T/o" 2>&1 && ok "HR7 git publicar lands the release" || fail "git publicar blocked: $(cat "$T/o")"
+
+# --- HR1 speed: 500 staged files are matched without a fork per glob and file
+(
+	# shellcheck source=/dev/null
+	. "$SUITE/scripts/git-flow-lib.sh"
+	qs_policy_load
+	files=()
+	for i in $(seq 1 500); do files+=("src/test/pkg/F$i.java"); done
+	files+=("src/main/Bad.java")
+	start=$SECONDS
+	out="$(special_check_staged 6.0.0/ot1/TESTS "${files[@]}" || true)"
+	[ "$(wc -l <<<"$out")" = 1 ] && grep -q "src/main/Bad.java" <<<"$out" || exit 1
+	[ $((SECONDS - start)) -lt 20 ] || exit 2
+) && ok "HR1 500 staged files are checked fast" || fail "path check of 500 files (slow or wrong)"

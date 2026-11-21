@@ -317,7 +317,8 @@ special_expand_paths() {
 
 # Translate a glob into an extended regular expression: '**/' any folders, '**' anything, '*'
 # anything but '/', '?' one character but '/'.
-# Arguments: $1 glob. Returns: 0; prints the anchored regex.
+# Arguments: $1 glob. Returns: 0; sets SP_RE to the anchored regex (no subshell: a hook compiles
+# every glob once and matches hundreds of files without forking).
 special_glob_regex() {
 	local g="$1" out="^" c i n="${#1}"
 	for ((i = 0; i < n; i++)); do
@@ -339,19 +340,38 @@ special_glob_regex() {
 		*) out+="$c" ;;
 		esac
 	done
-	printf '%s$' "$out"
+	SP_RE="$out\$"
 }
 
-# Whether a path matches any glob of a list.
-# Arguments: $1 path, $2.. globs. Returns: 0 when one matches; 1 otherwise.
-special_path_match() {
-	local p="$1" g re
-	shift
+# Compile a list of globs into SP_RXS (one regex each, see special_glob_regex).
+# Arguments: $1.. globs. Returns: 0; sets SP_RXS.
+# shellcheck disable=SC2034 # why: SP_RXS is read by special_rx_match
+special_compile_globs() {
+	local g
+	SP_RXS=()
 	for g in "$@"; do
-		re="$(special_glob_regex "$g")"
-		[[ $p =~ $re ]] && return 0
+		special_glob_regex "$g"
+		SP_RXS+=("$SP_RE")
+	done
+}
+
+# Whether a path matches any regex of SP_RXS (no fork per file).
+# Arguments: $1 path. Returns: 0 when one matches; 1 otherwise.
+special_rx_match() {
+	local re
+	for re in ${SP_RXS[@]+"${SP_RXS[@]}"}; do
+		[[ $1 =~ $re ]] && return 0
 	done
 	return 1
+}
+
+# Whether a path matches any glob of a list (compiles them on every call: for one file).
+# Arguments: $1 path, $2.. globs. Returns: 0 when one matches; 1 otherwise.
+special_path_match() {
+	local p="$1"
+	shift
+	special_compile_globs "$@"
+	special_rx_match "$p"
 }
 
 # The gate level a special type imposes on its branches.
@@ -396,8 +416,9 @@ special_check_staged() {
 	[ -z "$t" ] || g="$(special_prop "$t" PATHS)"
 	if [ -n "$g" ]; then
 		mapfile -t paths < <(special_expand_paths "$g")
+		special_compile_globs "${paths[@]}"
 		for f in "$@"; do
-			special_path_match "$f" "${paths[@]}" && continue
+			special_rx_match "$f" && continue
 			echo "$f: not allowed on a $t branch (paths: $g)"
 			bad=1
 		done
