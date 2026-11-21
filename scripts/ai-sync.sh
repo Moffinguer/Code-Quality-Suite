@@ -55,7 +55,7 @@ oc_bash_rules() {
 	esac
 	for c in "git release*" "git publicar*" "git combinar*" "git migracion*" "git formatear*" \
 		"git elegir*" "git docs*" "git refactor*" "git changelog --escribir*" \
-		"git push --force*" "git push -f*" "git push --no-verify*" "git push -n --no-verify*"; do rule "$c" deny; done
+		"git push --force*" "git push -f*" "git push --no-verify*" "git push -n --no-verify*" "git push * --no-verify*"; do rule "$c" deny; done
 }
 
 agents="$repo/.claude/agents"

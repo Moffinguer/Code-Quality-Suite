@@ -52,6 +52,7 @@
       "Bash(git push -f:*)",
       "Bash(git push --no-verify:*)",
       "Bash(git push -n --no-verify:*)",
+      "Bash(git push * --no-verify*)",
       "Bash(git release:*)",
       "Bash(git publicar:*)",
       "Bash(git combinar:*)",
