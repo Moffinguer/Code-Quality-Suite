@@ -7,6 +7,8 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 case_sandbox squash
+# why: the REVIEW parent rules look at origin; branches stay local here (publish on create is off)
+export QS_PUBLISH=0
 
 # lib CODE: run CODE in a subshell that has the flow library loaded with the repo policy.
 # Arguments: $1 shell code. Returns: the status of CODE; its output is printed.

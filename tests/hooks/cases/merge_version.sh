@@ -12,6 +12,8 @@ set -euo pipefail
 . "$SUITE/tests/hooks/case-lib.sh"
 
 case_sandbox squash
+# why: this case builds branches that must not be on origin yet (publish on create is off here)
+export QS_PUBLISH=0
 V=5.1.0
 F="$V/700"
 git np "$V" >/dev/null && git push -q origin "$V/ORIGINAL" 2>/dev/null || fail "tree $V"
