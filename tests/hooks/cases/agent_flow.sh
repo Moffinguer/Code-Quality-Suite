@@ -51,9 +51,10 @@ ok "AF4 skills: at most 80 lines, required terms"
 
 # AF5: a Who: line in every command section; human-only ones say so.
 sections="$(awk '/^## 4\./{on=1} /^## 9\./{on=0} on' "$SUITE/docs/GIT-COMMANDS.md")"
-missing="$(printf '%s\n' "$sections" | awk '/^### /{ if (h && !w) print h; h=$0; w=0 } /\*\*Who:\*\*/{ w=1 } END{ if (h && !w) print h }')"
+# only `### git ...` headings are commands (the "Special branches" intro has no Who:)
+missing="$(printf '%s\n' "$sections" | awk '/^### /{ if (h && !w) print h; h=($0 ~ /^### git /) ? $0 : ""; w=0 } /\*\*Who:\*\*/{ w=1 } END{ if (h && !w) print h }')"
 [ -z "$missing" ] && ok "AF5 every command section has a Who: line" || fail "AF5 no Who: in: $missing"
-for c in release publicar combinar; do
+for c in release publicar combinar migracion formatear docs; do
 	printf '%s\n' "$sections" | awk -v c="### git $c" '$0==c{on=1;next} /^### /{on=0} on && /\*\*Who:\*\*/' | grep -q 'human only' ||
 		fail "AF5 git $c is not human only"
 done
