@@ -161,3 +161,59 @@ for row in ("Bash(git push --no-verify:*)", "Bash(git release:*)"):
     assert row in perm["deny"], row
 assert not [r for r in perm["allow"] if r.startswith("Bash(git push")], perm["allow"]
 PY
+
+# --- PB6 the release set aside: renamed on origin in one atomic push under a lease
+case_sandbox squash
+SPY="$CASE_REPO/.git/spy.log"
+V=9.1.0 OT=9.1.0/700
+# release_tree: build the OT with one integrated task, so the OT has a commit of its own, and the
+# never-integrated branch OT/c with one commit, published. Arguments: none. Returns: 0 or fails.
+release_tree() {
+	git np "$V" >/dev/null 2>&1 && git np 700 >/dev/null 2>&1 && git nr a >/dev/null 2>&1 || fail "PB6 release tree"
+	printf 'A = 1\n' >a.py
+	git add a.py
+	git commit -q -m "feat: add a" || fail "PB6 commit a"
+	git integra --yes -m "feat(a): module a" >/dev/null 2>&1 || fail "PB6 integra a"
+	git nr c >/dev/null 2>&1 || fail "PB6 nr c"
+	printf 'C = 1\n' >c.py
+	git add c.py
+	git commit -q -m "feat: add c" || fail "PB6 commit c"
+	git push -q origin "$OT/c" 2>/dev/null || fail "PB6 push c"
+	git checkout -q "$OT/ORIGINAL"
+	git push -q origin "$OT/ORIGINAL" 2>/dev/null || fail "PB6 push OT"
+}
+release_tree
+out="$(git release --yes 2>&1)" || fail "PB6 release: $out"
+published "unmerged/$OT/c" && ! on_origin "$OT/c" && git rev-parse -q --verify "refs/heads/unmerged/$OT/c" >/dev/null &&
+	ok "PB6 release set aside: origin has unmerged/.../c and no longer c, upstream set" || fail "PB6 set aside: $out $(git branch -a)"
+
+# lost lease: another clone pushes to c while the set-aside push is under way
+case_sandbox squash
+SPY="$CASE_REPO/.git/spy.log"
+release_tree
+git clone -q "$CASE_REPO.git" "$CASE_REPO.two"
+(
+	cd "$CASE_REPO.two"
+	git config user.email t@example.com
+	git config user.name tester
+	git checkout -q "$OT/c"
+	printf 'X\n' >two.txt
+	git add two.txt
+	git -c core.hooksPath=/dev/null commit -q -m "chore: second clone"
+)
+tip="$(git ls-remote origin "refs/heads/$OT/c" | cut -f1)"
+mv .git/hooks/pre-push .git/hooks/pre-push.spy
+cat >.git/hooks/pre-push <<HOOK
+#!/bin/sh
+in="\$(cat)"
+case "\$in" in *unmerged/*) git -C "$CASE_REPO.two" push -q origin "$OT/c" ;; esac
+exit 0
+HOOK
+chmod +x .git/hooks/pre-push
+out="$(git release --yes 2>&1)" && rc=0 || rc=$?
+mv .git/hooks/pre-push.spy .git/hooks/pre-push
+moved="$(git ls-remote origin "refs/heads/$OT/c" | cut -f1)"
+[ "$moved" != "$tip" ] && [ -n "$moved" ] && ! on_origin "unmerged/$OT/c" &&
+	git rev-parse -q --verify "refs/heads/unmerged/$OT/c" >/dev/null && grep -q 'Ask the human' <<<"$out" &&
+	ok "PB6 release set aside, lost lease: origin untouched, local name kept, the human is asked" ||
+	fail "PB6 set aside lease: rc=$rc moved=$moved tip=$tip $out"

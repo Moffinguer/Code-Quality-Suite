@@ -2213,13 +2213,22 @@ aside_existing() {
 	return 1
 }
 
+# release_forget_remote <branch>: drop a branch from REL_DELETE_REMOTE (its origin ref is already
+# renamed, or must stay because the rename lost its lease).
+# Arguments: $1 branch. Returns: 0.
+release_forget_remote() {
+	local x keep=()
+	for x in ${REL_DELETE_REMOTE[@]+"${REL_DELETE_REMOTE[@]}"}; do [ "$x" = "$1" ] || keep+=("$x"); done
+	REL_DELETE_REMOTE=(${keep[@]+"${keep[@]}"})
+}
+
 # release_set_aside: set every REL_ARCHIVE branch aside under its 'unmerged/...' name: renamed
-# locally (or a local copy of a branch only on origin) and copied on origin when REL_PUSH is 1
-# and there is an origin; one warning per branch on stderr.
+# locally (or a local copy of a branch only on origin) and renamed on origin, in one atomic push
+# under a lease, when REL_PUSH is 1 and there is an origin; one warning per branch on stderr.
 # Arguments: none; reads REL_ARCHIVE ("<branch><TAB><new name><TAB><ORIGINAL><TAB><commits>").
 # Returns: 0; a failed git command ends the script (set -e).
 release_set_aside() {
-	local entry b new p n done_as
+	local entry b new p n done_as aside_sha
 	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
 		IFS=$'\t' read -r b new p n <<<"$entry"
 		if done_as="$(aside_existing "$b")"; then
@@ -2229,11 +2238,17 @@ release_set_aside() {
 			fi
 			continue
 		fi
+		aside_sha="$(git rev-parse -q --verify "refs/remotes/origin/$b" || true)"
 		if exists_ref "refs/heads/$b"; then
 			git branch -m "$b" "$new"
 		else git branch -q --no-track "$new" "origin/$b"; fi # remote only: keep a local copy too
 		if [ "$REL_PUSH" = 1 ] && has_origin && exists_ref "refs/remotes/origin/$b"; then
-			git push -q origin "refs/remotes/origin/$b:refs/heads/$new"
+			# why: the rename on origin is one atomic push under a lease on the old tip; a lost lease
+			# leaves origin as it is and the old name must not be deleted there later
+			if ! qs_publish_rename "$b" "$new" "$aside_sha"; then
+				echo "[rama] WARN: origin was not changed for '$b' ($new is local only). Ask the human before touching origin/$b (someone may have pushed to it)" >&2
+			fi
+			release_forget_remote "$b"
 		elif [ "$REL_PUSH" = 1 ]; then
 			qs_publish_new "$new" # why: a branch that never reached origin is published under its new name
 		fi
@@ -3068,7 +3083,7 @@ version_tag_create() {
 # Arguments: none; reads REL_RELEASE REL_TOP REL_ARCHIVE REL_DELETE_REMOTE. Returns: 0; exits
 # through die when the push is rejected (nothing changed on origin; git release resumes).
 version_push() {
-	local refs=() entry b new name
+	local refs=() leases=() entry b new name
 	[ "$REL_PUSH" = 1 ] && has_origin || return 0
 	refs=("refs/heads/$REL_RELEASE:refs/heads/$REL_RELEASE")
 	for entry in ${REL_ARCHIVE[@]+"${REL_ARCHIVE[@]}"}; do
@@ -3078,9 +3093,13 @@ version_push() {
 		exists_ref "refs/remotes/origin/$name" || refs+=("refs/remotes/origin/$b:refs/heads/$name")
 	done
 	for b in ${REL_DELETE_REMOTE[@]+"${REL_DELETE_REMOTE[@]}"} "$REL_TOP"; do
-		exists_ref "refs/remotes/origin/$b" && refs+=(":refs/heads/$b")
+		# why: every deletion is under a lease on the tip we saw, so a push by someone else changes nothing
+		if exists_ref "refs/remotes/origin/$b"; then
+			refs+=(":refs/heads/$b")
+			leases+=("--force-with-lease=refs/heads/$b:$(git rev-parse "refs/remotes/origin/$b")")
+		fi
 	done
-	git push -q --atomic -u origin "${refs[@]}" ||
+	git push -q --atomic -u ${leases[@]+"${leases[@]}"} origin "${refs[@]}" ||
 		die "the push of $REL_RELEASE was rejected; nothing changed on origin. Fix it and run git release --version $REL_VERSION again (it resumes)"
 	say "pushed $REL_RELEASE (one atomic push; tag $REL_TAG stays local until git publicar)"
 }
