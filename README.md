@@ -1,6 +1,6 @@
 # Code Quality Suite
 
-<!-- qs:version -->[![version 4.2.1](https://img.shields.io/badge/version-4.2.1-blue)](CHANGELOG.md)<!-- /qs:version -->
+<!-- qs:version -->[![version 5.0.0-RC1](https://img.shields.io/badge/version-5.0.0--RC1-blue)](CHANGELOG.md)<!-- /qs:version -->
 
 Deterministic quality gate for your repositories: on every **commit** and **push** it checks
 the encoding, formats and analyses the code, and **blocks** the operation when it does not meet
