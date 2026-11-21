@@ -147,3 +147,25 @@ mv .git/hooks/pre-push.suite .git/hooks/pre-push
 { on_origin 6.0.0/ot1/part1 || on_origin 6.0.0/ot1/part1/ORIGINAL; } &&
 	ok "QA new name refused by pre-push: the work is still on origin under some name" ||
 	fail "QA part-refusal LOST the work on origin (tip $tip): rc=$rc $out"
+
+# --- server side: a pre-receive hook on origin accepts the deletion but refuses the new name (a
+# dry run cannot see it): the old name must be put back on origin at the same tip
+case_sandbox squash
+git np 6.0.0 >/dev/null 2>&1
+git np ot1 >/dev/null 2>&1
+git nr part2 >/dev/null 2>&1
+tip="$(git rev-parse 6.0.0/ot1/part2)"
+cat >"$CASE_REPO.git/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+while read -r old new ref; do
+	case "$ref" in *part2/ORIGINAL) echo "server refuses the new name" >&2; exit 1 ;; esac
+done
+exit 0
+HOOK
+chmod +x "$CASE_REPO.git/hooks/pre-receive"
+out="$(git convertir-padre 2>&1)" && rc=0 || rc=$?
+rm -f "$CASE_REPO.git/hooks/pre-receive"
+[ "$(git ls-remote origin refs/heads/6.0.0/ot1/part2 | cut -f1)" = "$tip" ] && ! on_origin 6.0.0/ot1/part2/ORIGINAL &&
+	git rev-parse -q --verify refs/heads/6.0.0/ot1/part2/ORIGINAL >/dev/null &&
+	ok "QA server refuses the new name after the delete: old name restored at the same tip, local rename kept" ||
+	fail "QA server refusal: origin lost or moved 6.0.0/ot1/part2 (tip $tip): rc=$rc $out"
