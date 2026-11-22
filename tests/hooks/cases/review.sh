@@ -47,8 +47,8 @@ if grep -q "REVIEW" "$SUITE/hooks/pre-merge-commit" 2>/dev/null; then
 	git switch -q "$R"
 	git subir >/dev/null 2>&1 || fail "RV3: git subir on REVIEW"
 	git merge-base --is-ancestor "$A" "$R" && ok "RV3 git subir rebases REVIEW onto the task" || fail "RV3: not rebased"
-	git switch -q "$A"
-	! git merge --no-ff "$R" >/dev/null 2>&1 && ok "RV4 merging REVIEW is refused" || fail "RV4: merge accepted"
+	git switch -q 6.0.0/ot1/ORIGINAL
+	! git merge --no-ff "$R" >/dev/null 2>&1 && ok "RV4 merging REVIEW into an ORIGINAL is refused" || fail "RV4: merge accepted"
 else
 	ok "RV3/RV4 left to integra_order (git subir and git integra rules are not in this branch)"
 fi
