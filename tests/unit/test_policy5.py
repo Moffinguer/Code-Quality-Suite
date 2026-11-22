@@ -84,7 +84,7 @@ def old_file(levels1=OLD_OT):
         dict: the rules data.
     """
     br = copy.deepcopy(policy.DEFAULTS["branches"])
-    for k in ("model", "flow", "ot_tag", "testing_leaf", "special"):
+    for k in ("model", "flow", "ot_ref", "testing_leaf", "special"):
         del br[k]
     br["levels"][1] = levels1
     return {"branches": br}
@@ -97,31 +97,43 @@ class DefaultsTest(unittest.TestCase):
         """The new keys have the documented defaults."""
         br, com = policy.DEFAULTS["branches"], policy.DEFAULTS["commit"]
         self.assertEqual(br["flow"], "squash")
-        self.assertEqual(br["ot_tag"], "ot/{version}/{ot}")
+        self.assertEqual(br["ot_ref"], "refs/ot/{version}/{ot}")
         self.assertEqual(br["model"], 6)
         self.assertEqual(br["testing_leaf"], "TESTING")
         self.assertEqual(com["files"], "block")
         self.assertEqual(policy.validate({}), [])
 
     def test_validate_rejects(self):
-        """Bad flow, files, ot_tag and testing_leaf are reported."""
+        """Bad flow, files, ot_ref and testing_leaf are reported."""
         bad = {
-            "branches": {"flow": "rebase", "ot_tag": "ot/{version}", "testing_leaf": "ORIGINAL"},
+            "branches": {"flow": "rebase", "ot_ref": "ot/{version}", "testing_leaf": "ORIGINAL"},
             "commit": {"files": "maybe"},
         }
         text = "\n".join(policy.validate(bad))
-        for key in ("branches.flow", "branches.ot_tag", "branches.testing_leaf", "commit.files"):
+        for key in ("branches.flow", "branches.ot_ref", "branches.testing_leaf", "commit.files"):
             self.assertIn(key, text)
 
-    def test_validate_accepts_empty_ot_tag(self):
-        """An empty ot_tag means no tag and is valid."""
-        self.assertEqual(policy.validate({"branches": {"ot_tag": ""}}), [])
+    def test_validate_accepts_empty_ot_ref(self):
+        """An empty ot_ref means no ref and is valid."""
+        self.assertEqual(policy.validate({"branches": {"ot_ref": ""}}), [])
+
+    def test_migrate_ot_tag_to_ot_ref(self):
+        """The old key ot_tag is renamed and ot/... becomes refs/ot/...; ot_ref wins."""
+        data = {"branches": {"model": 5, "ot_tag": "ot/{version}/{ot}"}}
+        msgs = policy.migrate(data)
+        self.assertEqual(data["branches"]["ot_ref"], "refs/ot/{version}/{ot}")
+        self.assertNotIn("ot_tag", data["branches"])
+        self.assertTrue(any("ot_ref" in m for m in msgs))
+        both = {"branches": {"model": 5, "ot_tag": "ot/x/{ot}", "ot_ref": "refs/ot/y/{ot}"}}
+        policy.migrate(both)
+        self.assertEqual(both["branches"]["ot_ref"], "refs/ot/y/{ot}")
+        self.assertNotIn("ot_tag", both["branches"])
 
     def test_shell_env(self):
         """The shell export has the new variables."""
         env = policy.shell_env({})
         self.assertIn("QS_BR_FLOW='squash'\n", env)
-        self.assertIn("QS_BR_OT_TAG='ot/{version}/{ot}'\n", env)
+        self.assertIn("QS_BR_OT_REF='refs/ot/{version}/{ot}'\n", env)
         self.assertIn("QS_BR_TESTING='TESTING'\n", env)
         self.assertIn("QS_COMMIT_FILES='block'\n", env)
 
@@ -131,7 +143,7 @@ class DefaultsTest(unittest.TestCase):
             lib = fh.read()
         for frag in (
             "QS_BR_FLOW=squash",
-            "QS_BR_OT_TAG='ot/{version}/{ot}'",
+            "QS_BR_OT_REF='refs/ot/{version}/{ot}'",
             "QS_BR_TESTING=TESTING",
             "QS_COMMIT_FILES=block",
         ):

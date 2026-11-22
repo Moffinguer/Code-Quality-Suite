@@ -385,7 +385,7 @@ class MigrateTest(unittest.TestCase):
     def test_4x_goes_through_5_then_6(self):
         """A 4.x file (no model) gets flow merge, the 5 changes, then the 6 step."""
         data = file_5()
-        for key in ("model", "flow", "ot_tag", "testing_leaf"):
+        for key in ("model", "flow", "ot_ref", "testing_leaf"):
             del data["branches"][key]
         data["branches"]["levels"][1] = r"^[0-9]+$"
         msgs = policy.migrate(data)

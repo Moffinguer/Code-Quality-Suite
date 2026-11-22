@@ -215,7 +215,7 @@ DEFAULTS = {
         "allow": [],
         "model": 6,  # marker of the one-time migration to the 6.x branch model (migrate)
         "flow": "squash",  # squash (5.x) | merge (4.x, deprecated)
-        "ot_tag": "ot/{version}/{ot}",  # annotated tag at the OT release; '' = none
+        "ot_ref": "refs/ot/{version}/{ot}",  # hidden ref at the OT release; empty = none
         "testing_leaf": "TESTING",  # reserved leaf of the TESTING sandbox '<level>/TESTING'
         "leaf_merge": "merge",  # merge (--no-ff) | squash; only used with flow = merge
         "require_children_merged": True,
@@ -286,9 +286,33 @@ def migrate(data):
             msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
         msgs.append("migrated branches.model: 5")
     msgs += _migrate_special(br)
+    msgs += _migrate_ot_ref(br)
     br["model"] = MODEL
     msgs.append(f"migrated branches.model: {MODEL}")
     return msgs
+
+
+def _migrate_ot_ref(br):
+    """Rename `branches.ot_tag` to `branches.ot_ref` and map `ot/...` to `refs/ot/...`.
+
+    Tags are version numbers only; the OT release writes a hidden ref instead. An existing
+    `ot_ref` is never overwritten (the old key is then just dropped).
+
+    Args:
+        br: the branches section (dict), changed in place.
+
+    Returns:
+        list[str]: one message when the key was renamed, else an empty list.
+    """
+    if "ot_tag" not in br:
+        return []
+    old = br.pop("ot_tag")
+    if "ot_ref" in br:
+        return []
+    if isinstance(old, str) and old.startswith("ot/"):
+        old = "refs/" + old
+    br["ot_ref"] = old
+    return [f"migrated branches.ot_tag -> branches.ot_ref: {old!r}"]
 
 
 def _migrate_special(br):
@@ -670,9 +694,10 @@ def _validate_branches(br):
         errors.append("branches.leaf_merge: must be merge or squash")
     if br.get("flow") not in ("squash", "merge"):
         errors.append("branches.flow: must be squash or merge")
-    ot_tag = br.get("ot_tag")
-    if not isinstance(ot_tag, str) or (ot_tag != "" and "{ot}" not in ot_tag):
-        errors.append("branches.ot_tag: must be '' or contain {ot}")
+    ot_ref = br.get("ot_ref")
+    bad = ot_ref != "" and ("{ot}" not in ot_ref or not ot_ref.startswith("refs/ot/"))
+    if not isinstance(ot_ref, str) or bad:
+        errors.append("branches.ot_ref: must be '' or start with refs/ot/ and contain {ot}")
     if not isinstance(br.get("model"), int) or isinstance(br.get("model"), bool):
         errors.append("branches.model: must be an integer")
     for key in ("parent_leaf", "release_leaf", "archive_prefix", "testing_leaf"):
@@ -765,7 +790,7 @@ def shell_env(data):
         "QS_BR_SEGMENT": br["segment"],
         "QS_BR_LEAF_MERGE": br["leaf_merge"],
         "QS_BR_FLOW": br["flow"],
-        "QS_BR_OT_TAG": br["ot_tag"],
+        "QS_BR_OT_REF": br["ot_ref"],
         "QS_BR_TESTING": br["testing_leaf"],
         "QS_BR_REQUIRE_CHILDREN": "1" if br.get("require_children_merged", True) else "0",
         "QS_BR_TAG": br["tag"],
