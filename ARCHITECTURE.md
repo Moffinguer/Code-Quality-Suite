@@ -64,7 +64,8 @@ The blocks are delivered in four layers; each adds value on its own. Recommended
 
 ### 3.2 Agent skeleton
 
-*Roles table copied from `ai-template/AGENTS.md`; steps from skill `team-flow`.* Claude Code
+*Roles table copied from `ai-template/AGENTS.md`; steps from skill `team-flow`.* **Status: built
+(4.2.1).** The 6.1.0 rights are marked as such. Claude Code
 subagents cannot start other subagents, so only the main session (the lead, also the business
 analyst) delegates. The roles live in `.claude/agents/`; OpenCode gets the same ones in
 `.opencode/agents/`.
@@ -72,17 +73,17 @@ analyst) delegates. The roles live in `.claude/agents/`; OpenCode gets the same 
 | Role | Model | Does | May run | Never |
 | --- | --- | --- | --- | --- |
 | main session (lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | `git np`, `nr`, `es`, `convertir-padre`, `integra` | writes large code itself |
-| systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | read-only git | edits source code, creates branches |
-| developer | sonnet | implements one task on its own final branch; gate and hooks before review | commits, `git subir`, the gate | merges into an ORIGINAL |
-| reviewer | opus | reviews diffs against norms and quality rules | read-only git | edits code |
-| qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | the gate, tests | changes production code |
+| systems-analyst | opus | spec, plan, branch tree for `git es -n`, one task per final branch, merge-conflict suggestions | read-only git; 6.1.0: runs `git es`, `np`, `nr`, `integra` | edits source code |
+| developer | sonnet | implements one task on its own final branch; gate and hooks before review | commits, `git subir`, the gate; 6.1.0: may create CHECKPOINT branches | merges into an ORIGINAL |
+| reviewer | opus | reviews diffs against norms and quality rules | read-only git; 6.1.0: commits on REVIEW branches | edits code |
+| qa | sonnet | tests, gate runs, regression checks; findings open the `<final-branch>/bugfix` loop | the gate, tests; 6.1.0: runs `git tests` and `git revision` | changes production code |
 | docs-writer | haiku | documentation from recipes | commits on its branch | invents requirements |
 | intern | haiku | boilerplate, renames, small mechanical edits | commits on its branch | touches security code |
 | external-worker | haiku | hands cheap, non-regulated tasks to other models through the gateway | gateway roles | sends regulated data |
 
-The "May run" column summarises `team-flow` and `branch-workflow`; the exact per-agent
-permission rows are in `ai-template/.claude/settings.json` (6.1.0 adds the per-agent rules for
-the special branch types, generated for OpenCode by `scripts/ai-sync.sh`).
+The "May run" column summarises `team-flow` and `branch-workflow`. The per-agent permission rows
+come from `oc_bash_rules` in `scripts/ai-sync.sh` (and `ai-template/.claude/settings.json`), not
+from per-agent settings.
 
 *Flow of skill `team-flow`.*
 
@@ -92,11 +93,11 @@ human ── requirements ──> lead (business analyst) ── requirements, p
                           human approves the spec, then the plan <───────────────────┘
 lead: git es -n, then git es  (creates the branch tree)
   ├─> developer (one worktree per final branch): code, gate, git subir
-  │     └─> qa: findings in docs/<v>/<req>/bugfix.md
-  │           └─> lead: git convertir-padre + git nr bugfix; developer fixes; qa again, until clean
+  │     ├─> qa: findings in docs/<v>/<req>/bugfix.md
+  │     │     └─> lead: git convertir-padre + git nr bugfix; developer fixes; qa again, until clean
   │     └─> reviewer: verdict
   └─> lead: git integra, bottom-up; the human approves each merge
-human: git release, git publicar
+human: git release (6.1.0: the OT release still writes the CHANGELOG), git publicar
 ```
 
 Human checkpoints: approve the spec, approve the plan, approve each merge (bottom-up) and the
@@ -144,10 +145,10 @@ Who runs which command, at which level of the tree:
 | --- | --- | --- | --- |
 | develop -> version | `git np <version>` (or `patch`, `minor`, `major`) | lead | creates `<v>/ORIGINAL` and its version commit |
 | version, OT, requirement | `git np <name>`, `git es` | lead | parent branches (`<folder>/ORIGINAL`); `git es` creates a whole tree |
-| final branch | `git nr <name>` | lead | creates the final branch; developers never create branches |
+| final branch | `git nr <name>` | lead | (built) creates the final branch; developers never create branches; in 6.1.0 they may create CHECKPOINT branches |
 | final branch | commits, `git subir` | developer (qa fixes on `bugfix` the same way) | hooks run; `git subir` rebases the final branch onto its ORIGINAL |
 | final -> ORIGINAL | `git integra -m ... -m ...` | lead, after qa and reviewer; the human approves | built: merge. 6.1.0: ONE squash commit with `Commits:`, `Files:`, `Refs:` per level, bottom-up |
-| OT end | `git release` in the OT | human | 6.1.0: OT RELEASE `<v>/<ot>/RELEASE`, tag `ot/<v>/<ot>`, subtree deleted |
+| OT end | `git release` in the OT | human | 6.1.0: OT RELEASE `<v>/<ot>/RELEASE` with its CHANGELOG lines (the OT release still writes the CHANGELOG), tag `ot/<v>/<ot>`, subtree deleted |
 | version end | `git release` (6.1.0: `--version <v>`) | human | built: `<v>/RELEASE` with VERSION, CHANGELOG.md, badge. 6.1.0: refused until every OT has its RELEASE; tag |
 | into develop | `git publicar`, `git combinar` | human | built: merge into develop and tag. 6.1.0: rebase onto develop, ONE commit |
 
@@ -157,8 +158,9 @@ commit; the changelog line is `- <Subject> (<short hash>; <OT>)`. **TESTING**
 and is never integrated (`git testing crear`, `estado`, `repartir`).
 
 **Special branches (6.1.0).** Reserved UPPERCASE names with their own rules, all read from
-`branches.special` in `.quality-rules.json`: MIGRATION and DOCS at version level (DOCS becomes
-the only place where `CHANGELOG.md` and the badge change); REFACTOR, FORMAT, TESTS and SPIKE as
+`branches.special` in `.quality-rules.json`: MIGRATION and DOCS at version level (in 6.1.0 the OT
+release still writes the CHANGELOG; the DOCS-writes-changelog mode, `git changelog --escribir`,
+is DEFERRED to a later version and is not built); REFACTOR, FORMAT, TESTS and SPIKE as
 controls for people; ATTEMPT-n, REVIEW-`<task>`, QUARANTINE-`<task>` and CHECKPOINT-`<task>` as
 controls for agents; TESTING as above. Hooks, `git arbol`, `git ayuda` and the agent
 permissions read the same table. Every branch a suite command creates is published right after
@@ -186,9 +188,11 @@ badge, pushes it and deletes the rest of the tree. `git publicar` merges it into
 and deletes it. `git combinar` rebases several RELEASE branches in a temporary worktree.
 
 **Release (6.1.0, not on `develop` yet).** Two reviewed steps. An OT is closed by an OT release
-(`<v>/<ot>/RELEASE`: its CHANGELOG lines, tag `ot/<v>/<ot>`, subtree deleted). The version
+(`<v>/<ot>/RELEASE`: its CHANGELOG lines, tag `ot/<v>/<ot>`, subtree deleted). In 6.1.0 the OT
+release still writes the CHANGELOG; the DOCS-writes-changelog mode (`git changelog --escribir`) is
+DEFERRED to a later version and is not built. The version
 release is refused until every OT has its RELEASE; it rebases the OT RELEASEs into
-`<v>/RELEASE`, checks that DOCS holds `CHANGELOG.md` and the badge, and tags. `git publicar`
+`<v>/RELEASE`, checks the badge and, once the DOCS mode lands, that DOCS holds `CHANGELOG.md`; then tags. `git publicar`
 rebases `<v>/RELEASE` onto develop and lands it as ONE commit. 5.0.0-RC1 and 6.0.0 are not
 published alone: `git combinar` joins them and they ship as 6.1.0.
 
