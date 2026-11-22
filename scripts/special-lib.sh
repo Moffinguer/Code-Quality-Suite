@@ -156,7 +156,7 @@ special_segment_ok() {
 # Arguments: $1 branch. Returns: 0 valid; 1 refused; 2 the name has no special segment.
 # shellcheck disable=SC2034 # why: SP_TYPE and SP_WHY are read by the callers
 special_parse() {
-	local b="$1" segs=() n i seg t lvl=0 under="" rx
+	local b="$1" segs=() n i seg t lvl=0 under="" rx idx
 	SP_TYPE="" SP_WHY=""
 	special_has_segment "$b" || return 2
 	IFS=/ read -ra segs <<<"$b"
@@ -186,7 +186,11 @@ special_parse() {
 			SP_WHY="'$seg' is reserved ($QS_BR_LEAF, $QS_BR_RELEASE_LEAF and ${QS_BR_TESTING:-TESTING}, in any case)"
 			return 1
 		fi
-		rx="$(_br_level_re $((lvl + 1)))"
+		# why: inside a special folder at the version level (MIGRATION/java17) the segment is a detail,
+		# not an OT: it uses the detail level (3), so 'spring-boot-3' is fine
+		idx=$((lvl + 1))
+		[ -z "$under" ] || [ "$idx" -ge 3 ] || idx=3
+		rx="$(_br_level_re "$idx")"
 		printf '%s' "$seg" | grep -qE -- "$rx" || {
 			SP_WHY="segment '$seg' does not match $rx"
 			return 1
