@@ -1,5 +1,31 @@
 # Changelog
 
+## [5.0.0-RC1] - 2026-11-21
+
+### Added
+
+- Squash-aware tree and cleanup ([29b0e81](https://github.com/Moffinguer/Code-Quality-Suite/commit/29b0e815abce8bf3265b166ae9a4a758c0533ad8); git)
+- OT, version and mainline release ([69232d5](https://github.com/Moffinguer/Code-Quality-Suite/commit/69232d5491ec3f97d301be73a4006eac5d67a94e); git)
+- TESTING sandbox per level ([7ab4d17](https://github.com/Moffinguer/Code-Quality-Suite/commit/7ab4d171080ad25f7a8fb1ff452d64d9984271c2); git)
+- Merged hashes, old-format warning ([4cb7db3](https://github.com/Moffinguer/Code-Quality-Suite/commit/4cb7db352a8f67d586dbd9184b08d404ec9c303e); git)
+- Hash and OT lines, no authors ([87dcf7d](https://github.com/Moffinguer/Code-Quality-Suite/commit/87dcf7d1537338b0b9beabd10121b2d8f0fd1ec4); git)
+- Add limpiar-unmerged ([bee98bf](https://github.com/Moffinguer/Code-Quality-Suite/commit/bee98bf01488c76a92394d99a9e6240e5e669b62); git)
+- Squash per level with files ([b2cfb8c](https://github.com/Moffinguer/Code-Quality-Suite/commit/b2cfb8cf73f7c57317f95649b09ed2be06a6a96e); git)
+- Add Files block to commit messages ([d93e657](https://github.com/Moffinguer/Code-Quality-Suite/commit/d93e65752381b4cfd545d8b9413a30f109254e79); git)
+- Migrate rules file to model 5 ([df5f884](https://github.com/Moffinguer/Code-Quality-Suite/commit/df5f8840900cc19d99c75375f4b05c7c1df1bdc3); git)
+- Add flow, ot_tag, files, testing ([47e4a5c](https://github.com/Moffinguer/Code-Quality-Suite/commit/47e4a5ccdf995cdfde26c75ec19221b0ab4239fb); git)
+
+### Fixed
+
+- One squash per OT in version release ([24c80b9](https://github.com/Moffinguer/Code-Quality-Suite/commit/24c80b9434b6c95738f1208aa5d523a85c23b59a); git)
+- Format check pipes real file ([11413d7](https://github.com/Moffinguer/Code-Quality-Suite/commit/11413d74e05afac84ae3a5627751cbab1070ba29); git)
+- Same isort src in format check and fix ([5aef7f7](https://github.com/Moffinguer/Code-Quality-Suite/commit/5aef7f71fb0f2afdf1a854ba30d6d64cbc619fdf); git)
+- Own versions, origin, hooks ([75cffba](https://github.com/Moffinguer/Code-Quality-Suite/commit/75cffba0ff2a9391cd36b33ac47bb21b08c54c59); git)
+- Detect amend on Windows, check files ([2815c0a](https://github.com/Moffinguer/Code-Quality-Suite/commit/2815c0a986ba7b0f6b926f6fc24f2e6a47b51b67); git)
+- No double run, safe sandbox ([7f69a67](https://github.com/Moffinguer/Code-Quality-Suite/commit/7f69a674b014402fef770f3e43c9cd55e2f47391); git)
+- Set flow after the first commit ([f096534](https://github.com/Moffinguer/Code-Quality-Suite/commit/f096534a7f6b40db9ada5609c50b95e7b36014d7); git)
+- Safe migration, flow merge kept ([e67c003](https://github.com/Moffinguer/Code-Quality-Suite/commit/e67c00362a932e8fb1a7e1c43d70606b08c39b9c); git)
+
 ## 4.2.1 - 2026-11-02
 
 ### Changed
@@ -165,3 +191,5 @@ _First release recorded in this changelog._
 
 - Add quality levels that never clash: off, syntax, format, standard, strict (docs/QUALITY-RULES.md)
 - Add identifying marks: shebangs for scripts and modelines for ambiguous files (engine/runner.py)
+
+[5.0.0-RC1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/5.0.0-RC1
