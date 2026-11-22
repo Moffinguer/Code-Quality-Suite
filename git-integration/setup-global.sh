@@ -4,7 +4,7 @@
 #
 # Always:
 #   git clonar <url> [dest]   global alias: clone + bootstrap in one step
-#   git iniciar [folder]      a new project: git init (develop) + hooks + repository files + AI files
+#   git iniciar [folder]      a new project: git init (main and develop) + hooks + repository files + AI files
 #   git instalar [repo]       an existing clone: hooks, aliases, tools, repository files
 #   git ia [--actualizar]     AI agent files (out of the repository via .gitignore)
 #   git ayuda [command]       the manual of every git command (docs/GIT-COMMANDS.md)
@@ -16,7 +16,10 @@
 #   a template post-checkout that, right after `git clone`, asks whether to bootstrap
 set -euo pipefail
 ON_CLONE=0
-if [ "${1:-}" = "--on-clone" ]; then ON_CLONE=1; shift; fi
+if [ "${1:-}" = "--on-clone" ]; then
+	ON_CLONE=1
+	shift
+fi
 SUITE_DIR="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 TPL="${CQS_TEMPLATE_DIR:-$HOME/.config/git/cqs-template}"
 
@@ -32,21 +35,25 @@ git config --global alias.ayuda "!bash \"${SUITE_DIR}/scripts/qs-help.sh\""
 
 # why: scripts, agents and other shells find the suite without typing its path
 if [ "${QS_NO_PROFILE:-0}" != 1 ]; then
-  rc="$HOME/.bashrc"; touch "$rc"
-  sed -i.bak '/# code-quality-suite (setup-global.sh)$/d' "$rc" && rm -f "$rc.bak"
-  printf 'export QS_SUITE="%s"   # code-quality-suite (setup-global.sh)\n' "$SUITE_DIR" >> "$rc"
-  if command -v setx >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
-    setx QS_SUITE "$(cygpath -w "$SUITE_DIR")" >/dev/null 2>&1 && QS_SETX=1
-  fi
+	rc="$HOME/.bashrc"
+	touch "$rc"
+	sed -i.bak '/# code-quality-suite (setup-global.sh)$/d' "$rc" && rm -f "$rc.bak"
+	printf 'export QS_SUITE="%s"   # code-quality-suite (setup-global.sh)\n' "$SUITE_DIR" >>"$rc"
+	if command -v setx >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+		setx QS_SUITE "$(cygpath -w "$SUITE_DIR")" >/dev/null 2>&1 && QS_SETX=1
+	fi
 fi
 
 mkdir -p "$TPL/hooks"
-bake() { sed "s|__CQS_SUITE_DIR__|${SUITE_DIR//|/\\|}|g" "$1" > "$2"; chmod +x "$2"; }
+bake() {
+	sed "s|__CQS_SUITE_DIR__|${SUITE_DIR//|/\\|}|g" "$1" >"$2"
+	chmod +x "$2"
+}
 for h in pre-commit pre-push; do bake "$SUITE_DIR/git-integration/cqs-autoinstall" "$TPL/hooks/$h"; done
 if [ "$ON_CLONE" = 1 ]; then
-  bake "$SUITE_DIR/git-integration/cqs-onclone" "$TPL/hooks/post-checkout"
+	bake "$SUITE_DIR/git-integration/cqs-onclone" "$TPL/hooks/post-checkout"
 else
-  rm -f "$TPL/hooks/post-checkout"
+	rm -f "$TPL/hooks/post-checkout"
 fi
 git config --global init.templateDir "$TPL"
 

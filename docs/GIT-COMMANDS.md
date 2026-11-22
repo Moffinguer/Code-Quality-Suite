@@ -70,10 +70,12 @@ develop
 ### git iniciar
 
 - **Syntax:** `git iniciar [folder] [--sin-ia] [--remoto <url>]`
-- **Does:** `git init` with `develop` (if the folder is not a repository yet), the quality hooks
-  and repository aliases, the base image, the standard repository files (README, CHANGELOG,
+- **Does:** `git init` on `main` (if the folder is not a repository yet), an empty root commit
+  (`chore: initial commit`) on `main`, `develop` at that commit, HEAD on `develop`; then the quality
+  hooks and repository aliases, the base image, the standard repository files (README, CHANGELOG,
   VERSION...), the AI agent files (`git ia`) and the `.gitignore` block; `--remoto` adds `origin`.
-  It does not commit: it prints the next steps. A new rules file gets `branches.flow = squash`.
+  Its only commit is that empty root commit: it prints the next steps. A new rules file gets
+  `branches.flow = squash`.
 - **Use it when:** you start a project from an empty (or not yet versioned) folder.
 - **Who:** human.
 
