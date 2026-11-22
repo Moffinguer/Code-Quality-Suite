@@ -8,7 +8,7 @@ The interfaces other tools and scripts use. The suite has no HTTP API of its own
 ## 1. Engine (`engine/qs.py`, entrypoint of the image)
 
 ```bash
-docker run --rm --network none --read-only -v "$PWD:/workspace" -w /workspace code-quality-suite:2.5.0 <command> ...
+docker run --rm --network none --read-only -v "$PWD:/workspace" -w /workspace code-quality-suite:<version> <command> ...
 ```
 
 | Command | Does | Exit |
@@ -83,12 +83,19 @@ terminal. Repository aliases are registered by `install.sh` (`configure_repo`); 
 | `ayuda` | 4.2.1 | `git ayuda [command]` | print the manual (global) | [ayuda](docs/GIT-COMMANDS.md#git-ayuda) |
 | `actualizar-suite` | 4.2.1 | `git actualizar-suite [--status \| --langs "..." \| --lazy \| --yes]` | update the suite on this machine (global) | [actualizar-suite](docs/GIT-COMMANDS.md#git-actualizar-suite) |
 | `testing` | 5.0.0-RC1 | `git testing crear \| estado \| repartir ...` | try several branches together in a sandbox | [testing](docs/GIT-COMMANDS.md#git-testing) |
+| `migracion` | 6.0.0 | `git migracion`; also `git np <v> --migracion` | create `<v>/MIGRATION` (human) | [migracion](docs/GIT-COMMANDS.md#git-migracion) |
+| `intentos` | 6.0.0 | `git intentos <task> <N>` | ATTEMPT branches with worktrees (lead) | [intentos](docs/GIT-COMMANDS.md#git-intentos--git-elegir) |
+| `elegir` | 6.0.0 | `git elegir <task>` | rank attempts; the human confirms (human) | [elegir](docs/GIT-COMMANDS.md#git-intentos--git-elegir) |
+| `revision` | 6.0.0 | `git revision <task> [--aplicar [c...]] [--descartar]` | REVIEW branch of a task (reviewer, author) | [revision](docs/GIT-COMMANDS.md#git-revision) |
+| `cuarentena` | 6.0.0 | `git cuarentena <task> [--borrar]` | QUARANTINE branch (external-worker; lead or human) | [cuarentena](docs/GIT-COMMANDS.md#git-cuarentena--git-aceptar) |
+| `aceptar` | 6.0.0 | `git aceptar <c...> --a <branch>` | cherry-pick a quarantined commit, `Reviewed-by:` (lead or human) | [aceptar](docs/GIT-COMMANDS.md#git-cuarentena--git-aceptar) |
+| `checkpoint` | 6.0.0 | `git checkpoint "<msg>" [--lista] [--volver <n>]` | local save points (any agent) | [checkpoint](docs/GIT-COMMANDS.md#git-checkpoint) |
+| `spike` | 6.0.0 | `git spike [--llevar <branch> <task>]` | SPIKE branch; `--llevar` takes commits out (anyone) | [spike](docs/GIT-COMMANDS.md#git-spike) |
 | `limpiar-unmerged` | 5.0.0-RC1 | `git limpiar-unmerged [-n] [--yes]` | delete archived `unmerged/...` branches already integrated | [limpiar-unmerged](docs/GIT-COMMANDS.md#git-limpiar-unmerged) |
 | `amend` | 5.0.0-RC1 | `git amend [git commit --amend options]` | amend a commit through the hooks | none yet in GIT-COMMANDS.md |
 
-Planned for the 6.0.0 special branches (`migracion`, `docs`, `refactor`, `tests`, `formatear`,
-`spike`, `intentos`, `elegir`, `revision`, `cuarentena`, `aceptar`, `checkpoint`): not registered
-yet, so they are not in the table. Their state is in
+Not listed, deferred to a later version: `git refactor`, `git tests`, `git formatear`, `git docs`
+and `git changelog --escribir`. Special-branch state is in
 [GIT-COMMANDS.md section 5](docs/GIT-COMMANDS.md#5-branches).
 
 Merge driver `qs-version` (`.git/info/attributes`: `/VERSION`, `pom.xml`, `package.json`):
