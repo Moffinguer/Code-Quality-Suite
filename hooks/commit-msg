@@ -15,6 +15,7 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
 if [ -f "$LIB" ]; then
 	. "$LIB"
+	qs_suite_stamp_check
 	qs_policy_load
 else
 	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'

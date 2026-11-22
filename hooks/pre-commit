@@ -12,11 +12,13 @@ ENV_FILE="${HOOK_DIR}/quality-suite.env"
 # why: set -a exports the settings so child scripts (ensure-langs, run-tests) see them
 if [ -f "$ENV_FILE" ]; then
 	set -a
+	# why: the sourced path is only known at run time
 	# shellcheck disable=SC1090,SC1091
 	. "$ENV_FILE"
 	set +a
 fi
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
+	# why: the sourced path is only known at run time
 	# shellcheck disable=SC1091
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
@@ -27,6 +29,7 @@ fi
 	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
 	exit 1
 }
+# why: the sourced path is only known at run time
 # shellcheck disable=SC1091
 . "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
 
@@ -36,6 +39,13 @@ mkdir -p "$STATE"
 : "${QUALITY_LOG_FILE:=${STATE}/quality-suite.log}"
 export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
 cd "$REPO_ROOT"
+# why: a suite update upgrades the rules file once, before the first hook reads it
+# why: the path is only known at run time (set by the env file)
+# shellcheck disable=SC1090
+(
+	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_suite_stamp_check
+) || true
 
 # why: the rules file is personal to the clone; keep it out of commits without touching .gitignore.
 EXCL="$(git rev-parse --git-path info/exclude)"
@@ -85,6 +95,7 @@ qs_log INFO pre-commit "commit start files=${#STAGED[@]}"
 	echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
 if [ -f "$ENV_FILE" ]; then
 	set -a
+	# why: the sourced path is only known at run time
 	# shellcheck disable=SC1090,SC1091
 	. "$ENV_FILE"
 	set +a

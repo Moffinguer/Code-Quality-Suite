@@ -16,8 +16,11 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+
+import semver
 
 from registry import LEVELS
 
@@ -1452,5 +1455,194 @@ def _migrate_file(path):
     return 0
 
 
+RULES_NAME = ".quality-rules.json"
+NO_RULES_MSG = "no rules file (created on the first commit)"
+
+
+def upgrade(data):
+    """Bring a parsed rules file to the current suite version: migrate, then populate.
+
+    `migrate` applies the one-time `branches.model` steps (a 4.x file keeps `flow: merge`);
+    `populate` then adds the missing sections and `section.key` defaults. Nothing is ever
+    overwritten, nothing is written inside an existing `branches.special.<TYPE>` entry nor over
+    `"FORMAT": false` (`get` merges nested defaults at run time). A second call changes nothing.
+
+    Args:
+        data: the parsed rules file (dict), changed in place.
+
+    Returns:
+        list[str]: `migrated <path>: <old> -> <new>` / `added <path>` lines, empty when the file
+        was already up to date.
+    """
+    changes = list(migrate(data))
+    changes += [f"added {path}" for path in populate(data)]
+    return changes
+
+
+def suite_version():
+    """The version of this suite folder (its VERSION file).
+
+    Returns:
+        str: the version, or '' when the file is missing or unreadable.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def stamp_path(repo):
+    """The stamp file of a repository: one per clone, shared by every worktree (git common dir).
+
+    Args:
+        repo: the repository (or worktree) folder.
+
+    Returns:
+        str: the path of `<common dir>/quality-suite/suite-version`, or '' outside a git repository.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return os.path.join(os.path.abspath(os.path.join(repo, out)), "quality-suite", "suite-version")
+
+
+def _write_rules(path, raw, data):
+    """Write the upgraded rules file next to itself, then move it over the original.
+
+    Args:
+        path: the rules file.
+        raw: the original bytes (their line ending, LF or CRLF, is kept).
+        data: the upgraded rules (dict).
+
+    Raises:
+        OSError: the temporary file cannot be written or moved over the file.
+    """
+    eol = "\r\n" if b"\r\n" in raw else "\n"
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    name = os.path.basename(path)
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(os.path.abspath(path)), prefix=name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+            fh.write(text)
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+
+
+def _write_stamp(repo, version):
+    """Record the suite version a repository was upgraded to.
+
+    Args:
+        repo: the repository folder.
+        version: the suite version.
+
+    Raises:
+        OSError: the stamp cannot be written.
+    """
+    path = stamp_path(repo)
+    if not path or not version:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(version + "\n")
+
+
+def _stamp_is_newer(repo, version):
+    """Whether the stamp of a repository is newer than the suite version (a downgrade).
+
+    Args:
+        repo: the repository folder.
+        version: the suite version.
+
+    Returns:
+        bool: True when the stamp holds a valid version greater than `version`.
+    """
+    path = stamp_path(repo)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            stamp = fh.read().strip()
+    except OSError:
+        return False
+    return semver.valid(stamp) and semver.valid(version) and semver.compare(stamp, version) > 0
+
+
+def rules_upgrade(repo):
+    """`rules-upgrade <repo>`: upgrade the rules file of a repository and write the stamp.
+
+    The file is rewritten only when something changed (2-space indent, key order kept, new keys
+    appended, UTF-8 without BOM, final newline). Without a rules file only the stamp is written.
+    A stamp newer than the suite is a warning: nothing is written (downgrade is out of scope).
+
+    Args:
+        repo: the repository folder.
+
+    Returns:
+        int: 0 on success (the change lines or a note go to stdout); 1 when the file is not valid
+        JSON, has a BOM or cannot be written (message on stderr; file and stamp untouched).
+    """
+    version = suite_version()
+    if _stamp_is_newer(repo, version):
+        print(
+            f"[quality-suite] WARN: rules stamp is newer than the suite {version}; not upgraded",
+            file=sys.stderr,
+        )
+        return 0
+    path = os.path.join(repo, RULES_NAME)
+    changes = []
+    if not os.path.isfile(path):
+        print(NO_RULES_MSG)
+    else:
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            if raw.startswith(BOM_UTF8):
+                raise ValueError("UTF-8 BOM")
+            data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+            changes = upgrade(data)
+            if changes:
+                _write_rules(path, raw, data)
+        except (OSError, ValueError) as err:
+            print(f"[quality-suite] ERROR {RULES_NAME}: {err}; not upgraded", file=sys.stderr)
+            return 1
+    try:
+        _write_stamp(repo, version)
+    except OSError as err:
+        print(f"[quality-suite] ERROR cannot write the suite stamp: {err}", file=sys.stderr)
+        return 1
+    for line in changes:
+        print(line)
+    return 0
+
+
+def _main(argv):
+    """Command line: `migrate <file>` or `rules-upgrade <repo>`.
+
+    Args:
+        argv: the arguments after the program name.
+
+    Returns:
+        int: the exit status; 2 for a wrong command line.
+    """
+    if len(argv) == 2 and argv[0] == "migrate":
+        return _migrate_file(argv[1])
+    if len(argv) == 2 and argv[0] == "rules-upgrade":
+        return rules_upgrade(argv[1])
+    return 2
+
+
 if __name__ == "__main__":
-    sys.exit(_migrate_file(sys.argv[2]) if len(sys.argv) == 3 and sys.argv[1] == "migrate" else 2)
+    sys.exit(_main(sys.argv[1:]))

@@ -138,16 +138,25 @@ grep -qxF "$REPO_TOP" "$QS_HOME/repos.list" || printf '%s\n' "$REPO_TOP" >>"$QS_
 # why: one-time migration of an existing rules file (branches.model 5); the engine does it
 # in Docker on the next commit, this applies it now for `git instalar` / `git actualizar-suite`
 # why: the Windows Store python3 stub exists on Git Bash but fails, so try each until one works
-if [ -f "$REPO_TOP/.quality-rules.json" ]; then
+# why: rules-upgrade also writes the suite stamp (<git common dir>/quality-suite/suite-version)
+# (git actualizar-suite runs it itself afterwards, to show the changes: QS_SKIP_RULES_UPGRADE=1)
+_up_out="$(mktemp)"
+# why: a native Windows python cannot open /c/... paths (Git Bash); cygpath -m gives C:/...
+# Arguments: $1 path. Returns: 0 and the path in the form python reads.
+_native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+if [ "${QS_SKIP_RULES_UPGRADE:-0}" != 1 ]; then
 	_migrated=0
 	for _py in python3 python; do
-		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$SCRIPT_DIR/engine/policy.py" migrate "$REPO_TOP/.quality-rules.json"; then
+		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$(_native "$SCRIPT_DIR/engine/policy.py")" rules-upgrade "$(_native "$REPO_TOP")" >"$_up_out"; then
 			_migrated=1
 			break
 		fi
 	done
-	[ "$_migrated" = 1 ] || echo "[install] WARN: no working python3/python: rules file not migrated (the engine does it on the next commit)" >&2
+	[ "$_migrated" = 1 ] || echo "[install] WARN: no working python3/python: rules file not upgraded (the engine does it on the next commit)" >&2
+	# the change lines (added ... / migrated ...), as migrate printed them
+	grep -E '^(added|migrated) ' "$_up_out" | sed 's/^/[quality-suite] .quality-rules.json: /' || true
 fi
+rm -f "$_up_out"
 
 echo "[install] Hooks: pre-commit, pre-push, prepare-commit-msg, commit-msg, pre-rebase, pre-merge-commit,"
 echo "          post-checkout, post-commit -> $([ "$HOOK_STUBS" = 1 ] && echo "stubs running" || echo "symbolic links to") ${COMMON}"

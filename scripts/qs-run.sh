@@ -72,6 +72,7 @@ if [ "$ENC" = 1 ] && [ "${#files[@]}" -eq 0 ]; then
 fi
 HOOK_DIR="$(git rev-parse --path-format=absolute --git-path hooks)"
 ENV_FILE="${HOOK_DIR}/quality-suite.env"
+# why: the env file and suite folder are only known at run time
 # shellcheck disable=SC1090
 if [ -f "$ENV_FILE" ]; then
 	set -a
@@ -79,8 +80,14 @@ if [ -f "$ENV_FILE" ]; then
 	set +a
 fi
 : "${QUALITY_SUITE_DIR:=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# why: the suite folder is only known at run time
 # shellcheck disable=SC1091
 . "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+# why: the first agent edit after a suite update upgrades the rules file once (like a git hook)
+[ "$HOOK" = 1 ] && { (
+	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_suite_stamp_check
+) || true; }
 # paths relative to the repository root (the container sees the root as /workspace)
 # why ask git: on Windows show-toplevel prints C:/x while the shell uses /c/x, so compare nothing
 rel=()
