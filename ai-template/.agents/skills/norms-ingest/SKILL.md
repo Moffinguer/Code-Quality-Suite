@@ -1,9 +1,9 @@
 ---
-name: jda-ingest
-description: Use when a new Junta de Andalucia notification, guideline or standard document arrives (dropped in knowledge/norms/inbox). Turns it into norm notes, updates the knowledge map and proposes quality-gate rules.
+name: norms-ingest
+description: Use when a new norm document arrives (a regulation, guideline, standard or notification, dropped in knowledge/norms/inbox). Turns it into norm notes, updates the knowledge map and proposes quality-gate rules.
 ---
 
-# Ingest a Junta document into the norms map
+# Ingest a document into the norms map
 
 Input: a file in `knowledge/norms/inbox/` (PDF, DOCX, e-mail export, Markdown).
 
@@ -11,7 +11,7 @@ Input: a file in `knowledge/norms/inbox/` (PDF, DOCX, e-mail export, Markdown).
    layers, file types), and whether it replaces an earlier document.
 2. Split it into atomic rules. One rule = one obligation that can be checked. For each rule
    create or update `knowledge/norms/norms/<area>-<short-name>.md` from `_template.md`:
-   id (`JDA-<AREA>-<NNN>`, never reuse ids), statement in the original wording (quoted) plus a
+   id (`<AREA>-<NNN>`, never reuse ids), statement in the original wording (quoted) plus a
    one-line plain summary, `status` (mandatory | recommendation), `applies_to`, `source`
    (document + section/page), `date`, `supersedes`, `check`.
 3. `check`: name the gate tool and rule that enforces it (e.g. `checkstyle: LineLength max=120`,

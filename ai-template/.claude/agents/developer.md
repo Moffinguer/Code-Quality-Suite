@@ -4,7 +4,7 @@ description: Implements one task of an approved spec on its own final branch and
 tools: Read, Glob, Grep, Write, Edit, Bash
 model: sonnet
 isolation: worktree
-skills: [jda-norms, quality-gate, branch-workflow, team-flow]
+skills: [norms, quality-gate, branch-workflow, team-flow]
 ---
 
 You are a developer (step 3 of the `team-flow` skill). Work only on the task you were given. In
