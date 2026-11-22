@@ -275,3 +275,100 @@ git nv 7.1.1-SNAPSHOT --from 7.1.1/188858/ORIGINAL
 
 The new tree keeps the branches below the chosen one, under the new version. The original tree is
 not touched, and each tree is released on its own. Details: [GIT-COMMANDS.md section 5](GIT-COMMANDS.md#git-nueva-version--git-nv).
+
+### 3.8 TESTING sandbox (anyone)
+
+To try several branches together before integrating any of them, build a sandbox. It is made
+from the `ORIGINAL` with the branches you name merged in, and a marker commit records them:
+
+```bash
+git testing crear 7.1.1/188858/login 7.1.1/188858/menu
+git testing estado               # the sources, and the commits made on TESTING
+git testing repartir --map 3f2a1c9=7.1.1/188858/login   # send a commit to the branch it belongs to
+```
+
+You commit on `TESTING` as usual. `repartir` goes commit by commit (or answers with `--map`) and
+`cherry-pick`s each one onto the branch you choose. Nothing is pushed. To pick up new changes of
+the sources, run `git testing crear <the same branches> --recrear`; it is refused while commits
+are not distributed, unless `--force` is given.
+
+`TESTING` can never be merged, rebased, integrated or pushed to an `ORIGINAL` or `RELEASE`
+branch: those commands are refused. At the release it is deleted, or set aside as `unmerged/...`
+when commits are still undistributed. Details: [GIT-COMMANDS.md section 6](GIT-COMMANDS.md#git-testing).
+
+### 3.9 OT release (lead)
+
+An OT is released when every task of it is integrated into the OT `ORIGINAL` and the OT
+`ORIGINAL` is integrated into its version (section 3.6). The tip of the OT is kept under the git
+ref `refs/ot/<version>/<ot>`. Tags are reserved for version numbers, so an OT never gets a tag of
+its own.
+
+### 3.10 Version release (human)
+
+A version is released when all its OTs are integrated into `<version>/ORIGINAL`. Release from a
+detached HEAD at the version tip: the aliases run the scripts of the branch that is checked out,
+so the release must not be run from a branch of its own.
+
+```bash
+git arbol                                   # every OT integrated?
+git switch --detach 7.1.1/ORIGINAL          # the version tip, detached
+git changelog                               # preview: changes, semver advice, checks; changes nothing
+git release --version 7.1.1                 # 7.1.1/RELEASE: VERSION, CHANGELOG.md, README badge; pushed
+```
+
+`git release` sets aside the branches that were never integrated as `unmerged/<name>`, writes the
+version commits on `7.1.1/RELEASE`, pushes it and deletes the rest of the tree. If a step fails,
+fix it and run the same command again: it resumes.
+
+Review the release before publishing it. It is a branch, so the review is a commit:
+
+```bash
+git switch 7.1.1/RELEASE
+git show --stat HEAD~2..HEAD                # the release commits
+# edit CHANGELOG.md (wording, order, related lines), then:
+git commit -am "docs(changelog): review"
+```
+
+Publishing is the human's step:
+
+```bash
+git publicar --version 7.1.1                # merge into develop, tag 7.1.1, push, delete RELEASE
+git limpiar-unmerged -n                     # later: preview the cleanup of the archive
+```
+
+`git publicar` merges `7.1.1/RELEASE` into `develop`, tags it with the version number, pushes
+`develop` and the tag, and deletes the release branch. If `develop` moved since the release was
+prepared, it says so: merge `develop` into the release, review, and publish again. The entry of
+`CHANGELOG.md` is built from the integrated subjects, so write those for the reader. Details:
+[GIT-WORKFLOW.md section on releases](GIT-WORKFLOW.md#closing-a-version-git-changelog-git-release-git-publicar).
+
+### 3.11 Several versions: git combinar (human)
+
+Each version tree is first released on its own (`git release --version <v>`). With two or more
+`RELEASE` branches, `git publicar` needs `--version` and publishes one at a time. To publish
+several as one, join them first:
+
+```bash
+git combinar --incluir 7.1.1,7.1.2-rc.1 --version 7.1.2 --yes
+git publicar --version 7.1.2
+```
+
+`git combinar` asks yes or no for each release, merges `develop` into the releases as a temporary
+commit, and builds the result from `develop`, one squash commit per release with only its own
+changes. The joined branches are kept as `unmerged/<v>/RELEASE`. The plan lists every rename, on
+origin too, before it asks. Everything is made first in a temporary worktree and the local
+branches move together; origin gets one atomic push. A conflict stops it with nothing changed.
+Details: [GIT-COMMANDS.md section 7](GIT-COMMANDS.md#git-combinar).
+
+### 3.12 Tidy the archive (lead)
+
+Archived branches (`unmerged/...`) accumulate after releases. `git limpiar-unmerged` classifies
+them and deletes only those already integrated or superseded; anything pending is never deleted:
+
+```bash
+git limpiar-unmerged -n          # preview: integrated, superseded or pending, changes nothing
+git limpiar-unmerged             # deletes the integrated and superseded ones, local and on origin
+```
+
+A deleted branch prints its last commit, so `git branch <branch> <sha>` restores it. Details:
+[GIT-COMMANDS.md section 7](GIT-COMMANDS.md#git-limpiar-unmerged).
