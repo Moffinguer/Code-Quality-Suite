@@ -158,11 +158,15 @@ rv_main() {
 	case "$mode" in
 	create)
 		[ "${#args[@]}" -eq 1 ] || rv_die "usage: git revision <task> | --aplicar [commit...] | --descartar [task]"
-		rv_create "$(rv_task "${args[0]}")"
+		# why: a failed rv_task must stop here; "$(...)" as an argument would call rv_create with ""
+		t="$(rv_task "${args[0]}")" || exit $?
+		rv_create "$t"
 		;;
 	discard)
 		[ "${#args[@]}" -le 1 ] || rv_die "usage: git revision --descartar [task]"
-		rv_discard "$(rv_task "${args[0]:-}")"
+		# why: same as create: no call with an empty task after a failed rv_task
+		t="$(rv_task "${args[0]:-}")" || exit $?
+		rv_discard "$t"
 		;;
 	apply)
 		# why: a commit id has no '/', a task branch always has one
