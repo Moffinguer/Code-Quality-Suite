@@ -13087,6 +13087,15 @@
    },
    "description": "globs never analysed"
   },
+  "data_class": {
+   "enum": [
+    "public",
+    "internal",
+    "regulated"
+   ],
+   "default": "internal",
+   "description": "data class of the repository: public, internal or regulated; regulated refuses QUARANTINE (git cuarentena) and the data never goes to free model tiers or third-party endpoints that train on prompts"
+  },
   "encoding": {
    "type": "object",
    "description": "charset every shared text file must use; a file in another encoding (or converted) blocks the commit",
@@ -13257,6 +13266,15 @@
     "conventional": {
      "type": "boolean",
      "default": true
+    },
+    "files": {
+     "enum": [
+      "block",
+      "warn",
+      "off"
+     ],
+     "default": "block",
+     "description": "the 'Files:' block in every commit message"
     }
    }
   },
@@ -13315,16 +13333,46 @@
      },
      "description": "extra allowed branch regexes"
     },
+    "model": {
+     "type": "integer",
+     "default": 6,
+     "description": "marker of the one-time migration to the 5.x branch model"
+    },
+    "flow": {
+     "enum": [
+      "squash",
+      "merge"
+     ],
+     "default": "squash",
+     "description": "squash (5.x) or merge (4.x behaviour, deprecated)"
+    },
+    "ot_ref": {
+     "type": "string",
+     "default": "refs/ot/{version}/{ot}",
+     "description": "hidden ref (refs/ot/...) at the OT ORIGINAL tip; must contain {ot} ('' = none)"
+    },
+    "testing_leaf": {
+     "type": "string",
+     "pattern": "^[A-Za-z0-9_-]+$",
+     "default": "TESTING",
+     "description": "reserved leaf of the TESTING sandbox '<level>/<testing_leaf>'"
+    },
     "leaf_merge": {
      "enum": [
       "merge",
       "squash"
      ],
-     "default": "merge"
+     "default": "merge",
+     "description": "applies to flow = merge only"
     },
     "require_children_merged": {
      "type": "boolean",
      "default": true
+    },
+    "publish_on_create": {
+     "type": "boolean",
+     "default": true,
+     "description": "every branch a suite command creates is pushed to origin (false: publish with git subir; QS_PUBLISH=0 disables it for one command)"
     },
     "tag": {
      "type": "string",
@@ -13334,7 +13382,8 @@
     "tag_level": {
      "type": "integer",
      "minimum": 0,
-     "default": 1
+     "default": 1,
+     "description": "applies to flow = merge only"
     },
     "release_leaf": {
      "type": "string",
@@ -13382,6 +13431,1439 @@
      "type": "string",
      "default": "",
      "description": "changelog reference of a commit: '' = derived from origin, '-' = none, or a URL with {commit}"
+    },
+    "build_cmd": {
+     "type": "string",
+     "default": "",
+     "description": "command of the full build and tests that a push_checks: full special type (MIGRATION) runs on push ('' = QUALITY_HEAVY_CMD)"
+    },
+    "special": {
+     "type": "object",
+     "additionalProperties": false,
+     "properties": {
+      "MIGRATION": {
+       "description": "special branch MIGRATION: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "version",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "squash",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "first",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "build",
+            "fix",
+            "refactor",
+            "perf",
+            "test",
+            "docs",
+            "chore",
+            "ci",
+            "style"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "full",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": true,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "required",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "changed",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "DOCS": {
+       "description": "special branch DOCS: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "version",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": false,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "squash",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "last",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "docs",
+            "chore"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "@docs"
+           ],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "required",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "REFACTOR": {
+       "description": "special branch REFACTOR: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "node",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "squash",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "last",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "refactor",
+            "style",
+            "perf",
+            "test",
+            "docs",
+            "chore"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": "strict",
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "set_aside",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "FORMAT": {
+       "description": "special branch FORMAT: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "node",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": false,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "squash",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "alone",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": false,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "style"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "set_aside",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "TESTS": {
+       "description": "special branch TESTS: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "node",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "squash",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "test",
+            "chore"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "@tests"
+           ],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "set_aside",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "SPIKE": {
+       "description": "special branch SPIKE: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "node",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "none",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "apply",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "*"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "delete",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "ATTEMPT": {
+       "description": "special branch ATTEMPT: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "task",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "n",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "choose",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "*"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "delete",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "task",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "REVIEW": {
+       "description": "special branch REVIEW: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "task",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "task",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "apply",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "*"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": null,
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "delete",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "QUARANTINE": {
+       "description": "special branch QUARANTINE: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "task",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": true,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "task",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "apply",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "*"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": "strict",
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "normal",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "Generated-by"
+           ],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "delete",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "task",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      },
+      "CHECKPOINT": {
+       "description": "special branch CHECKPOINT: an object of properties, false to disable it",
+       "oneOf": [
+        {
+         "const": false
+        },
+        {
+         "type": "object",
+         "additionalProperties": false,
+         "properties": {
+          "at": {
+           "enum": [
+            "version",
+            "node",
+            "task"
+           ],
+           "default": "task",
+           "description": "where it may live: <version>/X, <node>/X or beside a task"
+          },
+          "children": {
+           "type": "boolean",
+           "default": false,
+           "description": "may become '<X>/ORIGINAL' with children"
+          },
+          "suffix": {
+           "enum": [
+            "none",
+            "n",
+            "task"
+           ],
+           "default": "task",
+           "description": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>"
+          },
+          "integrates": {
+           "enum": [
+            "squash",
+            "never",
+            "choose",
+            "apply"
+           ],
+           "default": "never",
+           "description": "how the integration treats it; choose = only the attempt choice, apply = only commits taken out"
+          },
+          "order": {
+           "enum": [
+            "any",
+            "first",
+            "last",
+            "alone"
+           ],
+           "default": "any",
+           "description": "when it may be integrated among its siblings"
+          },
+          "rebase": {
+           "type": "boolean",
+           "default": true,
+           "description": "false: regenerated, never rebased (not configurable)"
+          },
+          "types": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [
+            "*"
+           ],
+           "description": "Conventional Commits types allowed; ['*'] = all, [] = no own commits"
+          },
+          "paths": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "allowed paths: globs and @repo-files, @docs, @tests; [] = any"
+          },
+          "level": {
+           "enum": [
+            "off",
+            "syntax",
+            "format",
+            "standard",
+            "strict",
+            null
+           ],
+           "default": "format",
+           "description": "gate level for the branch (null = the repository level)"
+          },
+          "push": {
+           "enum": [
+            "normal",
+            "never"
+           ],
+           "default": "never",
+           "description": "never: the branch is never pushed (not configurable)"
+          },
+          "push_checks": {
+           "enum": [
+            "default",
+            "full"
+           ],
+           "default": "default",
+           "description": "full: full build and tests on push"
+          },
+          "trailers": {
+           "type": "array",
+           "items": {
+            "type": "string"
+           },
+           "default": [],
+           "description": "trailers every own commit must carry"
+          },
+          "locks": {
+           "type": "boolean",
+           "default": false,
+           "description": "while it exists no other branch of the version may be created"
+          },
+          "on_release": {
+           "enum": [
+            "required",
+            "optional",
+            "delete",
+            "set_aside"
+           ],
+           "default": "delete",
+           "description": "what the version release does with it"
+          },
+          "changelog": {
+           "enum": [
+            "none",
+            "changed",
+            "task"
+           ],
+           "default": "none",
+           "description": "how it appears in the changelog"
+          }
+         }
+        }
+       ]
+      }
+     },
+     "description": "special branches (MIGRATION, DOCS, REFACTOR...): one entry per type; a property set here overrides the default, false disables the type"
     }
    }
   },

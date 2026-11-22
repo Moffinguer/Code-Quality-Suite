@@ -6,7 +6,8 @@
 # git passes: $1 prev HEAD, $2 new HEAD, $3 = 1 when it was a branch checkout
 set -euo pipefail
 [ "${3:-0}" = "1" ] || exit 0
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
@@ -14,9 +15,13 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
 . "$LIB"
 configure_repo "${QUALITY_SUITE_DIR}" 2>/dev/null || true
+qs_suite_stamp_check
 QS_POLICY_NO_DOCKER=1 qs_policy_load
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 b="$(current_branch || true)"
 [ -n "$b" ] || exit 0
 why="$(valid_branch_name "$b")" || echo "[post-checkout] note: '$b' does not follow <version>/<ot>/.../$QS_BR_LEAF: $why" >&2
+# a special branch: one line with the rules of its type (a normal branch prints nothing new)
+kind="$(special_kind "$b")"
+[ -z "$kind" ] || echo "[special] $kind: $(special_summary "$kind")" >&2
 exit 0

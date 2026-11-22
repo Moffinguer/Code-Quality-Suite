@@ -17,4 +17,12 @@ Report a table: criterion, test, result. If you found anything, write the findin
 blocker|major|minor> - <what is wrong> - <expected>`, and tell the lead. The lead opens
 `<final-branch>/bugfix` (e.g. `3.0.0/100/ignore` -> `3.0.0/100/ignore/ORIGINAL` +
 `3.0.0/100/ignore/bugfix`) and a developer fixes it; you review again. You never run
-`git convertir-padre` or create branches: you report findings and the lead opens the branch. The loop ends when you find nothing.
+`git convertir-padre` or create bugfix branches: you report findings and the lead opens the branch. The loop ends when you find nothing.
+
+## Branches
+
+- Create: TESTS (`git tests`) and REVIEW-<task> (`git revision`, test proposals).
+- Work on: TESTS and REVIEW-<task> only; production code never.
+- Integrate: never; it reports bugfix needs to the lead, who runs `git convertir-padre` + `git nr bugfix`.
+- Push: the creating aliases, `git subir`.
+- `git release`, `git publicar`, `git combinar` are human only.
