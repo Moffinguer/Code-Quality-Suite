@@ -128,6 +128,15 @@ class Union(unittest.TestCase):
         self.assertEqual(block, want)
         self.assertEqual(changelog.validate("# Changelog\n\n" + block), ([], []))
 
+    def test_same_hash_twice_is_listed_once(self):
+        """A commit reaching the union through two sections keeps its first line only."""
+        a = "### Fixed\n\n- Fix x (aaa1111; git)\n- Fix z (eee5555; git)\n"
+        b = "### Fixed\n\n- Fix x reworded (aaa1111; log)\n- Fix w (fff6666; log)\n"
+        block = changelog.union("6.1.0", "2026-11-02", [a, b])
+        self.assertEqual(block.count("aaa1111"), 1)
+        self.assertLess(block.index("Fix z"), block.index("Fix w"))
+        self.assertNotIn("reworded", block)
+
     def test_same_subject_and_ot_merge_hashes(self):
         a = "### Fixed\n\n- Fix x (aaa1111; git)\n- Fix x (bbb2222; log)\n- Fix y (ddd4444; git)\n"
         b = "### Fixed\n\n- Fix x (ccc3333; git)\n- Fix x (aaa1111; git)\n"
