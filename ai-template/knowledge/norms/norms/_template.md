@@ -1,5 +1,5 @@
 ---
-id: JDA-<AREA>-<NNN>
+id: <AREA>-<NNN>
 title: <short title>
 status: mandatory        # mandatory | recommendation | superseded
 applies_to: [java, jsp]  # languages, layers or deliverables
