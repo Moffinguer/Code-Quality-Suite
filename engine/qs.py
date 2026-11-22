@@ -685,6 +685,27 @@ class App:
         Returns:
             list: one classification per file (see registry.classify).
         """
+        excludes, extra = self._classify_args()
+        return registry.classify(self.reg, self.root, files, excludes, extra)
+
+    def detect_languages(self, files):
+        """Which languages (and subtypes) exist among the files; skips redundant files.
+
+        Args:
+            files: the paths, relative to the repository root.
+
+        Returns:
+            dict: {language id: set of subtype ids} (see registry.detect_languages).
+        """
+        excludes, extra = self._classify_args()
+        return registry.detect_languages(self.reg, self.root, files, excludes, extra)
+
+    def _classify_args(self):
+        """Excludes and extra extensions shared by classify and detect_languages.
+
+        Returns:
+            tuple: (exclude globs, {extension: language id}).
+        """
         excludes = (
             list(self.reg.default_excludes)
             + list((self.data or {}).get("exclude", []))
@@ -694,7 +715,7 @@ class App:
         for lid, sec in ((self.data or {}).get("languages") or {}).items():
             for e in sec.get("extensions", []) or []:
                 extra[e] = lid
-        return registry.classify(self.reg, self.root, files, excludes, extra)
+        return excludes, extra
 
     def _group(self, cls):
         """Group classified files by language and note the ambiguous extensions.
@@ -1105,7 +1126,7 @@ class App:
             data = None
         self.data = data or rules.skeleton("")
         known = set((self.data.get("languages") or {}).keys())
-        for lid in sorted({c.lang for c in self.classify(files) if not c.skip} - known):
+        for lid in sorted(set(self.detect_languages(files)) - known):
             spec = self.reg.languages[lid].get("version")
             if not spec or not spec.get("ask", True):
                 continue
@@ -1520,10 +1541,9 @@ def _langs_cmd(app, files):
     except (OSError, ValueError):
         app.data = rules.skeleton("")
     toks = set()
-    for c in app.classify(files):
-        if not c.skip:
-            toks.add(c.lang)
-            toks.update(f"{c.lang}/{s}" for s in c.subtypes)
+    for lang, subtypes in app.detect_languages(files).items():
+        toks.add(lang)
+        toks.update(f"{lang}/{s}" for s in subtypes)
     for lid in {t.split("/")[0] for t in toks}:
         for tid in app.reg.tools_for(
             lid, [t.split("/", 1)[1] for t in toks if t.startswith(lid + "/")]
