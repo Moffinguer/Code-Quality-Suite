@@ -51,7 +51,7 @@ Windows-1252 and saved it again (accents like `ó` turn into two strange charact
 lists every file with the line and the correct text. Repair and commit again:
 
 ```bash
-git encoding --fix src/main/java/es/jda/Login.java     # or: git encoding --fix   (every changed file)
+git encoding --fix src/main/java/com/example/Login.java     # or: git encoding --fix   (every changed file)
 git diff                                               # check the repair
 git add -A && git commit
 ```
@@ -101,7 +101,7 @@ missing, run `git instalar` again in the repository.
 
 ## AI agents
 
-### Can AI agents work on Junta code?
+### Can AI agents work on regulated code?
 
 Only through local models (`role-local`, Ollama) or paid endpoints that do not train on prompts.
 Free tiers are for public or invented code (the demo). See [SECURITY.md](SECURITY.md).

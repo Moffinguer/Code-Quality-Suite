@@ -27,7 +27,7 @@ and we agree the date of the fix and of the disclosure.
 | Secrets | the gate blocks private keys (built-in) and known secret formats (Gitleaks); no secret goes into an image or a Dockerfile |
 | AI gateway | keys only in `ai-stack/.env` (never committed); LiteLLM pinned to a reviewed tag (PyPI 1.82.7 and 1.82.8 were compromised) |
 
-## Rules for regulated code (Junta de Andalucía)
+## Rules for regulated code
 
 - Regulated code never goes to free tiers or any service that trains on prompts: only local
   models (`role-local`, Ollama) or paid endpoints that do not train on them.

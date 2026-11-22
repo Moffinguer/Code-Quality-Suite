@@ -21,7 +21,7 @@ releases, standard repository files, and an AI-agent layer that must pass the sa
 
 | Constraint | Consequence |
 | --- | --- |
-| Junta de Andalucía code: regulated, never sent to services that train on prompts | the gate runs offline; AI roles for real code use paid no-training endpoints or local models only |
+| Regulated code (public-sector work): never sent to services that train on prompts | the gate runs offline; AI roles for real code use paid no-training endpoints or local models only |
 | Windows 11 + Git Bash + Docker Desktop as the main platform | bash only (no jq, no GNU-only flags), host paths through `cygpath`, stubs when symbolic links are not allowed |
 | No local runtimes in the projects | every tool lives in the image; the host needs git and docker |
 | Reproducible | tools pinned by version, apt from a dated snapshot, base image digest lock |

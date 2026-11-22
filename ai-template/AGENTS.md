@@ -6,7 +6,7 @@ skills and in `knowledge/`.
 
 ## Project
 
-- Name: <PROJECT>   Client: Junta de Andalucia (public sector)   Data class: <public|internal|regulated>
+- Name: <PROJECT>   Client: <CLIENT>   Data class: <public|internal|regulated>
 - Stack: <Java 8/11/17, JSP, Maven, Oracle PL/SQL, HTML/CSS/JS, Markdown>
 - Build and tests: `<mvn -B verify>`   Run locally: `<...>`
 
