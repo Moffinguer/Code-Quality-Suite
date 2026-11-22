@@ -84,7 +84,7 @@ def old_file(levels1=OLD_OT):
         dict: the rules data.
     """
     br = copy.deepcopy(policy.DEFAULTS["branches"])
-    for k in ("model", "flow", "ot_tag", "testing_leaf"):
+    for k in ("model", "flow", "ot_ref", "testing_leaf", "special"):
         del br[k]
     br["levels"][1] = levels1
     return {"branches": br}
@@ -97,31 +97,56 @@ class DefaultsTest(unittest.TestCase):
         """The new keys have the documented defaults."""
         br, com = policy.DEFAULTS["branches"], policy.DEFAULTS["commit"]
         self.assertEqual(br["flow"], "squash")
-        self.assertEqual(br["ot_tag"], "ot/{version}/{ot}")
-        self.assertEqual(br["model"], 5)
+        self.assertEqual(br["ot_ref"], "refs/ot/{version}/{ot}")
+        self.assertEqual(br["model"], 6)
         self.assertEqual(br["testing_leaf"], "TESTING")
         self.assertEqual(com["files"], "block")
         self.assertEqual(policy.validate({}), [])
 
     def test_validate_rejects(self):
-        """Bad flow, files, ot_tag and testing_leaf are reported."""
+        """Bad flow, files, ot_ref and testing_leaf are reported."""
         bad = {
-            "branches": {"flow": "rebase", "ot_tag": "ot/{version}", "testing_leaf": "ORIGINAL"},
+            "branches": {"flow": "rebase", "ot_ref": "ot/{version}", "testing_leaf": "ORIGINAL"},
             "commit": {"files": "maybe"},
         }
         text = "\n".join(policy.validate(bad))
-        for key in ("branches.flow", "branches.ot_tag", "branches.testing_leaf", "commit.files"):
+        for key in ("branches.flow", "branches.ot_ref", "branches.testing_leaf", "commit.files"):
             self.assertIn(key, text)
 
-    def test_validate_accepts_empty_ot_tag(self):
-        """An empty ot_tag means no tag and is valid."""
-        self.assertEqual(policy.validate({"branches": {"ot_tag": ""}}), [])
+    def test_publish_on_create(self):
+        """PB8: publish_on_create defaults to true, is exported and must be a boolean."""
+        self.assertIs(policy.DEFAULTS["branches"]["publish_on_create"], True)
+        self.assertIn("QS_BR_PUBLISH='1'\n", policy.shell_env({}))
+        off = {"branches": {"publish_on_create": False}}
+        self.assertIn("QS_BR_PUBLISH='0'\n", policy.shell_env(off))
+        self.assertEqual(policy.validate(off), [])
+        bad = policy.validate({"branches": {"publish_on_create": "yes"}})
+        self.assertTrue(any("branches.publish_on_create" in m for m in bad))
+        data = {"branches": {}}
+        self.assertIn("branches.publish_on_create", policy.populate(data))
+        self.assertIs(data["branches"]["publish_on_create"], True)
+
+    def test_validate_accepts_empty_ot_ref(self):
+        """An empty ot_ref means no ref and is valid."""
+        self.assertEqual(policy.validate({"branches": {"ot_ref": ""}}), [])
+
+    def test_migrate_ot_tag_to_ot_ref(self):
+        """The old key ot_tag is renamed and ot/... becomes refs/ot/...; ot_ref wins."""
+        data = {"branches": {"model": 5, "ot_tag": "ot/{version}/{ot}"}}
+        msgs = policy.migrate(data)
+        self.assertEqual(data["branches"]["ot_ref"], "refs/ot/{version}/{ot}")
+        self.assertNotIn("ot_tag", data["branches"])
+        self.assertTrue(any("ot_ref" in m for m in msgs))
+        both = {"branches": {"model": 5, "ot_tag": "ot/x/{ot}", "ot_ref": "refs/ot/y/{ot}"}}
+        policy.migrate(both)
+        self.assertEqual(both["branches"]["ot_ref"], "refs/ot/y/{ot}")
+        self.assertNotIn("ot_tag", both["branches"])
 
     def test_shell_env(self):
         """The shell export has the new variables."""
         env = policy.shell_env({})
         self.assertIn("QS_BR_FLOW='squash'\n", env)
-        self.assertIn("QS_BR_OT_TAG='ot/{version}/{ot}'\n", env)
+        self.assertIn("QS_BR_OT_REF='refs/ot/{version}/{ot}'\n", env)
         self.assertIn("QS_BR_TESTING='TESTING'\n", env)
         self.assertIn("QS_COMMIT_FILES='block'\n", env)
 
@@ -131,11 +156,37 @@ class DefaultsTest(unittest.TestCase):
             lib = fh.read()
         for frag in (
             "QS_BR_FLOW=squash",
-            "QS_BR_OT_TAG='ot/{version}/{ot}'",
+            "QS_BR_OT_REF='refs/ot/{version}/{ot}'",
             "QS_BR_TESTING=TESTING",
             "QS_COMMIT_FILES=block",
+            "QS_DATA_CLASS=internal",
         ):
             self.assertIn(frag, lib)
+
+    def test_data_class_default_and_export(self):
+        """data_class defaults to internal and reaches the shell as QS_DATA_CLASS."""
+        self.assertEqual(policy.get({}, "data_class"), "internal")
+        self.assertIn("QS_DATA_CLASS='internal'\n", policy.shell_env({}))
+        self.assertIn("QS_DATA_CLASS='regulated'\n", policy.shell_env({"data_class": "regulated"}))
+
+    def test_data_class_values(self):
+        """The three data classes are valid; any other value is one error."""
+        for val in policy.DATA_CLASSES:
+            self.assertEqual(policy.validate({"data_class": val}), [])
+        errors = policy.validate({"data_class": "secret"})
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(
+            errors[0].startswith("data_class: must be one of public, internal, regulated")
+        )
+
+    def test_data_class_populate(self):
+        """populate adds the top-level key without overwriting a value already set."""
+        data = {}
+        self.assertIn("data_class", policy.populate(data))
+        self.assertEqual(data["data_class"], "internal")
+        data = {"data_class": "public"}
+        self.assertNotIn("data_class", policy.populate(data))
+        self.assertEqual(data["data_class"], "public")
 
 
 class MigrateTest(unittest.TestCase):
@@ -146,7 +197,7 @@ class MigrateTest(unittest.TestCase):
         data = old_file()
         msgs = policy.migrate(data)
         self.assertEqual(data["branches"]["levels"][1], policy.OT_RX)
-        self.assertEqual(data["branches"]["model"], 5)
+        self.assertEqual(data["branches"]["model"], 6)
         self.assertEqual(data["branches"]["flow"], "merge")
         self.assertTrue(any("migrated branches.levels[1]" in m for m in msgs))
         self.assertTrue(any(policy.FLOW_NOTICE in m for m in msgs))
@@ -193,7 +244,7 @@ class MigrateTest(unittest.TestCase):
             with open(path, encoding="utf-8") as fh:
                 got = json.load(fh)
             self.assertEqual(got["branches"]["levels"][1], policy.OT_RX)
-            self.assertEqual(got["branches"]["model"], 5)
+            self.assertEqual(got["branches"]["model"], 6)
 
 
 class MigrateFileTest(unittest.TestCase):
@@ -416,7 +467,7 @@ class SyncRulesTest(unittest.TestCase):
             changed = app.sync_rules([], {})
             self.assertIn("policy", changed)
             self.assertEqual(app.data["branches"]["flow"], "merge")
-            self.assertEqual(app.data["branches"]["model"], 5)
+            self.assertEqual(app.data["branches"]["model"], 6)
 
     def test_new_file_gets_squash(self):
         """A rules file created by the engine skips the migration and defaults to squash."""
@@ -476,7 +527,7 @@ class InstallE2ETest(unittest.TestCase):
             with open(path, encoding="utf-8") as fh:
                 got = json.load(fh)
             self.assertEqual(got["branches"]["flow"], "merge")
-            self.assertEqual(got["branches"]["model"], 5)
+            self.assertEqual(got["branches"]["model"], 6)
             self.assertEqual(got["branches"]["levels"][1], policy.OT_RX)
             self.assertIn("squash", res.stdout + res.stderr)
             with open(path, "rb") as fh:

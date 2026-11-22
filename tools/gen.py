@@ -32,6 +32,7 @@ CATALOG_MODULES = [
 core, *_catalog = (importlib.import_module(m) for m in CATALOG_MODULES)
 writers = importlib.import_module("writers")
 policy = importlib.import_module("policy")
+registry = importlib.import_module("registry")
 
 ROLES = {"syntax", "marker", "format", "lint", "deep"}
 LEVELS = ["off", "syntax", "format", "standard", "strict"]
@@ -203,8 +204,69 @@ def validate(tools, langs, runtimes):
 # ------------------------------------------------------------------ schema
 
 
+def special_schema():
+    """Schema of `branches.special`: one entry per type, each an object of properties or false.
+
+    The defaults and the allowed values come from engine/policy.py (SPECIAL_DEFAULTS and
+    SPECIAL_PROPS), so the schema cannot drift from the table.
+
+    Returns:
+        dict: the JSON Schema of the `special` key.
+    """
+    docs = {
+        "at": "where it may live: <version>/X, <node>/X or beside a task",
+        "children": "may become '<X>/ORIGINAL' with children",
+        "suffix": "name suffix: none, ATTEMPT-<n> or REVIEW-<task>",
+        "integrates": "how the integration treats it; choose = only the attempt choice, "
+        "apply = only commits taken out",
+        "order": "when it may be integrated among its siblings",
+        "rebase": "false: regenerated, never rebased (not configurable)",
+        "types": "Conventional Commits types allowed; ['*'] = all, [] = no own commits",
+        "paths": "allowed paths: globs and @repo-files, @docs, @tests; [] = any",
+        "level": "gate level for the branch (null = the repository level)",
+        "push": "never: the branch is never pushed (not configurable)",
+        "push_checks": "full: full build and tests on push",
+        "trailers": "trailers every own commit must carry",
+        "locks": "while it exists no other branch of the version may be created",
+        "on_release": "what the version release does with it",
+        "changelog": "how it appears in the changelog",
+    }
+    kinds = {
+        "bool": {"type": "boolean"},
+        "types": {"type": "array", "items": {"type": "string"}},
+        "paths": {"type": "array", "items": {"type": "string"}},
+        "trailers": {"type": "array", "items": {"type": "string"}},
+        "level": {"enum": [*registry.LEVELS, None]},
+    }
+    entries = {}
+    for name, dflt in policy.SPECIAL_DEFAULTS.items():
+        props = {}
+        for prop, kind in policy.SPECIAL_PROPS.items():
+            sch = {"enum": list(kind)} if isinstance(kind, tuple) else dict(kinds[kind])
+            props[prop] = {**sch, "default": dflt[prop], "description": docs[prop]}
+        entries[name] = {
+            "description": f"special branch {name}: an object of properties, false to disable it",
+            "oneOf": [
+                {"const": False},
+                {"type": "object", "additionalProperties": False, "properties": props},
+            ],
+        }
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": entries,
+        "description": "special branches (MIGRATION, DOCS, REFACTOR...): one entry per type; "
+        "a property set here overrides the default, false disables the type",
+    }
+
+
 def policy_schema():
-    """encoding / commit / branches sections (engine/policy.py holds the defaults)."""
+    """data_class key and the encoding / commit / branches sections (engine/policy.py holds the
+    defaults).
+
+    Returns:
+        dict: the schema properties of the policy keys, merged into the top-level properties.
+    """
     d = policy.DEFAULTS
     cs = {"type": "string", "examples": ["utf-8", "iso-8859-1", "windows-1252", "ascii"]}
     bom = {"enum": ["forbid", "allow", "require"]}
@@ -219,6 +281,13 @@ def policy_schema():
         ]
     }
     return {
+        "data_class": {
+            "enum": list(policy.DATA_CLASSES),
+            "default": d["data_class"],
+            "description": "data class of the repository: public, internal or regulated; "
+            "regulated refuses QUARANTINE (git cuarentena) and the data never goes to free "
+            "model tiers or third-party endpoints that train on prompts",
+        },
         "encoding": {
             "type": "object",
             "description": "charset every shared text file must use; a file in another "
@@ -324,10 +393,10 @@ def policy_schema():
                     "default": d["branches"]["flow"],
                     "description": "squash (5.x) or merge (4.x behaviour, deprecated)",
                 },
-                "ot_tag": {
+                "ot_ref": {
                     "type": "string",
-                    "default": d["branches"]["ot_tag"],
-                    "description": "annotated tag on the OT ORIGINAL at the OT release; must "
+                    "default": d["branches"]["ot_ref"],
+                    "description": "hidden ref (refs/ot/...) at the OT ORIGINAL tip; must "
                     "contain {ot} ('' = none)",
                 },
                 "testing_leaf": {
@@ -342,6 +411,12 @@ def policy_schema():
                     "description": "applies to flow = merge only",
                 },
                 "require_children_merged": {"type": "boolean", "default": True},
+                "publish_on_create": {
+                    "type": "boolean",
+                    "default": d["branches"]["publish_on_create"],
+                    "description": "every branch a suite command creates is pushed to origin "
+                    "(false: publish with git subir; QS_PUBLISH=0 disables it for one command)",
+                },
                 "tag": {
                     "type": "string",
                     "default": "{version}",
@@ -406,6 +481,13 @@ def policy_schema():
                     "'-' = none, "
                     "or a URL with {commit}",
                 },
+                "build_cmd": {
+                    "type": "string",
+                    "default": "",
+                    "description": "command of the full build and tests that a push_checks: full "
+                    "special type (MIGRATION) runs on push ('' = QUALITY_HEAVY_CMD)",
+                },
+                "special": special_schema(),
             },
         },
     }

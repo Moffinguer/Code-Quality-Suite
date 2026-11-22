@@ -307,6 +307,7 @@ cmd_crear() {
 	f="$(tst_level "$level")" || tst_die "no level: use --nivel <F> (e.g. --nivel 5.0.0-RC1/git)"
 	tref="$f/$QS_BR_TESTING"
 	git fetch -q --prune origin 2>/dev/null || true
+	c="$(special_migration_lock "${f%%/*}" "$tref")" && tst_die "$c"
 	if best_ref "$tref" >/dev/null; then
 		[ "$recrear" = 1 ] || tst_die "$tref already exists: git testing crear --recrear (or git testing estado)"
 		if [ "${#srcs[@]}" -eq 0 ] && tst_load "$f"; then srcs=("${TST_SRC_BR[@]}"); fi
@@ -337,6 +338,7 @@ cmd_crear() {
 	tst_load "$f" || tst_die "internal error: the marker of $tref cannot be read"
 	tst_say "created $tref from $f/$QS_BR_LEAF with ${#srcs[@]} source(s):"
 	for i in "${!TST_SRC_BR[@]}"; do echo "  ${TST_SRC_BR[$i]} ${TST_SRC_SHA[$i]:0:10}"; done
+	qs_publish_new "$tref"
 	echo "Make commits on $tref; share it with: git push --force-with-lease origin $tref"
 }
 

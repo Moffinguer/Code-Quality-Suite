@@ -1186,7 +1186,7 @@ git init -q -b develop "$T/ai"
 (cd "$T/ai" && bash "$SUITE/scripts/ai-init.sh" . >/dev/null) || fail "ai-init"
 [ -f "$T/ai/opencode.json" ] && grep -q '^model: litellm/role-dev$' "$T/ai/.opencode/agents/developer.md" &&
 	grep -q '^model: litellm/role-review$' "$T/ai/.opencode/agents/reviewer.md" &&
-	grep -q '^  edit: deny$' "$T/ai/.opencode/agents/reviewer.md" &&
+	! grep -q 'edit: deny' "$T/ai/.opencode/agents/reviewer.md" &&
 	! grep -q 'edit: deny' "$T/ai/.opencode/agents/developer.md" && [ -f "$T/ai/.claude/skills/quality-gate/SKILL.md" ] &&
 	ok "ai-init: OpenCode agents on gateway roles, permissions from the tools, skills synced" || fail "ai-init opencode"
 # dev_documents templates: created when missing, never overwritten, not even by --actualizar

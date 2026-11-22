@@ -6,27 +6,83 @@
 # are set aside during the run and restored afterwards.
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 ENV_FILE="${HOOK_DIR}/quality-suite.env"
 # why: set -a exports the settings so child scripts (ensure-langs, run-tests) see them
-if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
-[ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ] && . "${QUALITY_SUITE_DIR}/log-lib.sh" || { qs_log(){ :; }; qs_result(){ :; }; }
-[ -n "${QUALITY_SUITE_DIR:-}" ] || { echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2; exit 1; }
+if [ -f "$ENV_FILE" ]; then
+	set -a
+	# why: the sourced path is only known at run time
+	# shellcheck disable=SC1090,SC1091
+	. "$ENV_FILE"
+	set +a
+fi
+if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
+	# why: the sourced path is only known at run time
+	# shellcheck disable=SC1091
+	. "${QUALITY_SUITE_DIR}/log-lib.sh"
+else
+	qs_log() { :; }
+	qs_result() { :; }
+fi
+[ -n "${QUALITY_SUITE_DIR:-}" ] || {
+	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
+	exit 1
+}
+# why: the sourced path is only known at run time
+# shellcheck disable=SC1091
 . "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
 
 REPO_ROOT="$(qs_repo_root)"
 STATE="$(qs_state_dir)"
 mkdir -p "$STATE"
-: "${QUALITY_LOG_FILE:=${STATE}/quality-suite.log}"; export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
+: "${QUALITY_LOG_FILE:=${STATE}/quality-suite.log}"
+export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
 cd "$REPO_ROOT"
+# why: a suite update upgrades the rules file once, before the first hook reads it
+# why: the path is only known at run time (set by the env file)
+# shellcheck disable=SC1090
+(
+	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_suite_stamp_check
+) || true
 
 # why: the rules file is personal to the clone; keep it out of commits without touching .gitignore.
 EXCL="$(git rev-parse --git-path info/exclude)"
-grep -qx '/.quality-rules.json' "$EXCL" 2>/dev/null || { mkdir -p "$(dirname "$EXCL")"; echo '/.quality-rules.json' >> "$EXCL"; }
+grep -qx '/.quality-rules.json' "$EXCL" 2>/dev/null || {
+	mkdir -p "$(dirname "$EXCL")"
+	echo '/.quality-rules.json' >>"$EXCL"
+}
+
+# Special branch rules (branches.special, 6.0.0): paths of the type, changelog and badge only on
+# DOCS (refused here, before any tool runs), and the gate level of the type (QS_GATE_LEVEL).
+SP_LEVEL=""
+if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
+	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
+	qs_policy_load
+	SP_BRANCH="$(git branch --show-current 2>/dev/null || true)"
+	if [ -n "$SP_BRANCH" ] && [ "${QS_BR_ENFORCE:-block}" != off ]; then
+		SP_LEVEL="$(special_gate_level "$SP_BRANCH")"
+		if ! special_in_progress; then
+			SP_FILES=()
+			while IFS= read -r -d '' f; do SP_FILES+=("$f"); done < <(git diff --cached --name-only -z --diff-filter=ACMRD)
+			if [ "${#SP_FILES[@]}" -gt 0 ] && ! SP_OUT="$(special_check_staged "$SP_BRANCH" "${SP_FILES[@]}")"; then
+				{
+					echo "[quality-suite] pre-commit: the staged files break the rules of the branch '$SP_BRANCH':"
+					printf '  %s\n' "$SP_OUT"
+				} >&2
+				if [ "$QS_BR_ENFORCE" = block ]; then
+					echo "[quality-suite] pre-commit: commit aborted (special branch rules)." >&2
+					exit 1
+				fi
+			fi
+		fi
+	fi
+fi
 
 # Staged files as a NUL-separated list (spaces, accents and long lists are safe).
 LIST="${STATE}/files.lst"
-git diff --cached --name-only -z --diff-filter=ACMR > "$LIST"
+git diff --cached --name-only -z --diff-filter=ACMR >"$LIST"
 qs_read_list "$LIST"
 STAGED=(${QS_FILES[@]+"${QS_FILES[@]}"})
 [ "${#STAGED[@]}" -eq 0 ] && exit 0
@@ -35,55 +91,62 @@ echo "[quality-suite] Analyzing ${#STAGED[@]} staged file(s)..."
 qs_log INFO pre-commit "commit start files=${#STAGED[@]}"
 
 # Install the tools of any language seen for the first time (network only here).
-"${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "$QUALITY_SUITE_DIR" "$ENV_FILE" "$QUALITY_SUITE_IMAGE" --from "$LIST" \
-  || echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
-if [ -f "$ENV_FILE" ]; then set -a; . "$ENV_FILE"; set +a; fi
+"${QUALITY_SUITE_DIR}/scripts/ensure-langs.sh" "$QUALITY_SUITE_DIR" "$ENV_FILE" "$QUALITY_SUITE_IMAGE" --from "$LIST" ||
+	echo "[quality-suite] WARN: tool installation failed; built-in checks still run." >&2
+if [ -f "$ENV_FILE" ]; then
+	set -a
+	# why: the sourced path is only known at run time
+	# shellcheck disable=SC1090,SC1091
+	. "$ENV_FILE"
+	set +a
+fi
 
 # Executable bits from the index (scripts get a shebang during formatting).
-: > "${STATE}/exec-files.txt"
+: >"${STATE}/exec-files.txt"
 git diff --cached --raw -z --diff-filter=ACMR | {
-  while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
-    case "$meta" in *" R"*|*" C"*) IFS= read -r -d '' path ;; esac   # rename/copy: source, then target
-    case "$meta" in :??????" 100755 "*) printf '%s\n' "$path" ;; esac
-  done
-} >> "${STATE}/exec-files.txt"
+	while IFS= read -r -d '' meta && IFS= read -r -d '' path; do
+		case "$meta" in *" R"* | *" C"*) IFS= read -r -d '' path ;; esac # rename/copy: source, then target
+		case "$meta" in :??????" 100755 "*) printf '%s\n' "$path" ;; esac
+	done
+} >>"${STATE}/exec-files.txt"
 
 # Partially staged files: set the unstaged edits aside so the check sees the commit content.
 PATCH="${STATE}/unstaged.patch"
 INDEX_TREE="$(git write-tree)"
-git diff --binary --no-color --no-ext-diff > "$PATCH" || true
+git diff --binary --no-color --no-ext-diff >"$PATCH" || true
 if [ -s "$PATCH" ]; then
-  cp "$PATCH" "${STATE}/unstaged.backup.patch"   # why: a copy survives even a killed hook
-  git diff --name-only -z | xargs -0 git checkout -- 2>/dev/null || true
+	cp "$PATCH" "${STATE}/unstaged.backup.patch" # why: a copy survives even a killed hook
+	git diff --name-only -z | xargs -0 git checkout -- 2>/dev/null || true
 fi
 restore_unstaged() {
-  [ -s "$PATCH" ] || return 0
-  if git apply --whitespace=nowarn "$PATCH" 2>/dev/null; then
-    rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
-    return 0
-  fi
-  # why: the formatter touched lines next to your unstaged edits; roll everything back to the
-  # state before the commit (index and working tree) instead of leaving a half-applied mix.
-  git read-tree "$INDEX_TREE"
-  git checkout -- . 2>/dev/null || true
-  git apply --whitespace=nowarn "$PATCH" && rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
-  echo "[quality-suite] The formatter changes overlap your unstaged edits; nothing was changed." >&2
-  echo "  Stage the whole file (git add) or set the rest aside (git stash --keep-index), then commit again." >&2
-  return 1
+	[ -s "$PATCH" ] || return 0
+	if git apply --whitespace=nowarn "$PATCH" 2>/dev/null; then
+		rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
+		return 0
+	fi
+	# why: the formatter touched lines next to your unstaged edits; roll everything back to the
+	# state before the commit (index and working tree) instead of leaving a half-applied mix.
+	git read-tree "$INDEX_TREE"
+	git checkout -- . 2>/dev/null || true
+	git apply --whitespace=nowarn "$PATCH" && rm -f "$PATCH" "${STATE}/unstaged.backup.patch"
+	echo "[quality-suite] The formatter changes overlap your unstaged edits; nothing was changed." >&2
+	echo "  Stage the whole file (git add) or set the rest aside (git stash --keep-index), then commit again." >&2
+	return 1
 }
 
 # why: whatever happens below, the user's unstaged edits come back
 trap 'restore_unstaged >/dev/null 2>&1 || true' EXIT
 
 ENVF="$(qs_env_file "$ENV_FILE" "${STATE}/docker.env")"
-qs_docker_opts; qs_git_opts
+qs_docker_opts
+qs_git_opts
 rc=0
 docker run "${QS_DOCKER_OPTS[@]}" ${QS_GIT_OPTS[@]+"${QS_GIT_OPTS[@]}"} --env-file "$(qs_hostpath "$ENVF")" \
-  -e QUALITY_MODE=fix -e QS_PERSIST=1 -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
-  -e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
-  -e QS_BASE_REV=HEAD -e QS_SCHEMA_REF="$(qs_schema_uri)" -e QS_BRANCH="$(git branch --show-current 2>/dev/null || true)" \
-  -v "$(qs_hostpath "$REPO_ROOT"):/workspace" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
-  "$QUALITY_SUITE_IMAGE" run || rc=$?
+	-e QUALITY_MODE=fix -e QS_PERSIST=1 -e QS_STATE=/qs-state -e QS_EXEC_FILES=/qs-state/exec-files.txt \
+	-e QS_FILES_FROM=/qs-state/files.lst -e QUALITY_LOG_FILE=/qs-state/quality-suite.log \
+	-e QS_BASE_REV=HEAD -e QS_GATE_LEVEL="$SP_LEVEL" -e QS_SCHEMA_REF="$(qs_schema_uri)" -e QS_BRANCH="$(git branch --show-current 2>/dev/null || true)" \
+	-v "$(qs_hostpath "$REPO_ROOT"):/workspace" -v "$(qs_hostpath "$STATE"):/qs-state" -w /workspace \
+	"$QUALITY_SUITE_IMAGE" run || rc=$?
 rm -f "$ENVF"
 
 # why: formatting and identifying marks (shebang/modeline) belong to this commit.
@@ -91,9 +154,9 @@ git add --pathspec-from-file="$LIST" --pathspec-file-nul 2>/dev/null || true
 restore_unstaged || rc=1
 
 if [ "$rc" -ne 0 ]; then
-  qs_result pre-commit "${#STAGED[@]} file(s)" fix ERROR "commit aborted"
-  echo "[quality-suite] Analysis found problems. Commit aborted (details: ${QUALITY_LOG_FILE})."
-  exit "$rc"
+	qs_result pre-commit "${#STAGED[@]} file(s)" fix ERROR "commit aborted"
+	echo "[quality-suite] Analysis found problems. Commit aborted (details: ${QUALITY_LOG_FILE})."
+	exit "$rc"
 fi
 qs_result pre-commit "${#STAGED[@]} file(s)" fix SUCCESS
 echo "[quality-suite] OK"

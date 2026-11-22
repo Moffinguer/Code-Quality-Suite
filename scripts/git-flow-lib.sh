@@ -13,6 +13,9 @@
 # '<F>/<leaf>' = '<F>/ORIGINAL'. Siblings share <F>. Derived from the name: same for everyone.
 # Policy (leaf name, level patterns, tag...) comes from .quality-rules.json -> "branches".
 
+# shellcheck source=scripts/special-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
+
 mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
@@ -20,19 +23,214 @@ current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 # Arguments: none. Returns: 0.
 # shellcheck disable=SC2034 # why: these QS_* variables are read by the scripts that source this file
 qs_policy_defaults() {
+	QS_DATA_CLASS=internal
 	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
 	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1 QS_COMMIT_FILES=block
 	QS_BR_ENFORCE=block QS_BR_LEAF=ORIGINAL QS_BR_MAINLINE=develop QS_BR_PROTECTED='main master develop'
 	QS_BR_SEGMENT='^[A-Za-z0-9][A-Za-z0-9_-]*$' QS_BR_LEAF_MERGE=merge QS_BR_REQUIRE_CHILDREN=1
-	QS_BR_FLOW=squash QS_BR_OT_TAG='ot/{version}/{ot}' QS_BR_TESTING=TESTING
+	QS_BR_FLOW=squash QS_BR_OT_REF='refs/ot/{version}/{ot}' QS_BR_TESTING=TESTING QS_BR_PUBLISH=1
 	QS_BR_TAG='{version}' QS_BR_TAG_LEVEL=1 QS_BR_LEVELS=2 QS_BR_ALLOW=0
 	QS_BR_RELEASE_LEAF=RELEASE QS_BR_ARCHIVE=unmerged
 	QS_BR_VERSION_FILE=VERSION QS_BR_CHANGELOG=CHANGELOG.md QS_BR_README=README.md QS_BR_POM=update
-	QS_BR_TAG_URL='' QS_BR_COMMIT_URL=''
+	QS_BR_TAG_URL='' QS_BR_COMMIT_URL='' QS_BR_BUILD_CMD=''
 	# level 1: Semantic Versioning without build metadata (https://semver.org)
 	QS_BR_LEVEL_1='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$'
 	# level 2 (the OT): ASCII letters and digits, no '-' or '_'; numeric OTs match too
 	QS_BR_LEVEL_2='^[A-Za-z0-9]+$'
+	qs_special_defaults
+}
+
+# Set the built-in defaults of the special-branch table: QS_SP_NAMES (enabled types) and one
+# QS_SP_<TYPE>_<PROP> per property, as engine/policy.py special_env exports them (booleans 1/0,
+# a null level '', lists joined with '|', types '*' = all). A unit test keeps both in step.
+# Arguments: none. Returns: 0.
+# shellcheck disable=SC2034 # why: the QS_SP_* variables are read by the scripts that source this file
+qs_special_defaults() {
+	QS_SP_NAMES='MIGRATION DOCS REFACTOR FORMAT TESTS SPIKE ATTEMPT REVIEW QUARANTINE CHECKPOINT'
+	QS_SP_MIGRATION_AT=version QS_SP_MIGRATION_CHILDREN=1 QS_SP_MIGRATION_SUFFIX=none QS_SP_MIGRATION_INTEGRATES=squash QS_SP_MIGRATION_ORDER=first QS_SP_MIGRATION_REBASE=1 QS_SP_MIGRATION_TYPES='build|fix|refactor|perf|test|docs|chore|ci|style' QS_SP_MIGRATION_PATHS='' QS_SP_MIGRATION_GLOBS=''
+	QS_SP_MIGRATION_LEVEL='' QS_SP_MIGRATION_PUSH=normal QS_SP_MIGRATION_PUSH_CHECKS=full QS_SP_MIGRATION_TRAILERS='' QS_SP_MIGRATION_LOCKS=1 QS_SP_MIGRATION_ON_RELEASE=required QS_SP_MIGRATION_CHANGELOG=changed
+	QS_SP_DOCS_AT=version QS_SP_DOCS_CHILDREN=0 QS_SP_DOCS_SUFFIX=none QS_SP_DOCS_INTEGRATES=squash QS_SP_DOCS_ORDER=last QS_SP_DOCS_REBASE=1 QS_SP_DOCS_TYPES='docs|chore' QS_SP_DOCS_PATHS='@docs' QS_SP_DOCS_GLOBS='*.md|**/*.md|docs/**|README.md|CHANGELOG.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|SUPPORT.md|CONTRIBUTORS.md|MAINTAINERS.md|ROADMAP.md|FAQ.md|INSTALL.md|ARCHITECTURE.md|API.md|DEVELOPMENT.md|AUTHORS|LICENSE|CODEOWNERS|CITATION.cff'
+	QS_SP_DOCS_LEVEL='' QS_SP_DOCS_PUSH=normal QS_SP_DOCS_PUSH_CHECKS=default QS_SP_DOCS_TRAILERS='' QS_SP_DOCS_LOCKS=0 QS_SP_DOCS_ON_RELEASE=required QS_SP_DOCS_CHANGELOG=none
+	QS_SP_REFACTOR_AT=node QS_SP_REFACTOR_CHILDREN=1 QS_SP_REFACTOR_SUFFIX=none QS_SP_REFACTOR_INTEGRATES=squash QS_SP_REFACTOR_ORDER=last QS_SP_REFACTOR_REBASE=1 QS_SP_REFACTOR_TYPES='refactor|style|perf|test|docs|chore' QS_SP_REFACTOR_PATHS='' QS_SP_REFACTOR_GLOBS=''
+	QS_SP_REFACTOR_LEVEL=strict QS_SP_REFACTOR_PUSH=normal QS_SP_REFACTOR_PUSH_CHECKS=default QS_SP_REFACTOR_TRAILERS='' QS_SP_REFACTOR_LOCKS=0 QS_SP_REFACTOR_ON_RELEASE=set_aside QS_SP_REFACTOR_CHANGELOG=none
+	QS_SP_FORMAT_AT=node QS_SP_FORMAT_CHILDREN=0 QS_SP_FORMAT_SUFFIX=none QS_SP_FORMAT_INTEGRATES=squash QS_SP_FORMAT_ORDER=alone QS_SP_FORMAT_REBASE=0 QS_SP_FORMAT_TYPES=style QS_SP_FORMAT_PATHS='' QS_SP_FORMAT_GLOBS=''
+	QS_SP_FORMAT_LEVEL='' QS_SP_FORMAT_PUSH=normal QS_SP_FORMAT_PUSH_CHECKS=default QS_SP_FORMAT_TRAILERS='' QS_SP_FORMAT_LOCKS=0 QS_SP_FORMAT_ON_RELEASE=set_aside QS_SP_FORMAT_CHANGELOG=none
+	QS_SP_TESTS_AT=node QS_SP_TESTS_CHILDREN=1 QS_SP_TESTS_SUFFIX=none QS_SP_TESTS_INTEGRATES=squash QS_SP_TESTS_ORDER=any QS_SP_TESTS_REBASE=1 QS_SP_TESTS_TYPES='test|chore' QS_SP_TESTS_PATHS='@tests' QS_SP_TESTS_GLOBS='src/test/**|**/test/**|**/tests/**|**/*_test.*|**/test_*.py|**/*.spec.*|**/*.test.*'
+	QS_SP_TESTS_LEVEL='' QS_SP_TESTS_PUSH=normal QS_SP_TESTS_PUSH_CHECKS=default QS_SP_TESTS_TRAILERS='' QS_SP_TESTS_LOCKS=0 QS_SP_TESTS_ON_RELEASE=set_aside QS_SP_TESTS_CHANGELOG=none
+	QS_SP_SPIKE_AT=node QS_SP_SPIKE_CHILDREN=1 QS_SP_SPIKE_SUFFIX=none QS_SP_SPIKE_INTEGRATES=apply QS_SP_SPIKE_ORDER=any QS_SP_SPIKE_REBASE=1 QS_SP_SPIKE_TYPES='*' QS_SP_SPIKE_PATHS='' QS_SP_SPIKE_GLOBS=''
+	QS_SP_SPIKE_LEVEL='' QS_SP_SPIKE_PUSH=normal QS_SP_SPIKE_PUSH_CHECKS=default QS_SP_SPIKE_TRAILERS='' QS_SP_SPIKE_LOCKS=0 QS_SP_SPIKE_ON_RELEASE=delete QS_SP_SPIKE_CHANGELOG=none
+	QS_SP_ATTEMPT_AT=task QS_SP_ATTEMPT_CHILDREN=1 QS_SP_ATTEMPT_SUFFIX=n QS_SP_ATTEMPT_INTEGRATES=choose QS_SP_ATTEMPT_ORDER=any QS_SP_ATTEMPT_REBASE=1 QS_SP_ATTEMPT_TYPES='*' QS_SP_ATTEMPT_PATHS='' QS_SP_ATTEMPT_GLOBS=''
+	QS_SP_ATTEMPT_LEVEL='' QS_SP_ATTEMPT_PUSH=normal QS_SP_ATTEMPT_PUSH_CHECKS=default QS_SP_ATTEMPT_TRAILERS='' QS_SP_ATTEMPT_LOCKS=0 QS_SP_ATTEMPT_ON_RELEASE=delete QS_SP_ATTEMPT_CHANGELOG=task
+	QS_SP_REVIEW_AT=task QS_SP_REVIEW_CHILDREN=1 QS_SP_REVIEW_SUFFIX=task QS_SP_REVIEW_INTEGRATES=apply QS_SP_REVIEW_ORDER=any QS_SP_REVIEW_REBASE=1 QS_SP_REVIEW_TYPES='*' QS_SP_REVIEW_PATHS='' QS_SP_REVIEW_GLOBS=''
+	QS_SP_REVIEW_LEVEL='' QS_SP_REVIEW_PUSH=normal QS_SP_REVIEW_PUSH_CHECKS=default QS_SP_REVIEW_TRAILERS='' QS_SP_REVIEW_LOCKS=0 QS_SP_REVIEW_ON_RELEASE=delete QS_SP_REVIEW_CHANGELOG=none
+	QS_SP_QUARANTINE_AT=task QS_SP_QUARANTINE_CHILDREN=1 QS_SP_QUARANTINE_SUFFIX=task QS_SP_QUARANTINE_INTEGRATES=apply QS_SP_QUARANTINE_ORDER=any QS_SP_QUARANTINE_REBASE=1 QS_SP_QUARANTINE_TYPES='*' QS_SP_QUARANTINE_PATHS='' QS_SP_QUARANTINE_GLOBS=''
+	QS_SP_QUARANTINE_LEVEL=strict QS_SP_QUARANTINE_PUSH=normal QS_SP_QUARANTINE_PUSH_CHECKS=default QS_SP_QUARANTINE_TRAILERS=Generated-by QS_SP_QUARANTINE_LOCKS=0 QS_SP_QUARANTINE_ON_RELEASE=delete QS_SP_QUARANTINE_CHANGELOG=task
+	QS_SP_CHECKPOINT_AT=task QS_SP_CHECKPOINT_CHILDREN=0 QS_SP_CHECKPOINT_SUFFIX=task QS_SP_CHECKPOINT_INTEGRATES=never QS_SP_CHECKPOINT_ORDER=any QS_SP_CHECKPOINT_REBASE=1 QS_SP_CHECKPOINT_TYPES='*' QS_SP_CHECKPOINT_PATHS='' QS_SP_CHECKPOINT_GLOBS=''
+	QS_SP_CHECKPOINT_LEVEL=format QS_SP_CHECKPOINT_PUSH=never QS_SP_CHECKPOINT_PUSH_CHECKS=default QS_SP_CHECKPOINT_TRAILERS='' QS_SP_CHECKPOINT_LOCKS=0 QS_SP_CHECKPOINT_ON_RELEASE=delete QS_SP_CHECKPOINT_CHANGELOG=none
+}
+
+# Refuse special branches while the repository still uses the 4.x merge flow (branches.flow).
+# Arguments: none. Returns: 0 with the squash flow; 1 with a message on stderr with the merge flow.
+qs_special_need_squash() {
+	[ "${QS_BR_FLOW:-squash}" != merge ] && return 0
+	echo "[rama] ERROR: special branches need the squash flow (set branches.flow to squash)" >&2
+	return 1
+}
+
+# Whether branches are published when created: branches.publish_on_create and QS_PUBLISH.
+# Arguments: none. Returns: 0 when enabled, 1 when QS_PUBLISH=0 or the policy says false.
+qs_publish_on() {
+	[ "${QS_PUBLISH:-1}" != 0 ] && [ "${QS_BR_PUBLISH:-1}" != 0 ]
+}
+
+# Publish the branches a suite command has just created: one push of all of them to origin, with
+# upstream (branches.publish_on_create, QS_PUBLISH=0 turns it off for one command). The hooks run
+# as in any push (never --no-verify) and no credential prompt can block the command. Branches of a
+# special type whose push is 'never' (CHECKPOINT) are skipped. A failure never fails the caller:
+# the branch stays as created and a WARN line says how to publish it later.
+# Arguments: $@ the branch names. Returns: 0 always (nothing to do, published, or warned).
+# Output: the note "no remote origin" on stdout; the WARN lines on stderr.
+qs_publish_new() {
+	local b t list=() reason
+	qs_publish_on || return 0
+	for b in "$@"; do
+		t="$(special_kind "$b")"
+		if [ -n "$t" ] && [ "$(special_prop "$t" PUSH)" = never ]; then continue; fi
+		list+=("$b")
+	done
+	[ "${#list[@]}" -gt 0 ] || return 0
+	if ! git remote get-url origin >/dev/null 2>&1; then
+		for b in "${list[@]}"; do echo "[rama] no remote origin: $b stays local"; done
+		return 0
+	fi
+	if reason="$(GIT_TERMINAL_PROMPT=0 git push -q -u origin "${list[@]}" 2>&1 </dev/null)"; then return 0; fi
+	reason="$(printf '%s
+' "$reason" | grep -v '^[[:space:]]*$' | tail -n1 | cut -c1-160)"
+	for b in "${list[@]}"; do
+		echo "[rama] WARN: $b is not on origin (${reason:-push failed}). Publish it later: git subir (or git push -u origin $b)" >&2
+	done
+	return 0
+}
+
+# Move a published branch to its new name on origin in ONE atomic push: the new name is created
+# and the old one deleted under a lease on the old tip, so a push by someone else in between
+# changes nothing. Only when the new name sits below the old one ('a' -> 'a/ORIGINAL': a folder
+# and a file ref cannot coexist in one push) the same lease is used in two pushes, the deletion
+# first, and only after a dry run proved that the new name is acceptable; should the second push
+# still fail, the old name is put back.
+# Arguments: $1 old name, $2 new name (a local branch), $3 the old tip the lease expects.
+# Returns: 0 when origin has the new name and no longer the old one; 2 when the lease was lost
+# (someone else pushed the old name: nothing changed on origin); 1 on any other failure (origin
+# unreachable, push refused), with the reason on stderr; origin keeps the old name unless the
+# message says otherwise.
+qs_publish_rename() {
+	local old="$1" new="$2" sha="$3" lease cur
+	lease="--force-with-lease=refs/heads/$old:$sha"
+	if GIT_TERMINAL_PROMPT=0 git push -q --atomic -u "$lease" origin "refs/heads/$new:refs/heads/$new" ":refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+		return 0
+	fi
+	cur="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin "refs/heads/$old" 2>/dev/null </dev/null)" || {
+		echo "[rama] origin is unreachable; nothing changed on origin" >&2
+		return 1
+	}
+	cur="${cur%%[[:space:]]*}"
+	if [ -n "$cur" ] && [ "$cur" != "$sha" ]; then
+		echo "[rama] origin/$old moved to ${cur:0:10} since ${sha:0:10}; nothing changed on origin" >&2
+		return 2
+	fi
+	case "$new" in
+	"$old"/*) ;;
+	*)
+		echo "[rama] origin refused the rename of $old to $new; nothing changed on origin" >&2
+		return 1
+		;;
+	esac
+	# why: the new name is checked (hooks included) before the old one is deleted
+	if ! GIT_TERMINAL_PROMPT=0 git push -q --dry-run origin "refs/heads/$new:refs/heads/$new" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin would refuse $new; nothing changed on origin" >&2
+		return 1
+	fi
+	if [ -n "$cur" ] && ! GIT_TERMINAL_PROMPT=0 git push -q "$lease" origin ":refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin refused the deletion of $old; nothing changed on origin" >&2
+		return 1
+	fi
+	if ! GIT_TERMINAL_PROMPT=0 git push -q -u origin "$new" >/dev/null 2>&1 </dev/null; then
+		if [ -n "$cur" ] && GIT_TERMINAL_PROMPT=0 git push -q origin "$sha:refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+			echo "[rama] origin refused $new; $old was put back on origin" >&2
+		else
+			echo "[rama] origin refused $new and $old is gone from origin: git push origin $sha:refs/heads/$old" >&2
+		fi
+		return 1
+	fi
+	return 0
+}
+
+# Print a path in the form native Windows programs read (C:/dir/file) where cygpath exists
+# (Git Bash), unchanged elsewhere.
+# Arguments: $1 path. Returns: 0 and the path.
+qs_native_path() {
+	if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
+
+# Print the path of a working python (python3 or python); the Windows Store python3 stub exists
+# on Git Bash but fails, so each candidate is tried.
+# Arguments: none. Returns: 0 and the command name, or 1 when none works.
+qs_python() {
+	local py
+	for py in python3 python; do
+		if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1; then
+			printf '%s' "$py"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Lazy rules upgrade: when the stamp `<git common dir>/quality-suite/suite-version` differs from
+# the VERSION of the suite (a suite update happened), run `engine/policy.py rules-upgrade` once
+# under the suite lock, print one summary line on stderr, and let the hook go on. The stamp is
+# written by the upgrade; an error is a warning and the stamp stays (the next hook retries). A
+# stamp newer than the suite gives a warning and nothing is written. Cheap when up to date: one
+# file read and one git call. Never fails.
+# Arguments: none (reads QUALITY_SUITE_DIR). Returns: always 0.
+qs_suite_stamp_check() {
+	local sv cur="" common root py err out n
+	[ -n "${QUALITY_SUITE_DIR:-}" ] && [ "${QS_SUITE_STAMP_OFF:-0}" != 1 ] || return 0
+	[ -f "$QUALITY_SUITE_DIR/VERSION" ] || return 0
+	read -r sv <"$QUALITY_SUITE_DIR/VERSION" || true
+	sv="${sv%$'\r'}"
+	[ -n "$sv" ] || return 0
+	common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 0
+	[ -f "$common/quality-suite/suite-version" ] && { read -r cur <"$common/quality-suite/suite-version" || true; }
+	cur="${cur%$'\r'}"
+	[ "$cur" != "$sv" ] || return 0
+	root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+	py="$(qs_python)" || {
+		echo "[quality-suite] WARN: no working python3/python: rules file not upgraded" >&2
+		return 0
+	}
+	# shellcheck disable=SC1091
+	. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"
+	qs_lock
+	# why: another repository's hook may have upgraded while this one waited for the lock
+	cur=""
+	[ -f "$common/quality-suite/suite-version" ] && { read -r cur <"$common/quality-suite/suite-version" || true; }
+	if [ "${cur%$'\r'}" = "$sv" ]; then
+		qs_unlock
+		return 0
+	fi
+	err="$(mktemp)"
+	# why: a native Windows python cannot open /c/... paths (Git Bash); cygpath -m gives C:/...
+	if out="$("$py" "$(qs_native_path "$QUALITY_SUITE_DIR/engine/policy.py")" rules-upgrade "$(qs_native_path "$root")" 2>"$err")"; then
+		n="$(grep -cE '^(added|migrated) ' <<<"$out" || true)"
+		[ "${n:-0}" = 0 ] || echo "[quality-suite] rules file upgraded to suite $sv: $n change(s) (git actualizar-suite shows them)" >&2
+		[ ! -s "$err" ] || cat "$err" >&2
+	else
+		echo "[quality-suite] WARN: rules file not upgraded (retried by the next hook): $(tr '\n' ' ' <"$err")" >&2
+	fi
+	rm -f "$err"
+	qs_unlock
+	return 0
 }
 
 # Load the commit/branch policy into QS_* variables. The engine writes <state>/policy.env on
@@ -45,6 +243,10 @@ qs_policy_load() {
 	root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 	pol="$gd/quality-suite/policy.env"
 	rules="${root:+$root/.quality-rules.json}"
+	# why: a git alias runs outside the hooks, which are the only place that exports
+	# QUALITY_SUITE_DIR; without it the policy.env of an edited rules file is never refreshed
+	[ -n "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "$gd/hooks/quality-suite.env" ] ||
+		. "$gd/hooks/quality-suite.env"
 	if [ -n "$rules" ] && [ -f "$rules" ] && { [ ! -f "$pol" ] || [ "$rules" -nt "$pol" ]; } &&
 		[ -n "${QUALITY_SUITE_DIR:-}" ] && command -v docker >/dev/null 2>&1 && [ "${QS_POLICY_NO_DOCKER:-0}" != 1 ]; then
 		# shellcheck disable=SC1091
@@ -144,7 +346,7 @@ branch_ot() {
 
 # parent_branch <branch> -> parent per the model; empty for main/master/unknown.
 parent_branch() {
-	local b="$1" node up
+	local b="$1" node up sp
 	qs_policy_load
 	case "$b" in main | master) return 0 ;; esac
 	if [ "$b" = "$QS_BR_MAINLINE" ]; then
@@ -164,6 +366,11 @@ parent_branch() {
 	is_archived_branch "$b" && return 0 # set aside: no parent
 	is_testing_branch "$b" && return 0  # TESTING sandbox: no parent, never merged
 	valid_branch_name "$b" >/dev/null 2>&1 || return 0
+	sp="$(special_parent "$b")"
+	if [ -n "$sp" ]; then
+		echo "$sp"
+		return 0
+	fi
 	node="$(branch_node "$b")"
 	if is_parent_branch "$b"; then
 		case "$node" in */*)
@@ -190,6 +397,16 @@ valid_branch_name() {
 		echo "only ASCII characters are allowed"
 		return 1
 	fi
+	# why: the special table decides its own names and their placement (special-lib.sh)
+	local rc=0
+	special_parse "$b" || rc=$?
+	case "$rc" in
+	0) return 0 ;;
+	1)
+		echo "$SP_WHY"
+		return 1
+		;;
+	esac
 	reserved_segments_ok "$b" || return 1
 	case "$b" in
 	*/*) ;;
@@ -274,7 +491,7 @@ require_clean() {
 
 # configure_repo <suite_dir> - repo-LOCAL config + aliases (idempotent).
 configure_repo() {
-	local suite="$1" a
+	local suite="$1" a claimed=" "
 	git config pull.rebase true
 	git config rebase.autoStash true
 	git config branch.autoSetupRebase always
@@ -290,6 +507,36 @@ configure_repo() {
 		publicar:publicar repo-files:repo-files ficheros-repo:repo-files \
 		nueva-version:nueva-version nv:nueva-version combinar:combinar; do
 		git config "alias.${a%%:*}" "!bash '$suite/scripts/git-rama.sh' ${a#*:}"
+		claimed="$claimed${a%%:*} "
+	done
+	# why: a script with a '# qs-alias: <name>...' header becomes the alias(es) with no other edit;
+	# a name that is a git command or an alias of the suite, or claimed by another script, is skipped
+	local s n builtins k other
+	builtins=" $(git --list-cmds=main,nohelpers 2>/dev/null | tr '\n' ' ') commit "
+	for a in amend limpiar-unmerged encoding testing; do claimed="$claimed$a "; done
+	for s in "$suite"/scripts/git-*.sh; do
+		[ -f "$s" ] || continue
+		for n in $(sed -n 's/^# qs-alias:[[:space:]]*//p' "$s" | head -n1); do
+			case "$builtins" in *" $n "*)
+				echo "[git-flow] WARN: $s: qs-alias '$n' is a git command; skipped" >&2
+				continue
+				;;
+			esac
+			if [[ $claimed == *" $n "* ]]; then
+				echo "[git-flow] WARN: $s: qs-alias '$n' is already defined by the suite; skipped" >&2
+				continue
+			fi
+			k="qs_owner_$(printf '%s' "$n" | tr -c 'A-Za-z0-9' '_')"
+			other="${!k:-}"
+			if [ -n "$other" ]; then
+				echo "[git-flow] WARN: qs-alias '$n' claimed by both $other and $s; skipped" >&2
+				git config --unset "alias.$n" 2>/dev/null || true
+				claimed="$claimed$n "
+				continue
+			fi
+			printf -v "$k" '%s' "$s"
+			git config "alias.$n" "!QS_ALIAS=$n bash '$s'" # why: one script may serve several aliases
+		done
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);
 	# QS_AMEND=1 tells prepare-commit-msg it is an amend
@@ -320,20 +567,61 @@ configure_repo() {
 # i.e. the child did not move after its squash. A child that does not exist counts as in.
 # Arguments: $1 child branch, $2 ORIGINAL branch name. Returns: 0 in, 1 pending.
 branch_integrated() {
-	local c="$1" p="$2" cref tip bodies sha found=0 squashed=0
+	local c="$1" p="$2" cref
 	cref="$(best_ref "$c" || true)"
 	[ -n "$cref" ] || return 0
 	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 0
-	tip="$(git rev-parse "$cref^{commit}")"
-	bodies="$(git log -F --grep="Refs: $c -> $p" --format='%B' "$p" -- 2>/dev/null || true)"
-	grep -qxF "Refs: $c -> $p" <<<"$bodies" || return 1
+	squash_in "$cref" "$c" "$p" "$p"
+}
+
+# squash_in <tipref> <child> <original> <pref>: succeed when a commit of <pref> (a copy of the
+# ORIGINAL: local or origin/...) has the line 'Refs: <child> -> <original>' and, when that commit
+# also has 'Squashed: <child> <sha>', the tip of <tipref> is contained in <sha> (the child did not
+# move after its squash). A 'Refs:' line without 'Squashed:' (hand-written squash) is taken as
+# recorded. Arguments: $1 ref of the child copy, $2 child, $3 ORIGINAL name, $4 ref searched.
+# Returns: 0 integrated, 1 not.
+squash_in() {
+	local tip bodies sha found=0 squashed=0
+	tip="$(git rev-parse "$1^{commit}")"
+	bodies="$(git log -F --grep="Refs: $2 -> $3" --format='%B' "$4" -- 2>/dev/null || true)"
+	grep -qxF "Refs: $2 -> $3" <<<"$bodies" || return 1
 	while IFS= read -r sha; do
 		[ -n "$sha" ] || continue
 		squashed=1
 		if [ "$sha" = "$tip" ] || git merge-base --is-ancestor "$tip" "$sha" 2>/dev/null; then found=1; fi
-	done < <(awk -v c="$c" '$1 == "Squashed:" && $2 == c { print $3 }' <<<"$bodies")
-	# why: a 'Refs:' line without 'Squashed:' (hand-written squash) is taken as recorded
+	done < <(awk -v c="$2" '$1 == "Squashed:" && $2 == c { print $3 }' <<<"$bodies")
 	[ "$squashed" = 0 ] || [ "$found" = 1 ]
+}
+
+# squashed_in_chain <tipref> <pref>: succeed when the tip of <tipref> is an ancestor of, or has no
+# change left against (a simulated merge that changes nothing), any 'Squashed: <branch> <sha>'
+# recorded on <pref>, whatever <branch> is. It covers a grandchild integrated by merge into a
+# parent that was then squashed into the ORIGINAL.
+# Arguments: $1 ref of the branch copy, $2 ref searched (a copy of the ORIGINAL). Returns: 0 in, 1 not.
+squashed_in_chain() {
+	local tip sha tree
+	tip="$(git rev-parse "$1^{commit}" 2>/dev/null)" || return 1
+	while IFS= read -r sha; do
+		{ [ -n "$sha" ] && git cat-file -e "$sha^{commit}" 2>/dev/null; } || continue
+		git merge-base --is-ancestor "$tip" "$sha" 2>/dev/null && return 0
+		tree="$(git merge-tree --write-tree "$sha" "$tip" 2>/dev/null)" || continue
+		[ "$(head -n1 <<<"$tree")" = "$(git rev-parse "$sha^{tree}")" ] && return 0
+	done < <(git log -F --grep='Squashed: ' --format='%B' "$2" -- 2>/dev/null | awk '$1 == "Squashed:" { print $3 }')
+	return 1
+}
+
+# squash_commit <child> <original> <pref>: print the short id of the commit of <pref> whose body
+# has the line 'Refs: <child> -> <original>'. Returns: 0 and the id; 1 when there is none.
+squash_commit() {
+	local sha
+	while IFS= read -r sha; do
+		[ -n "$sha" ] || continue
+		if git log -n1 --format=%B "$sha" | grep -qxF "Refs: $1 -> $2"; then
+			git rev-parse --short "$sha"
+			return 0
+		fi
+	done < <(git log -F --grep="Refs: $1 -> $2" --format=%H "$3" -- 2>/dev/null)
+	return 1
 }
 
 # children_pending <original>: print, space separated, the direct children of <original> that
@@ -346,6 +634,21 @@ children_pending() {
 		branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
+}
+
+# integrated_sha <child> <original>: print the short id of the squash commit of <original> that
+# took <child> in ('Refs: <child> -> <original>'), when <child> is integrated that way (the same
+# rule as branch_integrated) and its tip is not simply an ancestor of <original>: an empty branch
+# that was just created from <original> is not "integrated", whatever its name once was.
+# Arguments: $1 child branch, $2 ORIGINAL branch name (a local branch). Returns: 0 and prints the
+# id; 1 when there is none (pending, or integrated only by ancestry).
+integrated_sha() {
+	local c="$1" p="$2" cref
+	cref="$(best_ref "$c" || true)"
+	[ -n "$cref" ] || return 1
+	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 1
+	branch_integrated "$c" "$p" || return 1
+	squash_commit "$c" "$p" "$p"
 }
 
 # ---- TESTING sandbox guards (hooks and commands call these; the sandbox is scripts/git-testing.sh) ----

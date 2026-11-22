@@ -55,6 +55,8 @@ state() {
 V=9.0.0 OT="$V/500"
 RF="$OT/RF1"
 case_sandbox squash
+# why: the pre-rebase check below needs an ORIGINAL that is not on origin yet (publish on create is off here)
+export QS_PUBLISH=0
 git np "$V" >/dev/null && git np 500 >/dev/null && git np RF1 >/dev/null || fail "squash: tree $RF"
 [ "$(git branch --show-current)" = "$RF/ORIGINAL" ] || fail "squash: expected to be on $RF/ORIGINAL"
 

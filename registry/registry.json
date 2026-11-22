@@ -1827,7 +1827,41 @@
       ]
      ]
     },
-    "check": "diff"
+    "check": {
+     "pipe": [
+      [
+       "ruff",
+       "check",
+       "--no-cache",
+       "--select",
+       "I",
+       "--fix",
+       "--quiet",
+       "--exit-zero",
+       [
+        "--config",
+        "{config}"
+       ],
+       "--stdin-filename",
+       "{file}",
+       "-"
+      ],
+      [
+       "ruff",
+       "format",
+       "--no-cache",
+       "--quiet",
+       [
+        "--config",
+        "{config}"
+       ],
+       "{args}",
+       "--stdin-filename",
+       "{file}",
+       "-"
+      ]
+     ]
+    }
    },
    "bin": [
     "ruff"

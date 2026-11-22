@@ -6,26 +6,66 @@
 #   ai-sync.sh [repo]
 set -euo pipefail
 repo="${1:-$(git rev-parse --show-toplevel)}"
-src="$repo/.agents/skills"; dst="$repo/.claude/skills"
-[ -d "$src" ] || { echo "[ai-sync] no $src"; exit 0; }
+src="$repo/.agents/skills"
+dst="$repo/.claude/skills"
+[ -d "$src" ] || {
+	echo "[ai-sync] no $src"
+	exit 0
+}
 mkdir -p "$dst"
 for d in "$src"/*/; do
-  n="$(basename "$d")"; rm -rf "${dst:?}/$n"; cp -R "$d" "$dst/$n"
+	n="$(basename "$d")"
+	rm -rf "${dst:?}/$n"
+	cp -R "$d" "$dst/$n"
 done
-for d in "$dst"/*/; do [ -d "$src/$(basename "$d")" ] || rm -rf "$d"; done   # removed upstream
-echo "[ai-sync] $(ls "$src" | wc -l | tr -d ' ') skill(s) synced to .claude/skills"
+for d in "$dst"/*/; do [ -d "$src/$(basename "$d")" ] || rm -rf "$d"; done # removed upstream
+echo "[ai-sync] $(find "$src" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ') skill(s) synced to .claude/skills"
 
 # OpenCode agents from the Claude Code subagents (one source: .claude/agents). The Claude model of
 # each agent becomes a role of the gateway (opus -> role-lead, reviewer -> role-review, sonnet ->
 # role-dev, haiku -> role-intern); its tools become OpenCode permissions (no Edit/Write: edit
 # denied; no Bash: shell denied). OpenCode reads skills from .agents/skills and AGENTS.md itself.
-agents="$repo/.claude/agents"; oc="$repo/.opencode/agents"
+# oc_bash_rules AGENT: print the OpenCode `permission.bash` entries (4-space indented YAML) of one
+# agent: the git command matrix (role-scoped commands allowed to their roles, human-only ones
+# denied to everyone). OpenCode applies the last matching pattern, so denies come last.
+# AGENT is the file name without .md; systems-analyst acts as the lead. No errors.
+oc_bash_rules() {
+	local me="$1" lead=deny c
+	[ "$me" = systems-analyst ] && lead=allow
+	rule() { printf '    "%s": %s\n' "$1" "$2"; }
+	rule "git checkpoint*" allow
+	rule "git spike*" allow
+	for c in "git intentos*" "git testing*" "git aceptar*" "git push*" "git integra*" \
+		"git convertir-padre*" "git es*" "git np*" "git nr*" "git nv*"; do rule "$c" "$lead"; done
+	case "$me" in
+	reviewer | qa) rule "git revision*" allow ;;
+	developer)
+		rule "git revision*" deny
+		rule "git revision --aplicar*" allow
+		;;
+	*) rule "git revision*" "$lead" ;;
+	esac
+	case "$me" in
+	qa) rule "git tests*" allow ;;
+	*) rule "git tests*" "$lead" ;;
+	esac
+	case "$me" in
+	external-worker) rule "git cuarentena*" allow ;;
+	*) rule "git cuarentena*" "$lead" ;;
+	esac
+	for c in "git release*" "git publicar*" "git combinar*" "git migracion*" "git formatear*" \
+		"git elegir*" "git docs*" "git refactor*" "git changelog --escribir*" \
+		"git push --force*" "git push -f*" "git push --no-verify*" "git push -n --no-verify*" "git push * --no-verify*"; do rule "$c" deny; done
+}
+
+agents="$repo/.claude/agents"
+oc="$repo/.opencode/agents"
 if [ -d "$agents" ] && [ -f "$repo/opencode.json" ]; then
-  mkdir -p "$oc"
-  n=0
-  for f in "$agents"/*.md; do
-    [ -f "$f" ] || continue
-    awk -v me="$(basename "$f" .md)" '
+	mkdir -p "$oc"
+	n=0
+	for f in "$agents"/*.md; do
+		[ -f "$f" ] || continue
+		BASH_RULES="$(oc_bash_rules "$(basename "$f" .md)")" awk -v me="$(basename "$f" .md)" '
       NR == 1 && /^---/ { fm = 1; next }
       fm && /^---/ {
         fm = 0
@@ -36,10 +76,11 @@ if [ -d "$agents" ] && [ -f "$repo/opencode.json" ]; then
         print "description: " desc
         print "mode: subagent"
         if (role != "") print "model: litellm/" role
-        if (tools != "" && (tools !~ /Edit|Write/ || tools !~ /Bash/)) {
+        if (tools != "") {
           print "permission:"
           if (tools !~ /Edit|Write/) print "  edit: deny"
           if (tools !~ /Bash/) print "  shell: deny"
+          else { print "  bash:"; print ENVIRON["BASH_RULES"] }
         }
         print "---"
         next
@@ -48,9 +89,9 @@ if [ -d "$agents" ] && [ -f "$repo/opencode.json" ]; then
       fm && /^model:/ { model = $2; next }
       fm && /^tools:/ { tools = $0; next }
       fm { next }
-      { print }' "$f" > "$oc/$(basename "$f")"
-    n=$((n + 1))
-  done
-  for f in "$oc"/*.md; do [ -f "$agents/$(basename "$f")" ] || rm -f "$f"; done   # removed upstream
-  echo "[ai-sync] $n agent(s) generated in .opencode/agents (OpenCode, models via the gateway roles)"
+      { print }' "$f" >"$oc/$(basename "$f")"
+		n=$((n + 1))
+	done
+	for f in "$oc"/*.md; do [ -f "$agents/$(basename "$f")" ] || rm -f "$f"; done # removed upstream
+	echo "[ai-sync] $n agent(s) generated in .opencode/agents (OpenCode, models via the gateway roles)"
 fi

@@ -17,6 +17,7 @@ LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
 if [ -f "$LIB" ]; then
 	. "$LIB"
+	qs_suite_stamp_check
 	QS_POLICY_NO_DOCKER=1 qs_policy_load
 fi
 

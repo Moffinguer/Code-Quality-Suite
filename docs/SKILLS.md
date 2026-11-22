@@ -1,5 +1,8 @@
 # Skills, recipe book and the Junta norms map
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 The AI layer of a repository is three folders that every agent (Claude Code, OpenCode, Codex)
 reads. `scripts/ai-init.sh <repo>` creates them from `ai-template/`; existing files are kept.
 

@@ -31,6 +31,7 @@ TYPE_GROUP = {
     "build": "Changed",
     "revert": "Changed",
 }
+MIGRATION_OT = "MIGRATION"  # the 'OT' shown for the squash of the version's MIGRATION branch
 OMIT_TYPES = {"docs", "test", "tests", "ci", "chore", "style"}
 CONVENTIONAL = re.compile(
     r"^(?P<type>[a-z][a-z0-9-]*)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?: (?P<desc>.+)$"
@@ -161,10 +162,14 @@ def _ot_of(src, ot_rx):
         ot_rx: regular expression an OT must match (re.match).
 
     Returns:
-        str | None: the second segment when the name has at least three segments and the
-        segment matches ot_rx, else None.
+        str | None: 'MIGRATION' for the special branch '<version>/MIGRATION' (or anything
+        below it: its change belongs to no OT and is shown as MIGRATION); otherwise the
+        second segment when the name has at least three segments and the segment matches
+        ot_rx, else None.
     """
     parts = (src or "").split("/")
+    if len(parts) > 1 and parts[1] == MIGRATION_OT:
+        return MIGRATION_OT
     return parts[1] if len(parts) > 2 and re.match(ot_rx, parts[1]) else None
 
 
@@ -353,6 +358,27 @@ def _add_line(items, item):
     items.append(item)
 
 
+def _seen_hashes(item, seen):
+    """Tell whether every commit hash of a line was already listed, and record its hashes.
+
+    Args:
+        item: one '- Subject (hash; OT)' line.
+        seen: set of the short hashes listed so far; modified in place.
+
+    Returns:
+        bool: True when the line has hashes and all of them are in seen (the same commit
+        reached the union twice, so the line is dropped); False otherwise.
+    """
+    m = _REFS.match(item)
+    if not m:
+        return False
+    hs = {h.strip("[]").split("]")[0][:7] for h in m["hashes"].split(", ")}
+    if hs <= seen:
+        return True
+    seen |= hs
+    return False
+
+
 def union(version, date, sections, tag_url=""):
     """One release block from several release sections.
 
@@ -364,7 +390,9 @@ def union(version, date, sections, tag_url=""):
 
     Returns:
         str: the block like render(); groups in Common Changelog order, items in section
-        order, '**Breaking:**' items first, identical lines once. Lines of one group with
+        order, '**Breaking:**' items first, identical lines once,
+        a line whose hashes were all listed before dropped.
+        Lines of one group with
         the same subject and the same OT but different hashes become one line listing every
         hash in first-seen order, '- Fix x (aaa1111, ccc3333; git)' (linked hashes '[aaa1111](url)'
         merge the same way); a different OT, or a
@@ -372,13 +400,17 @@ def union(version, date, sections, tag_url=""):
         maintenance notice is written.
     """
     found = {g: [] for g in GROUPS}
+    seen = set()
     for sec in sections:
         group = None
         for ln in (sec or "").splitlines():
             if ln.startswith("### "):
                 group = ln[4:].strip()
             elif group in found and re.match(r"^[-*] \S", ln):
-                _add_line(found[group], "- " + ln[2:].rstrip())
+                item = "- " + ln[2:].rstrip()
+                if _seen_hashes(item, seen):
+                    continue
+                _add_line(found[group], item)
     head = f"## [{version}] - {date}" if tag_url else f"## {version} - {date}"
     lines = [head, ""]
     if not any(found.values()):

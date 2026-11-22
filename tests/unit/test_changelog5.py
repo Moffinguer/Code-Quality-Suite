@@ -128,6 +128,15 @@ class Union(unittest.TestCase):
         self.assertEqual(block, want)
         self.assertEqual(changelog.validate("# Changelog\n\n" + block), ([], []))
 
+    def test_same_hash_twice_is_listed_once(self):
+        """A commit reaching the union through two sections keeps its first line only."""
+        a = "### Fixed\n\n- Fix x (aaa1111; git)\n- Fix z (eee5555; git)\n"
+        b = "### Fixed\n\n- Fix x reworded (aaa1111; log)\n- Fix w (fff6666; log)\n"
+        block = changelog.union("6.1.0", "2026-11-02", [a, b])
+        self.assertEqual(block.count("aaa1111"), 1)
+        self.assertLess(block.index("Fix z"), block.index("Fix w"))
+        self.assertNotIn("reworded", block)
+
     def test_same_subject_and_ot_merge_hashes(self):
         a = "### Fixed\n\n- Fix x (aaa1111; git)\n- Fix x (bbb2222; log)\n- Fix y (ddd4444; git)\n"
         b = "### Fixed\n\n- Fix x (ccc3333; git)\n- Fix x (aaa1111; git)\n"
@@ -197,6 +206,56 @@ class FromGit(unittest.TestCase):
         self.assertEqual([c["hash"] for c in changelog.without_ot(items)], [self.tip])
         self.assertIsNone(items[0]["ot"])
         self.assertNotIn(";", changelog.render("5.0.0", "2026-11-02", items).split("- ")[1])
+
+
+class MigrationLine(unittest.TestCase):
+    """The squash of '<v>/MIGRATION' is one Changed line whose OT is MIGRATION."""
+
+    def setUp(self):
+        """Make a repo: a base commit and two squashes with 'Refs:' lines of MIGRATION."""
+        self.d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.d, True)
+        _run(self.d, "init", "-q", "-b", "main")
+        commits = (
+            ("a", "chore: base"),
+            ("b", "build: Move to Java 17\n\nRefs: 6.0.0/MIGRATION -> 6.0.0/ORIGINAL"),
+            (
+                "c",
+                "build!: Raise the Java baseline\n\n"
+                "Refs: 6.0.0/MIGRATION/ORIGINAL -> 6.0.0/ORIGINAL",
+            ),
+        )
+        for name, msg in commits:
+            with open(os.path.join(self.d, name), "w", encoding="utf-8") as fh:
+                fh.write(name)
+            _run(self.d, "add", name)
+            _run(self.d, "commit", "-q", "-m", msg)
+        self.base = _run(self.d, "rev-parse", "HEAD~2")
+        self.tip = _run(self.d, "rev-parse", "HEAD")
+
+    def test_ot_of_migration(self):
+        self.assertEqual(changelog._ot_of("6.0.0/MIGRATION", changelog.policy.OT_RX), "MIGRATION")
+        self.assertEqual(
+            changelog._ot_of("6.0.0/MIGRATION/ORIGINAL", changelog.policy.OT_RX), "MIGRATION"
+        )
+        self.assertEqual(changelog._ot_of("6.0.0/ot1/a", changelog.policy.OT_RX), "ot1")
+        self.assertIsNone(changelog._ot_of("6.0.0/ORIGINAL", changelog.policy.OT_RX))
+
+    def test_lines_have_ot_migration_breaking_first(self):
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
+        self.assertEqual(changelog.without_ot(items), [])
+        block = changelog.render("6.0.0", "2026-11-16", items)
+        lines = [ln for ln in block.splitlines() if ln.startswith("- ")]
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("- **Breaking:** Raise the Java baseline ("))
+        self.assertTrue(lines[0].endswith("; MIGRATION)"))
+        self.assertTrue(lines[1].endswith("; MIGRATION)"))
+
+    def test_build_breaking_first_under_changed(self):
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
+        block = changelog.render("6.0.0", "2026-11-16", items)
+        self.assertIn("### Changed\n\n- **Breaking:** Raise the Java baseline (", block)
+        self.assertLess(block.index("Raise the Java baseline"), block.index("Move to Java 17"))
 
 
 class GateLevel(unittest.TestCase):
