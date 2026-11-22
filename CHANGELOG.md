@@ -1,5 +1,16 @@
 # Changelog
 
+## [7.1.0] - 2026-11-22
+
+### Added
+
+- Render repository files ([1dfca8a](https://github.com/Moffinguer/Code-Quality-Suite/commit/1dfca8a59721aa53d05336ebd75715d1dde24966); identity)
+- Configurable main branch ([9a908c2](https://github.com/Moffinguer/Code-Quality-Suite/commit/9a908c25ae5679b0907e5b85063c6a9626b3649f); identity)
+
+### Fixed
+
+- License comment, manual link ([1ceafb6](https://github.com/Moffinguer/Code-Quality-Suite/commit/1ceafb658df2452e55a3ff784788872b87eb7f99); identity)
+
 ## [6.1.0] - 2026-11-22
 
 ### Added
@@ -207,4 +218,5 @@ _First release recorded in this changelog._
 - Add quality levels that never clash: off, syntax, format, standard, strict (docs/QUALITY-RULES.md)
 - Add identifying marks: shebangs for scripts and modelines for ambiguous files (engine/runner.py)
 
+[7.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/7.1.0
 [6.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/6.1.0

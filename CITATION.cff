@@ -12,5 +12,7 @@ keywords:
   - git hooks
   - linting
   - docker
-version: "6.1.0"
+version: "7.1.0"
 date-released: '2026-11-22'
+license: Apache-2.0
+repository-code: "https://github.com/Moffinguer/Code-Quality-Suite"

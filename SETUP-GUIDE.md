@@ -6,7 +6,7 @@ each add value on their own. Recommended order: 1 -> CI -> 2 -> 3 -> 4.
 ## Tools used
 
 | Area | Tools |
-|------|-------|
+| ------ | ------- |
 | Quality gate | 184 languages; full matrix in `docs/LANGUAGES.md` (installed on demand) |
 | Rules | one editable file, `.quality-rules.json` (`docs/QUALITY-RULES.md`) |
 | Base container | Docker, Ubuntu 24.04 + Python 3 (engine and installer only) |
@@ -41,7 +41,7 @@ can be skipped with `--no-verify`; CI cannot.
 
 The suite acts as an impartial referee: any AI-generated code must pass the same
 local gate before entering the repo. `scripts/ai-init.sh <repo>` adds the agent files
-(`AGENTS.md`, shared skills, Claude Code subagents by role, the gate hook, the Junta
+(`AGENTS.md`, shared skills, Claude Code subagents by role, the gate hook, the norms
 knowledge map) and `ai-stack/` runs the local model gateway. Step by step, from an empty
 machine to a first OT: `docs/AI-SETUP.md`. Skills and the norms map: `docs/SKILLS.md`.
 

@@ -36,6 +36,35 @@ fix(hooks): keep unstaged edits on a failed commit
 docs: group the install guides in INSTALL.md
 ```
 
+### Accepted types
+
+The default `commit.types` of the engine (`engine/policy.py`); a project may change them in
+`.quality-rules.json`. The last column is the group of the changelog entry
+(`engine/changelog.py`); "omitted" types never reach the changelog.
+
+| Type | Meaning | Changelog group |
+| --- | --- | --- |
+| `feat` | a new feature | Added |
+| `fix` | a bug fix | Fixed |
+| `docs` | documentation only | omitted |
+| `style` | formatting, no change in behaviour | omitted |
+| `refactor` | code change that neither fixes nor adds | Changed |
+| `perf` | performance improvement | Changed |
+| `test` | add or fix tests | omitted |
+| `build` | build system, dependencies, image | Changed |
+| `ci` | CI configuration | omitted |
+| `chore` | maintenance, tooling | omitted |
+| `revert` | undo an earlier commit | Changed |
+
+### Rules
+
+- ASCII only (write "anadir validacion", not accents or n-tilde) and a subject of at most 50
+  characters.
+- A `!` after the type or scope (`feat(api)!: drop the old flag`), or a `BREAKING CHANGE:`
+  footer, marks a breaking change.
+- Trailers: `Files:` lists the files of the commit (the hook adds it), and `Norms: <ids>` lists
+  the norms applied, when the project has a norms map.
+
 One logical change per commit. A user-visible change gets a line in [CHANGELOG.md](CHANGELOG.md)
 (Common Changelog: imperative, with a reference) in the same change.
 

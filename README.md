@@ -1,6 +1,6 @@
 # Code Quality Suite
 
-<!-- qs:version -->[![version 6.1.0](https://img.shields.io/badge/version-6.1.0-blue)](CHANGELOG.md)<!-- /qs:version -->
+<!-- qs:version -->[![version 7.1.0](https://img.shields.io/badge/version-7.1.0-blue)](CHANGELOG.md)<!-- /qs:version -->
 
 Deterministic quality gate for your repositories: on every **commit** and **push** it checks
 the encoding, formats and analyses the code, and **blocks** the operation when it does not meet
@@ -125,4 +125,5 @@ Full matrix and opt-in tools: [docs/LANGUAGES.md](docs/LANGUAGES.md). Pinned ver
 
 ## License
 
-<!-- qs:fill: the license of the suite (see LICENSE) --> See [LICENSE](LICENSE).
+<!-- qs:fill: the license of the suite (see LICENSE) -->
+See [LICENSE](LICENSE).

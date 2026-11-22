@@ -6,15 +6,15 @@ skills and in `knowledge/`.
 
 ## Project
 
-- Name: <PROJECT>   Client: Junta de Andalucia (public sector)   Data class: <public|internal|regulated>
+- Name: <PROJECT>   Client: <CLIENT>   Data class: <public|internal|regulated>
 - Stack: <Java 8/11/17, JSP, Maven, Oracle PL/SQL, HTML/CSS/JS, Markdown>
 - Build and tests: `<mvn -B verify>`   Run locally: `<...>`
 
 ## Rules that always apply
 
-1. **Norms first.** Before designing or writing code, use the `jda-norms` skill: it reads
-   `knowledge/jda/INDEX.md` and tells you which Junta norms apply. Cite the norm ids you
-   applied in the commit body (`Norms: JDA-ARQ-003, JDA-SEG-010`).
+1. **Norms first.** When `knowledge/norms/INDEX.md` lists norms, use the `norms` skill before
+   designing or writing code: it tells you which norms apply. Otherwise say "no norms" and skip
+   it. Cite the norm ids you applied in the commit body (`Norms: ARCH-003, SEC-010`).
 2. **Quality gate.** After editing files, run `bash <SUITE>/scripts/qs-run.sh <files>` (Claude
    Code does it automatically through a hook). Fix every finding; never weaken a rule in
    `.quality-rules.json` to make a finding disappear.
@@ -72,6 +72,6 @@ each agent. `git release`, `git publicar` and `git combinar` are human only.
 
 ## Where things are
 
-- `knowledge/jda/` norms map (INDEX.md, one note per norm), `knowledge/recipes/` the team's
+- `knowledge/norms/` norms map (INDEX.md, one note per norm), `knowledge/recipes/` the team's
   recipe book, `knowledge/lessons/` lessons learned, `knowledge/decisions/` ADRs.
 - `.agents/skills/` skills for all agents (Claude Code reads the synced copy in `.claude/skills/`).

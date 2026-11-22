@@ -4,6 +4,194 @@ One editable file at the repository root decides what every tool checks. It is g
 (`.git/info/exclude`), so each clone can tune it; commit it on purpose if the team should
 share it (CI then applies exactly the same rules).
 
+## How to configure
+
+Edit the file with any editor. An editor that loads the JSON Schema
+(`schema/quality-rules.schema.json`) completes keys and flags wrong values. Every key you
+leave out keeps its default, so a short file is enough. Keys marked
+*(5.0.0-RC1 or 6.0.0)* are the ones added by those versions.
+
+### Start from a minimal file
+
+```json
+{
+  "level": "standard"
+}
+```
+
+The first commit completes it with the skeleton (excludes, repository checks, tests). The
+first commit of each language adds its section with the base rules of the image. Your values
+are kept; only `detected_version` is maintained by the suite.
+
+### Change the level
+
+Use `strict` for a new project, `syntax` for legacy code you must not touch yet. A single
+language can have its own level; `off` skips it completely. The table of levels is in
+[Levels](#levels).
+
+```json
+{
+  "level": "strict",
+  "languages": {
+    "perl": { "level": "syntax" }
+  }
+}
+```
+
+### Turn one tool off, or on
+
+Every tool block has `enabled`. Set it to `false` to stop one tool from running. Tools that
+are off by default (opt-in) run once you set `enabled` to `true`.
+
+```json
+{
+  "languages": {
+    "java": {
+      "analysis": { "pmd": { "enabled": false } }
+    },
+    "dockerfile": {
+      "formatting": { "dockerfmt": { "enabled": true } }
+    }
+  }
+}
+```
+
+### Exclude paths
+
+`exclude` takes glob patterns for the paths the suite leaves out. To keep a generated file
+checked for syntax but never rewritten, use the generated mark described in
+[Large files and generated files](#large-files-and-generated-files-qs-large-file) instead.
+
+```json
+{
+  "exclude": ["generated/**", "*.pb.go", "vendor/**"]
+}
+```
+
+### Set a language version
+
+`"auto"` detects the version from the project (pom.xml, pyproject.toml, ...). A fixed value
+pins it. The value drives the parser and the tools listed in [Versions](#versions).
+
+```json
+{
+  "languages": {
+    "java": { "version": "17" },
+    "sql": { "version": "postgres" }
+  }
+}
+```
+
+### Read a file in another charset
+
+Use `by_glob` for the files that are not UTF-8. The first matching glob wins. Files in another
+charset are never reformatted, so the bytes stay as they are.
+
+```json
+{
+  "encoding": {
+    "by_glob": {
+      "src/main/resources/**/*.properties": "iso-8859-1"
+    }
+  }
+}
+```
+
+### Commit types and subject length
+
+The commit message check reads `commit`. Keep `charset` as `ascii` unless the team agrees
+otherwise. Raising `subject_max` is a team decision: the default 50 is the team norm.
+
+```json
+{
+  "commit": {
+    "types": ["feat", "fix", "docs", "chore", "test"],
+    "subject_max": 50,
+    "charset": "ascii"
+  }
+}
+```
+
+### Commit files block *(5.0.0-RC1 or 6.0.0)*
+
+`commit.files` sets how the `Files:` block of every commit message is checked: `block`
+(default), `warn` or `off`.
+
+```json
+{
+  "commit": {
+    "files": "block"
+  }
+}
+```
+
+### Branch flow and pom version
+
+`branches.flow` *(5.0.0-RC1 or 6.0.0)* is `squash` (default, 5.x model) or `merge` (deprecated).
+Check it before you integrate: the flow of the file must match the flow of the target
+ORIGINAL. `branches.pom_version` says how `pom.xml` follows the version tree (`update`,
+`snapshot`, `check` or `off`).
+
+```json
+{
+  "branches": {
+    "flow": "squash",
+    "pom_version": "update"
+  }
+}
+```
+
+### Branch keys added in 5.0.0-RC1 or 6.0.0
+
+These keys shape the names and the special branches. The defaults are right for most teams.
+
+- `branches.testing_leaf` *(5.0.0-RC1 or 6.0.0)*: reserved leaf of the TESTING sandbox,
+  default `TESTING`.
+- `branches.ot_tag` *(5.0.0-RC1 or 6.0.0)*: annotated tag on the OT ORIGINAL at the OT
+  release; it must contain `{ot}`. An empty string turns it off.
+- `branches.special` *(5.0.0-RC1 or 6.0.0)*: one object per special branch (MIGRATION, DOCS,
+  ...). Set a special branch to `false` to disable it.
+
+```json
+{
+  "branches": {
+    "testing_leaf": "TESTING",
+    "ot_tag": "ot/{version}/{ot}",
+    "special": {
+      "MIGRATION": false
+    }
+  }
+}
+```
+
+### Test command on push
+
+`tests.commands` lists the test commands the push runs (exported to
+`.git/quality-suite/tests.txt`). Set `autodetect` to `true` only when the project has no
+commands of its own.
+
+```json
+{
+  "tests": {
+    "commands": ["mvn -B -q test"],
+    "autodetect": false
+  }
+}
+```
+
+### Check your change
+
+- A file that is not valid (bad JSON, wrong type, unknown level) blocks the commit and shows
+  the line and column. Unknown languages and tools only warn.
+- `bash scripts/qs-run.sh --check <file>` reports findings without changing anything.
+- Each applied change is logged in `.git/quality-suite/quality-suite.log`.
+
+### Where the complete list is
+
+The JSON Schema `schema/quality-rules.schema.json` (generated) holds every key, its allowed
+values and its default. Language and tool ids are in `docs/LANGUAGES.md`; the branch keys
+are described in `docs/GIT-WORKFLOW.md`.
+
 ## Lifecycle
 
 1. The first commit creates it as a skeleton: level, excludes, repository-wide checks, tests.
