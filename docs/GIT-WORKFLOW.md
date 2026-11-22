@@ -222,6 +222,13 @@ a breaking change a MAJOR one).
 5. `docs(readme): version <version>`: the README badge (and `CITATION.cff`);
 6. push `<version>/RELEASE`; then the rest of the tree is deleted (local and origin).
 
+**The OT release** (`git release` inside `<v>/<ot>/...`, or `--ot <v>/<ot>`) does not create a
+tag. Tags are version numbers only (`5.0.0-RC1`). It writes the hidden ref
+`refs/ot/<v>/<ot>` (`branches.ot_ref`) at the OT `ORIGINAL` tip and pushes it
+(`refs/ot/...:refs/ot/...`) with `RELEASE`. The ref keeps the hashes cited in `CHANGELOG.md`
+reachable after the OT subtree is deleted; `git tag -l` never shows it and a plain clone does
+not fetch it (`git fetch origin 'refs/ot/*:refs/ot/*'` does).
+
 The commits go through the hooks like any other. If a step fails, fix it and run the same
 `git release` again: it resumes. Once done, review the release on `<version>/RELEASE`:
 

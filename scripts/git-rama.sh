@@ -37,8 +37,8 @@
 #                         --version <v>, --yes, --no-push, -n (= changelog)
 #                         branches.flow = squash, inside '<v>/<ot>/...' or with --ot <v>/<ot>: the OT
 #                         release instead: '<v>/<ot>/RELEASE' = the OT ORIGINAL tip + one
-#                         docs(changelog) commit with the OT lines, tag branches.ot_tag on the OT
-#                         ORIGINAL tip, RELEASE and tag pushed, the OT subtree deleted (resumable);
+#                         docs(changelog) commit with the OT lines, write the hidden ref branches.ot_ref (not a tag) at the OT
+#                         ORIGINAL tip, RELEASE and the ref pushed, the OT subtree deleted (resumable);
 #                         git changelog there previews it. On '<v>/ORIGINAL', develop or with
 #                         --version <v>: the version release, refused while an OT lacks its RELEASE;
 #                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first),
@@ -2318,9 +2318,9 @@ release_set_aside() {
 
 # --- OT release (flow = squash): '<v>/<ot>/ORIGINAL' -> '<v>/<ot>/RELEASE' ---------------------
 # git release inside '<v>/<ot>/...' (or --ot <v>/<ot>): RELEASE at the OT ORIGINAL tip plus one
-# docs(changelog) commit with the OT lines of the '## <v>' section, the annotated tag
-# branches.ot_tag on the OT ORIGINAL tip (keeps the cited hashes reachable), one push of RELEASE
-# and the tag, then the OT subtree deleted (the OT ORIGINAL last: while it exists the release is
+# docs(changelog) commit with the OT lines of the '## <v>' section, the hidden ref (refs/ot/<v>/<ot>, never a tag)
+# branches.ot_ref on the OT ORIGINAL tip (keeps the cited hashes reachable), one push of RELEASE
+# and the ref, then the OT subtree deleted (the OT ORIGINAL last: while it exists the release is
 # not finished and running it again resumes). VERSION and the README badge are not touched: the
 # version release ('git release --version <v>') does that once every OT has its RELEASE.
 
@@ -2354,10 +2354,10 @@ ot_release_target() {
 	return 0
 }
 
-# render_ot_tag <v>/<ot>: the tag of an OT release from branches.ot_tag ({version}, {ot}, {date}).
-# Arguments: $1 '<v>/<ot>'. Returns: 0; prints the tag (nothing when ot_tag is '').
-render_ot_tag() {
-	local t="$QS_BR_OT_TAG"
+# render_ot_ref <v>/<ot>: the ref of an OT release from branches.ot_ref ({version}, {ot}, {date}).
+# Arguments: $1 '<v>/<ot>'. Returns: 0; prints the ref (nothing when ot_ref is '').
+render_ot_ref() {
+	local t="$QS_BR_OT_REF"
 	[ -n "$t" ] || return 0
 	t="${t//\{version\}/${1%%/*}}"
 	t="${t//\{ot\}/${1#*/}}"
@@ -2473,9 +2473,9 @@ ot_branch_in() {
 }
 
 # ot_release_analyse: analyse the OT REL_OT for its release; fills the REL_* variables of
-# release_analyse plus REL_VTOP (the version ORIGINAL), REL_OT_TAG and REL_DONE, prints only the
+# release_analyse plus REL_VTOP (the version ORIGINAL), REL_OT_REF and REL_DONE, prints only the
 # TESTING warnings. Errors (REL_ERRORS): no OT ORIGINAL (and no RELEASE), local and origin
-# diverged, the version ORIGINAL not contained, no own non-merge commit, the tag on another
+# diverged, the version ORIGINAL not contained, no own non-merge commit, the ref on another
 # commit, a RELEASE that does not contain the OT ORIGINAL tip (reopening a released OT is not
 # supported), a branch of the OT checked out in another worktree. REL_DONE=1 when only the
 # RELEASE is left (released); REL_RESUME=1 when RELEASE already contains the OT ORIGINAL tip.
@@ -2486,9 +2486,9 @@ ot_release_analyse() {
 	REL_TOP="$REL_OT/$QS_BR_LEAF" REL_RELEASE="$REL_OT/$QS_BR_RELEASE_LEAF" REL_VTOP="$v/$QS_BR_LEAF"
 	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
 	REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0 REL_DONE=0
-	REL_OT_TAG="$(render_ot_tag "$REL_OT")"
-	if [ -n "$REL_OT_TAG" ] && ! git check-ref-format "refs/tags/$REL_OT_TAG"; then
-		REL_ERRORS+=("branches.ot_tag gives '$REL_OT_TAG', not a valid tag name")
+	REL_OT_REF="$(render_ot_ref "$REL_OT")"
+	if [ -n "$REL_OT_REF" ] && { ! git check-ref-format "$REL_OT_REF" || [ "${REL_OT_REF#refs/ot/}" = "$REL_OT_REF" ]; }; then
+		REL_ERRORS+=("branches.ot_ref gives '$REL_OT_REF', not a valid ref name under refs/ot/")
 	fi
 	if ! exists_branch "$REL_TOP"; then
 		if exists_branch "$REL_RELEASE"; then
@@ -2513,9 +2513,9 @@ ot_release_analyse() {
 			REL_CL_BASE="$vt" REL_BASE="$vt"
 		fi
 	fi
-	if [ -n "$REL_OT_TAG" ] && exists_ref "refs/tags/$REL_OT_TAG" && [ "$REL_TIP" != diverged ] &&
-		[ "$(git rev-parse "refs/tags/$REL_OT_TAG^{commit}")" != "$REL_TIP" ]; then
-		REL_ERRORS+=("tag '$REL_OT_TAG' already exists on another commit (branches.ot_tag); move or delete it first")
+	if [ -n "$REL_OT_REF" ] && exists_ref "$REL_OT_REF" && [ "$REL_TIP" != diverged ] &&
+		[ "$(git rev-parse "$REL_OT_REF^{commit}")" != "$REL_TIP" ]; then
+		REL_ERRORS+=("ref '$REL_OT_REF' already exists on another commit (branches.ot_ref); move or delete it first")
 	fi
 	if exists_branch "$REL_RELEASE" && [ "${#REL_ERRORS[@]}" -eq 0 ]; then
 		rt="$(branch_tip "$REL_RELEASE")"
@@ -2623,14 +2623,14 @@ ot_changelog_try_commit() {
 	say "committed: $(ot_changelog_subject)"
 }
 
-# ot_tag_create: the annotated tag REL_OT_TAG on the OT ORIGINAL tip (nothing when branches.ot_tag
-# is '' or the tag is already there, which the analysis checked).
+# ot_ref_create: the hidden ref REL_OT_REF on the OT ORIGINAL tip (nothing when branches.ot_ref
+# is '' or the ref is already there, which the analysis checked).
 # Arguments: none. Returns: 0.
-ot_tag_create() {
-	[ -n "$REL_OT_TAG" ] || return 0
-	exists_ref "refs/tags/$REL_OT_TAG" && return 0
-	git tag -a -m "OT ${REL_OT#*/} of ${REL_OT%%/*}: $REL_TOP at its release ($REL_RELEASE)" "$REL_OT_TAG" "$REL_TIP"
-	say "tag $REL_OT_TAG created on $REL_TOP ($(git rev-parse --short "$REL_TIP"))"
+ot_ref_create() {
+	[ -n "$REL_OT_REF" ] || return 0
+	exists_ref "$REL_OT_REF" && return 0
+	git update-ref "$REL_OT_REF" "$REL_TIP"
+	say "ref $REL_OT_REF created on $REL_TOP ($(git rev-parse --short "$REL_TIP"))"
 }
 
 # ot_release_report: the checks and the plan of the OT release (preview and before running).
@@ -2659,8 +2659,8 @@ ot_release_report() {
 	fi
 	echo "$i. $REL_TOP -> $REL_RELEASE with one commit \"$(ot_changelog_subject)\" ($QS_BR_CHANGELOG); $QS_BR_VERSION_FILE and the README badge untouched"
 	i=$((i + 1))
-	[ -n "$REL_OT_TAG" ] && echo "$i. annotated tag $REL_OT_TAG on $REL_TOP ($([ "$REL_TIP" = diverged ] && echo diverged || git rev-parse --short "$REL_TIP"))" && i=$((i + 1))
-	echo "$i. push $REL_RELEASE${REL_OT_TAG:+ and $REL_OT_TAG}; delete the OT subtree: $((${#REL_DELETE_LOCAL[@]} + 1)) local branch(es)$(has_origin && [ "$REL_PUSH" = 1 ] && echo ", $((${#REL_DELETE_REMOTE[@]} + 1)) on origin at most") ($REL_TOP last)"
+	[ -n "$REL_OT_REF" ] && echo "$i. hidden ref $REL_OT_REF on $REL_TOP ($([ "$REL_TIP" = diverged ] && echo diverged || git rev-parse --short "$REL_TIP"))" && i=$((i + 1))
+	echo "$i. push $REL_RELEASE${REL_OT_REF:+ and $REL_OT_REF}; delete the OT subtree: $((${#REL_DELETE_LOCAL[@]} + 1)) local branch(es)$(has_origin && [ "$REL_PUSH" = 1 ] && echo ", $((${#REL_DELETE_REMOTE[@]} + 1)) on origin at most") ($REL_TOP last)"
 	i=$((i + 1))
 	echo "$i. later: git release --version ${REL_OT%%/*} once every OT of ${REL_OT%%/*} has its RELEASE"
 	return 0
@@ -2681,7 +2681,7 @@ ot_release_changes() {
 # Arguments: none; reads REL_OT REL_TAG_GIVEN. Returns: 0 when releasable (or already released);
 # 1 when a check fails.
 ot_changelog_preview() {
-	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its tag is branches.ot_tag ($(render_ot_tag "$REL_OT"))"
+	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its ref is branches.ot_ref ($(render_ot_ref "$REL_OT"))"
 	fetch_origin
 	ot_release_analyse
 	if [ "$REL_DONE" = 1 ]; then
@@ -2707,7 +2707,7 @@ ot_changelog_preview() {
 }
 
 # ot_release_run: carry out the analysed OT release: RELEASE created (or resumed) and checked out,
-# the changelog commit, the tag, ONE push of RELEASE and the tag, the never-integrated branches set
+# the changelog commit, the ref, ONE push of RELEASE and the ref, the never-integrated branches set
 # aside, the OT subtree deleted with the OT ORIGINAL last.
 # Arguments: none; reads the REL_* variables. Returns: 0; exits through die when the push fails
 # (nothing deleted yet: running git release again resumes).
@@ -2721,10 +2721,10 @@ ot_release_run() {
 	fi
 	git checkout -q "$REL_RELEASE"
 	ot_changelog_commit
-	ot_tag_create
+	ot_ref_create
 	if [ "$REL_PUSH" = 1 ] && has_origin; then
 		refs=("$REL_RELEASE")
-		[ -n "$REL_OT_TAG" ] && refs+=("refs/tags/$REL_OT_TAG")
+		[ -n "$REL_OT_REF" ] && refs+=("$REL_OT_REF:$REL_OT_REF")
 		git push -q --atomic -u origin "${refs[@]}" ||
 			die "push of $REL_RELEASE failed; the OT tree is untouched. Fix it and run git release again (it resumes)"
 	fi
@@ -2743,7 +2743,7 @@ ot_release_run() {
 # Arguments: none; reads REL_OT REL_TAG_GIVEN REL_PUSH. Returns: 0; exits through die when a check
 # fails or the human cancels (nothing changed).
 ot_release() {
-	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its tag is branches.ot_tag ($(render_ot_tag "$REL_OT"))"
+	[ "$REL_TAG_GIVEN" = 0 ] || die "the OT release takes no tag: its ref is branches.ot_ref ($(render_ot_ref "$REL_OT"))"
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	ot_release_analyse

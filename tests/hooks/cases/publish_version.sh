@@ -73,8 +73,8 @@ grep -q "OT a: no $V/a/RELEASE" <<<"$out" && [ "$(state)" = "$before" ] &&
 
 # --- OT a released; a manual edit reviewed on its RELEASE --------------------------------------
 git checkout -q "$V/a/ORIGINAL" && git release --yes >/dev/null 2>&1 || fail "OT release a"
-ahash="$(git log -1 --format=%h "ot/$V/a")"
-bhash="$(git log -1 --format=%h "ot/$V/b")"
+ahash="$(git log -1 --format=%h "refs/ot/$V/a")"
+bhash="$(git log -1 --format=%h "refs/ot/$V/b")"
 grep -q "^- Add module a ($ahash; a)$" CHANGELOG.md || fail "OT a section: $(cat CHANGELOG.md)"
 sed -i "s/^- Add module a ($ahash; a)$/- Add module a, reviewed by hand ($ahash; a)/" CHANGELOG.md
 git add CHANGELOG.md && git commit -q -m "docs(changelog): review a" && git push -q origin "$V/a/RELEASE" 2>/dev/null ||
@@ -111,12 +111,12 @@ cl="$(git show "$V/RELEASE:CHANGELOG.md")"
 	ok "V4: annotated tag $V on the $V/RELEASE tip, local only, message = the entry" ||
 	fail "V4: $(git tag -l --format='%(contents)' "$V")"
 
-# --- V6: OT RELEASEs and the version ORIGINAL gone, ot/ tags kept ------------------------------
+# --- V6: OT RELEASEs and the version ORIGINAL gone, refs/ot refs kept ------------------------------
 [ "$(git for-each-ref --format='%(refname:short)' "refs/heads/$V/")" = "$V/RELEASE" ] &&
 	[ "$(git ls-remote --heads origin | awk '{print $2}' | grep "^refs/heads/$V/")" = "refs/heads/$V/RELEASE" ] &&
-	git rev-parse -q --verify "refs/tags/ot/$V/a" >/dev/null && git rev-parse -q --verify "refs/tags/ot/$V/b" >/dev/null &&
+	git rev-parse -q --verify "refs/ot/$V/a" >/dev/null && git rev-parse -q --verify "refs/ot/$V/b" >/dev/null &&
 	[ -z "$(git config --get-regexp "^qs\.release\.$V\.(plan|ots|current)")" ] &&
-	ok "V6: OT RELEASEs and $V/ORIGINAL deleted (local, origin); ot/ tags kept; progress forgotten" ||
+	ok "V6: OT RELEASEs and $V/ORIGINAL deleted (local, origin); refs/ot refs kept; progress forgotten" ||
 	fail "V6: $(git branch -a)"
 out="$(git release --version "$V" --yes 2>&1)" && grep -q 'already prepared' <<<"$out" || fail "release again: $out"
 

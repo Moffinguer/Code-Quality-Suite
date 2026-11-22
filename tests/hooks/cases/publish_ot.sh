@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OT release with branches.flow = squash (5.0.0-RC1/git/publish/ot, ACs O1-O7): git release
 # inside '<v>/<ot>/...' (or --ot) makes '<v>/<ot>/RELEASE' = OT ORIGINAL tip + one
-# docs(changelog) commit with '(<hash>; <ot>)' lines, tags the OT ORIGINAL tip, pushes both,
+# docs(changelog) commit with '(<hash>; <ot>)' lines, writes the hidden ref refs/ot/<v>/<ot> at the OT ORIGINAL tip (no tag), pushes both,
 # deletes the OT subtree (never-integrated branches set aside), resumes after a failed push, and
 # never lets a TESTING sandbox block or enter the release.
 # why: every check is written `cond && ok "..." || fail "..."`, and ok never fails
@@ -22,7 +22,7 @@ add_commit() {
 # state: print every ref with its object, the current branch and the work tree status (to prove
 # that a refused or preview command changed nothing).
 state() {
-	git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
+	git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags refs/ot
 	git branch --show-current
 	git status --porcelain
 }
@@ -147,10 +147,11 @@ for h in $(git log --first-parent --no-merges --format=%h "$ottip" "^$V/ORIGINAL
 done
 ok "O2: the hashes are the OT ORIGINAL first-parent commits"
 
-# --- O3: tag, push, subtree deleted, never-integrated branches set aside -----------------------
-[ "$(git cat-file -t "ot/$V/700")" = tag ] && [ "$(git rev-parse "ot/$V/700^{commit}")" = "$ottip" ] &&
-	git ls-remote --tags origin | grep -q "refs/tags/ot/$V/700$" &&
-	ok "O3: annotated tag ot/$V/700 on the OT ORIGINAL tip, pushed" || fail "O3 tag"
+# --- O3: ref, push, subtree deleted, never-integrated branches set aside -----------------------
+[ "$(git cat-file -t "refs/ot/$V/700")" = commit ] && [ "$(git rev-parse "refs/ot/$V/700")" = "$ottip" ] &&
+	[ "$(git ls-remote origin "refs/ot/$V/700" | cut -f1)" = "$ottip" ] && [ -z "$(git tag -l "ot/*")" ] &&
+	[ -z "$(git ls-remote --tags origin "ot/*")" ] &&
+	ok "O3: ref refs/ot/$V/700 on the OT ORIGINAL tip, pushed; no ot/ tag locally or on origin" || fail "O3 ref"
 [ "$(git for-each-ref --format='%(refname:short)' "refs/heads/$OT/")" = "$OT/RELEASE" ] &&
 	[ "$(git ls-remote --heads origin | awk '{print $2}' | grep "^refs/heads/$OT/")" = "refs/heads/$OT/RELEASE" ] &&
 	git rev-parse -q --verify "refs/heads/unmerged/$OT/c" >/dev/null &&
@@ -203,17 +204,17 @@ small_ot() {
 	git checkout -q "$OT/ORIGINAL"
 }
 
-# --- O6: a failed tag creation leaves a state the rerun completes ------------------------------
+# --- O6: a failed ref creation leaves a state the rerun completes ------------------------------
 small_ot
-mkdir -p .git/refs/tags && : >.git/refs/tags/ot # why: a file where the tag's folder must go
-out="$(git release --yes 2>&1)" && fail "O6: release passed a failed tag"
-rm -f .git/refs/tags/ot
+: >.git/refs/ot # why: a file where the ref folder must go
+out="$(git release --yes 2>&1)" && fail "O6: release passed a failed ref"
+rm -f .git/refs/ot
 git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null && git rev-parse -q --verify "refs/heads/$OT/c" >/dev/null &&
-	[ -z "$(git ls-remote --tags origin)" ] || fail "O6 tag failure state: $out"
-out="$(git release --yes 2>&1)" || fail "O6: resume after the tag failure: $out"
-[ "$(git cat-file -t "ot/$V/700")" = tag ] && [ "$(git rev-list --count "$V/ORIGINAL..$OT/RELEASE")" = 2 ] &&
+	[ -z "$(git ls-remote --tags origin)" ] || fail "O6 ref failure state: $out"
+out="$(git release --yes 2>&1)" || fail "O6: resume after the ref failure: $out"
+[ "$(git rev-parse "refs/ot/$V/700^{commit}")" != "" ] && [ "$(git rev-list --count "$V/ORIGINAL..$OT/RELEASE")" = 2 ] &&
 	! git rev-parse -q --verify "refs/heads/$OT/ORIGINAL" >/dev/null &&
-	ok "O6: a failed tag creation is resumed: tag created, one changelog commit" || fail "O6 tag resume: $out"
+	ok "O6: a failed ref creation is resumed: ref created, one changelog commit" || fail "O6 ref resume: $out"
 
 # --- O6: a failed subtree delete leaves a state the rerun completes, without a second set-aside --
 small_ot

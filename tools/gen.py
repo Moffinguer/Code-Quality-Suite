@@ -381,10 +381,10 @@ def policy_schema():
                     "default": d["branches"]["flow"],
                     "description": "squash (5.x) or merge (4.x behaviour, deprecated)",
                 },
-                "ot_tag": {
+                "ot_ref": {
                     "type": "string",
-                    "default": d["branches"]["ot_tag"],
-                    "description": "annotated tag on the OT ORIGINAL at the OT release; must "
+                    "default": d["branches"]["ot_ref"],
+                    "description": "hidden ref (refs/ot/...) at the OT ORIGINAL tip; must "
                     "contain {ot} ('' = none)",
                 },
                 "testing_leaf": {
