@@ -12,15 +12,25 @@ set -euo pipefail
 
 # add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit with SUBJECT.
 add_commit() {
+	mkdir -p "$(dirname "$1")"
 	printf '%s\n' "$2" >"$1"
 	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
+	# why: a QUARANTINE branch needs the Generated-by trailer on every commit of its own
+	case "$(git branch --show-current)" in
+	*/QUARANTINE-*) git commit -q -m "$3" -m "Generated-by: test" || fail "commit $3" ;;
+	*) git commit -q -m "$3" || fail "commit $3" ;;
+	esac
 }
 
 # mk BRANCH FROM [FILE]: create BRANCH at FROM, switch to it and, with FILE, commit that file.
 mk() {
 	git checkout -q -b "$1" "$2" || fail "create $1"
-	[ -z "${3:-}" ] || add_commit "$3" "$3" "chore: add $3"
+	[ -z "${3:-}" ] && return 0
+	# why: FORMAT takes style commits only
+	case "$1" in
+	*/FORMAT) add_commit "$3" "$3" "style: add $3" ;;
+	*) add_commit "$3" "$3" "chore: add $3" ;;
+	esac
 	return 0
 }
 
@@ -119,7 +129,7 @@ gone "$N/a2" && gone "$N/REVIEW-a2" && gone "$N/QUARANTINE-a2" && gone "$N/CHECK
 
 # --- IO4: git subir
 git checkout -q "$N/ORIGINAL"
-mk "$N/TESTS" "$N/ORIGINAL" tests.txt
+mk "$N/TESTS" "$N/ORIGINAL" src/test/tests.txt
 mk "$N/FORMAT" "$N/ORIGINAL" f.txt
 mk "$N/QUARANTINE-a3" "$N/ORIGINAL" q3.txt
 git checkout -q "$N/ORIGINAL" && git nr a3 >/dev/null && add_commit a3.txt a3 "feat: add a3" || fail "task a3"

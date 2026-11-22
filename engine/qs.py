@@ -21,7 +21,8 @@
   qs.py release-docs --version V [--date D]   README version badge and CITATION.cff
   qs.py repo-files [--force] [--dry-run] [NAME...]   create the missing standard repository files
 
-Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
+Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_GATE_LEVEL (level of a special branch, wins over
+     every other level), QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
      QS_EXEC_FILES (file listing executable paths), QUALITY_LOG_LEVEL/FORMAT/FILE.
 """
 
@@ -59,6 +60,51 @@ registry = importlib.import_module("registry")
 
 SUITE = os.path.dirname(HERE)
 SKIP_REASONS = ("excluded", "not a regular file")
+
+
+def gate_override():
+    """The gate level a special branch imposes (`QS_GATE_LEVEL`, set by the hooks).
+
+    Returns:
+        str: the level when the variable holds a known one, '' otherwise (no override).
+    """
+    lv = os.environ.get("QS_GATE_LEVEL", "")
+    return lv if lv in registry.LEVELS else ""
+
+
+class GateRules:
+    """The rules module seen through the special-branch level override.
+
+    Every attribute is the one of the `rules` module except `lang_level`, which returns the
+    override (when set) for every enabled language, over the language's own level.
+    """
+
+    def __getattr__(self, name):
+        """Delegate any other attribute to the rules module.
+
+        Args:
+            name: the attribute name.
+
+        Returns:
+            the attribute of the rules module.
+        """
+        return getattr(rules, name)
+
+    @staticmethod
+    def lang_level(data, lang_id, env_level=None):
+        """Level of a language: the override, else the one of the rules module.
+
+        Args:
+            data: the parsed rules file.
+            lang_id: the language id.
+            env_level: the level of QUALITY_LEVEL, or None.
+
+        Returns:
+            str: 'off' for a disabled language, the override when set, else the usual level.
+        """
+        if (data.get("languages") or {}).get(lang_id, {}).get("enabled") is False:
+            return "off"
+        return gate_override() or rules.lang_level(data, lang_id, env_level)
 
 
 def env(name, default):
@@ -792,7 +838,13 @@ class App:
         plans, pairs = {}, set()
         for lid, lfiles in sorted(by_lang.items()):
             steps, lvl = runner.plan(
-                self.reg, self.data, lid, lfiles, subtypes, os.environ.get("QUALITY_LEVEL"), rules
+                self.reg,
+                self.data,
+                lid,
+                lfiles,
+                subtypes,
+                os.environ.get("QUALITY_LEVEL"),
+                GateRules(),
             )
             plans[lid] = (steps, lvl)
             pairs |= {(lid, t["id"]) for t, _, _ in steps}
@@ -974,7 +1026,9 @@ class App:
         Returns:
             None. self.exit becomes 1 on any ERROR.
         """
-        glevel = os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        glevel = (
+            gate_override() or os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        )
         order = [lid for lid in sorted(plans) if lid in done]
         if "_global" in done:
             order.append("_global")
@@ -997,7 +1051,9 @@ class App:
             list[tuple]: (tool, settings, files) per step.
         """
         steps = []
-        lvl = os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        lvl = (
+            gate_override() or os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        )
         for tid in self.reg.global_tools:
             tool = self.reg.tools.get(tid)
             if not tool:
@@ -1093,7 +1149,7 @@ class App:
                 [c.path],
                 {c.path: c.subtypes},
                 os.environ.get("QUALITY_LEVEL"),
-                rules,
+                GateRules(),
                 quiet=True,
             )
             v = versions.resolve(
