@@ -182,24 +182,37 @@ si_rebase_refusal() {
 }
 
 # After a task is integrated: delete its REVIEW-<task>, QUARANTINE-<task> and CHECKPOINT-<task>
-# branches, locally and on origin, printing each tip so it can be restored (git branch <name>
-# <sha>). Asks per branch unless --yes. Needs say and confirm of git-rama.sh.
+# branches, locally and on origin. A deleted branch prints its tip so it can be restored (git branch
+# <name> <sha>); a kept branch prints only "kept". Asks per branch unless --yes. Needs say and
+# confirm of git-rama.sh.
 # Arguments: $1 the integrated task branch. Returns: 0; a branch that cannot be deleted is
 # reported and kept.
 si_drop_task_extras() {
-	local x tip
+	local x tip deleted
 	for x in $(si_task_extras "$1"); do
 		tip="$(git rev-parse -q --verify "refs/heads/$x" || git rev-parse -q --verify "refs/remotes/origin/$x")"
-		say "'$x' was at $tip (restore: git branch $x $tip)"
 		if ! confirm "delete '$x' (task integrated), locally and on origin?" 2>/dev/null; then
 			say "kept '$x'"
 			continue
 		fi
+		# why: the restore line is printed only when something was really deleted
+		deleted=0
 		if git show-ref --verify -q "refs/heads/$x"; then
-			git branch -q -D "$x" || say "could not delete '$x' locally (checked out in another worktree?)"
+			if git branch -q -D "$x"; then
+				deleted=1
+			else
+				say "could not delete '$x' locally (checked out in another worktree?)"
+			fi
 		fi
 		if git show-ref --verify -q "refs/remotes/origin/$x"; then
-			git push -q origin --delete "$x" || say "could not delete '$x' on origin"
+			if git push -q origin --delete "$x"; then
+				deleted=1
+			else
+				say "could not delete '$x' on origin"
+			fi
+		fi
+		if [ "$deleted" = 1 ]; then
+			say "'$x' was at $tip (restore: git branch $x $tip)"
 		fi
 	done
 	return 0
