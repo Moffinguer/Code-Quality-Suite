@@ -8,6 +8,17 @@ description: Use when creating, syncing, integrating or naming git branches, tag
 The model and its rules. Syntax and `Who:` of every command: the `git-commands` skill
 (`git ayuda <cmd>`). Who may do what: `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
 
+## Commit and merge flow (mandatory, every project)
+
+1. Flow `squash` (`branches.flow`): every integration is ONE single-parent commit with
+   `Commits:`, `Files:`, `Refs:`; a merge commit in an `ORIGINAL` is a defect.
+2. Commit only on final or special branches, through the hooks; never `--no-verify`. Never
+   move an ORIGINAL by hand (no merge, pull without `--rebase`, cherry-pick, reset, push).
+3. Run `git integra` only from the main checkout (the personal `.quality-rules.json` is
+   git-ignored; a worktree falls back to `flow: merge`). Agents never integrate.
+4. Before integrating check `"flow":`; before pushing check `%P` (one parent). On a mismatch
+   STOP and ask the human; a wrong pushed integration is never rewritten.
+
 ## The tree
 
 ```text
@@ -47,7 +58,7 @@ develop
 
 ## Closing
 
-- OT RELEASE: `git release` inside an OT closes it (tag, subtree deleted).
+- OT RELEASE: `git release` inside an OT closes it (hidden ref `refs/ot/...`, subtree deleted).
 - version RELEASE: `git release --version <v>`, then `git publicar` into `develop`.
   `git changelog` previews; `git limpiar-unmerged` cleans the `unmerged/...` leftovers.
 - `git release`, `git publicar`, `git combinar`, `git changelog --escribir`: human only.
@@ -66,5 +77,4 @@ develop
 
 - Commits: `type(scope): subject`, ASCII, <= 50 characters, body explains why, `Norms: <ids>`;
   never an AI co-author, never `--no-verify`.
-- Never force-push an ORIGINAL, develop or main; never merge into a final branch; never move
-  an ORIGINAL by hand (only `git integra`, `git release`, `git publicar`, `git combinar`).
+- Never force-push an ORIGINAL, develop or main; never merge into a final branch.

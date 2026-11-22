@@ -31,6 +31,6 @@ Never merge into an ORIGINAL.
 
 - Create: CHECKPOINT-<task> (`git checkpoint`, never pushed).
 - Work on: its final branch (the lead created it) or its ATTEMPT-<n>; `git revision --aplicar` on it.
-- Integrate: never (no `git integra`, no `git merge`, no `git np` / `git nr`; the lead does it).
+- Integrate: never (no `git integra`, no `git merge`, no `git pull` without `--rebase`, no `git np` / `git nr`; the lead does it).
 - Push: `git subir` (CHECKPOINT never; no raw `git push`, never an ORIGINAL).
 - `git release`, `git publicar`, `git combinar` are human only.

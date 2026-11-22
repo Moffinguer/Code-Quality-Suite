@@ -20,6 +20,8 @@
 #                         Squashed:), then it is deleted; '<v>/<ot>/ORIGINAL' goes up by git release
 #                         -m "<subject>" [-m "<body>"]: message without opening the editor (agents)
 #   git arbol [prefix]    the branch tree: parents, siblings, children, merged/behind state
+#                         (flow = squash: '= integrated as <sha>', TESTING, RELEASE marked)
+#                         --limpiar [--yes]: delete the integrated branches (local and origin)
 #   git estructura [file] the whole tree read from stdin (or files): creates what is missing from
 #   (git es)              its parent, checks what exists (never recreates), adds new siblings; a new
 #                         version tree gets its version commit (VERSION, pom.xml) like git np.
@@ -41,10 +43,10 @@
 #                         ORIGINAL tip, RELEASE and the ref pushed, the OT subtree deleted (resumable);
 #                         git changelog there previews it. On '<v>/ORIGINAL', develop or with
 #                         --version <v>: the version release, refused while an OT lacks its RELEASE;
-#                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE rebased in (oldest first),
+#                         '<v>/RELEASE' = '<v>/ORIGINAL' + every OT RELEASE squashed in as one commit (oldest first),
 #                         version, CHANGELOG.md (union of the OT sections) and badge commits, local
 #                         tag on its tip, one atomic push, OT RELEASEs and '<v>/ORIGINAL' deleted
-#                         (resumable; after a conflict: git rebase --continue, then git release).
+#                         (resumable; after a conflict: git commit, then git release).
 #                         --reset --version <v> [--yes]: forgets the resume state of a version
 #                         release given up (refused while '<v>/RELEASE' exists); a release whose
 #                         '<v>/RELEASE' was deleted by hand is also forgotten by the next git release
@@ -775,11 +777,192 @@ cmd_integra() {
 	is_parent_branch "$cur" || say "the final branch can go: git branch -d $cur$(exists_ref "refs/remotes/origin/$cur" && echo " && git push origin --delete $cur")"
 }
 
+# arbol_testing_sources <testing branch>: print the sources recorded in the marker commit of a
+# TESTING sandbox ('Sources:' block of its Testing-Create commit), comma separated.
+# Arguments: $1 the '<level>/TESTING' branch. Returns: 0; prints nothing when there is no marker.
+arbol_testing_sources() {
+	local ref m
+	ref="$(best_ref "$1" || true)"
+	[ -n "$ref" ] || return 0
+	m="$(git log --first-parent -n1 --format=%H --grep='^Testing-Create: ' "$ref" 2>/dev/null || true)"
+	[ -n "$m" ] || return 0
+	git log -n1 --format=%B "$m" |
+		awk '/^Sources:$/ { on = 1; next } on && NF == 0 { exit } on { printf "%s%s", sep, $1; sep = ", " }'
+}
+
+# checked_out_anywhere <branch>: succeed when <branch> is checked out in any worktree, this one
+# included. Arguments: $1 branch. Returns: 0 checked out, 1 otherwise.
+checked_out_anywhere() {
+	git worktree list --porcelain | grep -qxF "branch refs/heads/$1"
+}
+
+# copy_integrated <ref> <branch> <original> <pref>: print how the copy <ref> of a branch is in
+# <pref> (a copy of its ORIGINAL): "integrated as <sha>" (squash trailer) or "an ancestor of
+# <original>". A copy whose tip is the tip of <pref> is not integrated (an empty new branch).
+# Arguments: $1 branch copy ref, $2 branch, $3 ORIGINAL name, $4 ORIGINAL copy ref. Returns: 0 in
+# (prints the text), 1 not in or <pref> missing.
+copy_integrated() {
+	local sha
+	exists_ref "$4" || return 1
+	[ "$(git rev-parse "$1^{commit}")" != "$(git rev-parse "$4^{commit}")" ] || return 1
+	if git merge-base --is-ancestor "$1" "$4" 2>/dev/null; then
+		echo "an ancestor of $3"
+		return 0
+	fi
+	if squash_in "$1" "$2" "$3" "$4" && sha="$(squash_commit "$2" "$3" "$4")"; then
+		echo "integrated as $sha"
+		return 0
+	fi
+	squashed_in_chain "$1" "$4" || return 1
+	echo "in a branch squashed into $3"
+}
+
+# limpiar_verdict <branch> <original>: decide whether git arbol --limpiar may delete a branch.
+# EVERY existing copy must be integrated in the copy of the ORIGINAL on the same side: the local
+# copy in the local ORIGINAL, the origin copy in origin/<original>. Diverged copies are kept.
+# Sets LV_DESC (how it is integrated) and LV_WHY (why it is kept, empty when it is just pending
+# and not worth a line). Arguments: $1 branch, $2 ORIGINAL name. Returns: 0 deletable, 1 kept.
+limpiar_verdict() {
+	local b="$1" p="$2" lb="refs/heads/$1" rb="refs/remotes/origin/$1"
+	local lp="refs/heads/$2" rp="refs/remotes/origin/$2" ld="" rd="" rld=""
+	LV_DESC="" LV_WHY=""
+	if exists_ref "$lb"; then ld="$(copy_integrated "$lb" "$b" "$p" "$lp")" || ld=""; fi
+	if exists_ref "$rb"; then
+		rd="$(copy_integrated "$rb" "$b" "$p" "$rp")" || rd=""
+		rld="$(copy_integrated "$rb" "$b" "$p" "$lp")" || rld=""
+	fi
+	if exists_ref "$lb" && exists_ref "$rb" &&
+		! git merge-base --is-ancestor "$lb" "$rb" && ! git merge-base --is-ancestor "$rb" "$lb"; then
+		[ -z "$ld$rd$rld" ] || LV_WHY="local and origin copies diverged"
+		return 1
+	fi
+	if exists_ref "$lb" && [ -z "$ld" ]; then
+		[ -z "$rd" ] || LV_WHY="the local copy is not integrated (the origin one is)"
+		return 1
+	fi
+	if exists_ref "$rb" && [ -z "$rd" ]; then
+		if [ -n "$rld" ]; then
+			LV_WHY="$rld, but not in origin/$p: git push origin $p"
+		elif [ -n "$ld" ]; then
+			LV_WHY="the origin copy is not integrated (the local one is)"
+		fi
+		return 1
+	fi
+	LV_DESC="${ld:-$rd}"
+	return 0
+}
+
+# arbol_limpiar <prefix>: git arbol --limpiar (branches.flow = squash). Lists the branches that
+# git integra squashed into their ORIGINAL (a 'Refs:' trailer) or that are ancestors of it, and
+# deletes them after a confirmation (--yes skips it), only when every copy is integrated (see
+# limpiar_verdict). The origin copies go in one 'git push --atomic' with a lease on each expected
+# sha; the local copies are deleted only after that succeeded. Never deleted: an ORIGINAL with
+# children not integrated yet, a RELEASE, a TESTING sandbox, an 'unmerged/...' branch, a mainline
+# branch, anything checked out in a worktree. Arguments: $1 version prefix (may be empty).
+# Returns: 0; 1 when a deletion failed; exits through die with flow = merge.
+arbol_limpiar() {
+	local prefix="$1" b p pending where n failed=0
+	local -a gone=() descs=() delete_args=()
+	[ "${QS_BR_FLOW:-merge}" = squash ] || die "--limpiar needs branches.flow = squash (with merge the branches are ancestors: git branch -d)"
+	fetch_origin
+	while IFS= read -r b; do
+		[ -z "$prefix" ] || case "$b" in "$prefix"/* | "$prefix") ;; *) continue ;; esac
+		is_mainline "$b" && continue
+		is_archived_branch "$b" && continue
+		valid_branch_name "$b" >/dev/null 2>&1 || continue
+		is_testing_branch "$b" && continue
+		{ is_release_branch "$b" || is_ot_release_branch "$b"; } && continue
+		p="$(parent_branch "$b")"
+		[ -n "$p" ] || continue
+		if ! exists_ref "refs/heads/$p" && ! exists_ref "refs/remotes/origin/$p"; then
+			# its parent was squashed and deleted: the nearest ORIGINAL above holds the work
+			p="$(REL_TOP="" nearest_original "$b")"
+			[ -n "$p" ] || continue
+			exists_ref "refs/heads/$p" || exists_ref "refs/remotes/origin/$p" || continue
+		fi
+		if ! limpiar_verdict "$b" "$p"; then
+			[ -z "$LV_WHY" ] || say "kept '$b': $LV_WHY"
+			continue
+		fi
+		if checked_out_anywhere "$b"; then
+			say "kept '$b': $LV_DESC, but checked out in a worktree"
+			continue
+		fi
+		if is_parent_branch "$b"; then
+			pending="$(children_pending "$b")"
+			if [ -n "$pending" ]; then
+				say "kept '$b': $LV_DESC, but children not integrated: $pending"
+				continue
+			fi
+		fi
+		gone+=("$b")
+		descs+=("$LV_DESC")
+	done < <(
+		{
+			git for-each-ref --format='%(refname:short)' refs/heads/
+			git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
+		} | sort -u
+	)
+	if [ "${#gone[@]}" = 0 ]; then
+		say "nothing to clean: no integrated branch to delete"
+		return 0
+	fi
+	for n in "${!gone[@]}"; do
+		b="${gone[$n]}"
+		where="origin only"
+		exists_ref "refs/heads/$b" && where="local"
+		exists_ref "refs/heads/$b" && exists_ref "refs/remotes/origin/$b" && where="local and origin"
+		say "integrated: $b = ${descs[$n]} ($where)"
+	done
+	confirm "delete these ${#gone[@]} branch(es), locally and on origin?" 2>/dev/null || {
+		say "nothing deleted"
+		return 0
+	}
+	for b in "${gone[@]}"; do
+		exists_ref "refs/remotes/origin/$b" || continue
+		delete_args+=("--force-with-lease=refs/heads/$b:$(git rev-parse "refs/remotes/origin/$b")" ":refs/heads/$b")
+	done
+	if [ "${#delete_args[@]}" -gt 0 ]; then
+		if ! git push -q --atomic origin "${delete_args[@]}"; then
+			say "could not delete on origin (atomic push refused: a branch moved, or no permission); nothing was deleted"
+			return 1
+		fi
+	fi
+	for b in "${gone[@]}"; do
+		if exists_ref "refs/heads/$b"; then
+			if git branch -q -D "$b"; then say "deleted '$b'"; else
+				say "could not delete '$b' locally"
+				failed=1
+			fi
+		else
+			say "deleted '$b' (origin)"
+		fi
+	done
+	return "$failed"
+}
+
+# cmd_arbol [prefix] [--limpiar]: print the branch tree (parents '+', finals '-', pending commits,
+# behind state). With branches.flow = squash it reads the 'Refs:'/'Squashed:' trailers like git
+# integra (an integrated branch shows '= integrated as <sha>') and marks TESTING sandboxes (with
+# their sources) and the OT and version RELEASE; flow = merge prints exactly what 4.x did.
+# --limpiar deletes the integrated branches (arbol_limpiar). Returns: 0 (1 when a deletion failed); die on unknown options.
 cmd_arbol() {
-	local cur prefix
+	local cur prefix="" a clean=0 squash=0
+	for a in "$@"; do
+		case "$a" in
+		--limpiar) clean=1 ;;
+		-*) die "unknown option '$a' (arbol: [prefix] [--limpiar] [--yes])" ;;
+		*) prefix="$a" ;;
+		esac
+	done
+	qs_policy_load
+	[ "${QS_BR_FLOW:-merge}" != squash ] || squash=1
 	cur="$(current_branch || true)"
-	prefix="${1:-}"
 	if [ -z "$prefix" ] && [ -n "$cur" ] && ! is_mainline "$cur"; then prefix="$(branch_version "$cur")"; fi
+	if [ "$clean" = 1 ]; then
+		arbol_limpiar "$prefix"
+		return $?
+	fi
 	{
 		git for-each-ref --format='%(refname:short)' refs/heads/
 		git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
@@ -794,7 +977,7 @@ cmd_arbol() {
 			else printf '~\t%s\n' "$b"; fi
 		done | LC_ALL=C sort -t "$(printf '\t')" -k1,1 |
 		while IFS="$(printf '\t')" read -r node b; do
-			local ind="" p pref ref st="" i depth ahead behind
+			local ind="" p pref ref st="" i depth ahead behind sha plain=0
 			if [ "$node" = "~" ]; then
 				if is_archived_branch "$b"; then echo "~  $b   (set aside by git release)"; else echo "!  $b   (off-model)"; fi
 				continue
@@ -804,7 +987,22 @@ cmd_arbol() {
 			p="$(parent_branch "$b")"
 			pref="$(best_ref "$p" || true)"
 			ref="$(best_ref "$b" || true)"
-			if [ -n "$pref" ] && [ -n "$ref" ]; then
+			if [ "$squash" = 1 ]; then
+				if is_testing_branch "$b"; then
+					st=" [TESTING: sources $(arbol_testing_sources "$b")]"
+					plain=1
+				elif is_ot_release_branch "$b"; then
+					st=" [OT RELEASE]"
+					plain=1
+				elif is_release_branch "$b"; then
+					st=" [version RELEASE]"
+					plain=1
+				elif [ -n "$p" ] && exists_ref "refs/heads/$p" && sha="$(integrated_sha "$b" "$p")"; then
+					st=" = integrated as $sha (git arbol --limpiar deletes it)"
+					plain=1
+				fi
+			fi
+			if [ "$plain" = 0 ] && [ -n "$pref" ] && [ -n "$ref" ]; then
 				ahead="$(git rev-list --count "$pref..$ref")"
 				behind="$(git rev-list --count "$ref..$pref")"
 				if [ "$ahead" = 0 ]; then st=" (nothing pending for $p)"; else
@@ -2466,6 +2664,7 @@ ot_testing_clean() {
 ot_branch_in() {
 	local b="$1" p="$2" bt pt tree
 	branch_integrated "$b" "$p" 2>/dev/null && return 0
+	squashed_in_chain "$(best_ref "$b" || true)" "$(best_ref "$p" || true)" && return 0
 	bt="$(branch_tip "$b")"
 	pt="$(branch_tip "$p")"
 	tree="$(git merge-tree --write-tree "$pt" "$bt" 2>/dev/null)" || return 1
@@ -3057,20 +3256,50 @@ version_rebase_done() {
 	git config --unset "qs.release.$REL_VERSION.current" 2>/dev/null || true
 }
 
-# version_rebase_ot <ot>: put the commits of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE': git rebase
-# -i --onto <RELEASE> <version ORIGINAL> <OT RELEASE sha> on a detached HEAD (the OT RELEASE ref is
-# not moved), its commits that only change QS_BR_CHANGELOG dropped (docs(changelog) subjects: the OT
-# changelog commit and its reviews, whose text goes into the union entry); commits that become empty are dropped.
-# Then '<v>/RELEASE' moves to the result. Skipped when the OT is already done (qs.release.<v>.ots);
-# after a conflict solved with 'git rebase --continue' the result is taken as it is
-# (qs.release.<v>.current: '<ot> <RELEASE sha> <OT RELEASE sha>').
+# version_squash_message <ot> <rel> <base> <tip> <file>: write the message of the squash commit of
+# an OT into '<v>/RELEASE': a subject, the OT and its ref, the Files: block of base..tip and the
+# trailer 'Squashed: <ot RELEASE> <sha>'. Arguments: $1 OT, $2 OT RELEASE branch, $3 base commit,
+# $4 OT RELEASE tip, $5 output file. Returns: 0.
+version_squash_message() {
+	local o="$1" rel="$2" base="$3" tip="$4" out="$5" tag
+	tag="$(render_ot_ref "$REL_VERSION/$o")"
+	{
+		echo "chore(ot): OT $o of $REL_VERSION"
+		echo ""
+		echo "Release of OT $o ($rel)${tag:+, ref $tag}, brought in as one commit."
+		echo ""
+		squash_files_block "$base" "$tip"
+		echo ""
+		echo "Squashed: $rel $tip"
+	} >"$out"
+}
+
+# version_squash_commit <msgfile> <parent>: commit the staged squash of an OT on the detached HEAD
+# with plumbing (git commit-tree + reset): the work was gated on its own branches, so no hook runs
+# again over thousands of lines (the rebase it replaces ran none either). Moves HEAD to the commit.
+# Arguments: $1 message file, $2 parent commit. Returns: 0; ends the script when git fails (set -e).
+version_squash_commit() {
+	local tree c
+	tree="$(git write-tree)"
+	c="$(git commit-tree "$tree" -p "$2" -F "$1")"
+	git reset -q --hard "$c"
+}
+
+# version_rebase_ot <ot>: put the work of '<v>/<ot>/RELEASE' on top of '<v>/RELEASE' as ONE squash
+# commit: the tree difference of the OT RELEASE against its base, applied (git merge --squash, on a
+# detached HEAD) onto the '<v>/RELEASE' tip, never its individual commits (the OT history may hold
+# merge commits). CHANGELOG.md is kept as '<v>/RELEASE' has it: the union entry is written later
+# from the OT sections. Skipped when the OT is already done (qs.release.<v>.ots); after a conflict
+# solved by hand and committed the result is taken as it is (qs.release.<v>.current: '<ot> <RELEASE
+# sha> <OT RELEASE sha>'). Then '<v>/RELEASE' moves to the result.
 # Arguments: $1 OT; reads REL_VERSION REL_TIP REL_RELEASE. Returns: 0; exits through die on a
-# conflict (with the instructions) or a failed rebase.
+# conflict (with the instructions) or a failed merge.
 version_rebase_ot() {
-	local o="$1" rel cur onto tip head c drop=""
+	local o="$1" rel cur onto tip head c msg base gd
 	case " $(version_cfg ots) " in *" $o "*) return 0 ;; esac
 	rel="$REL_VERSION/$o/$QS_BR_RELEASE_LEAF"
 	onto="$(git rev-parse "refs/heads/$REL_RELEASE")"
+	gd="$(git rev-parse --absolute-git-dir)"
 	cur="$(version_cfg current)"
 	if [ "${cur%% *}" = "$o" ]; then
 		read -r _ c tip <<<"$cur"
@@ -3080,31 +3309,49 @@ version_rebase_ot() {
 		fi
 		head="$(git rev-parse -q --verify HEAD || true)"
 		if [ -z "$(current_branch || true)" ] && [ -n "$head" ] && [ "$head" != "$onto" ] && [ "$head" != "$tip" ] &&
-			git merge-base --is-ancestor "$onto" "$head"; then # finished with git rebase --continue
+			git merge-base --is-ancestor "$onto" "$head"; then # committed by hand after the conflict
 			git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
 			version_rebase_done "$o"
-			say "OT $o: the rebase finished by hand is now on $REL_RELEASE"
+			say "OT $o: the squash finished by hand is now on $REL_RELEASE"
+			return 0
+		fi
+		if [ -z "$(current_branch || true)" ] && [ "$head" = "$onto" ] && [ -f "$gd/SQUASH_MSG" ]; then
+			[ -z "$(git diff --name-only --diff-filter=U)" ] ||
+				die "OT $o still has conflicts. Solve them: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git reset --hard $REL_RELEASE"
+			version_squash_commit "$gd/SQUASH_MSG" "$onto"
+			git update-ref "refs/heads/$REL_RELEASE" "$(git rev-parse HEAD)" "$onto"
+			version_rebase_done "$o"
 			return 0
 		fi
 	fi
 	tip="$(git rev-parse "$(best_ref "$rel")")" || die "'$rel' is gone; the version release cannot go on (git config --get qs.release.$REL_VERSION.plan)"
-	while IFS= read -r c; do
-		[ -n "$c" ] && [ "$(git diff-tree --no-commit-id --name-only -r "$c")" = "$QS_BR_CHANGELOG" ] &&
-			git log -1 --format=%s "$c" | grep -q '^docs(changelog)' && drop="$drop $c"
-	done < <(git rev-list --no-merges "$tip" "^$REL_TIP" --)
+	base="$(git merge-base "$onto" "$tip")" || die "'$rel' has nothing in common with $REL_RELEASE"
 	version_cfg current "$o $onto $tip"
-	say "rebasing $rel onto $REL_RELEASE..."
-	# why: -i only to drop the changelog commits; the todo is edited by awk, nobody is asked
-	# shellcheck disable=SC2016 # why: expanded by the shell git runs for the sequence editor
-	if ! QS_RELEASE_DROP="$drop" GIT_SEQUENCE_EDITOR='f() { awk -v d="$QS_RELEASE_DROP" '\''BEGIN { n = split(d, a, " ") } $1 == "pick" { for (i = 1; i <= n; i++) if (index(a[i], $2) == 1) { $1 = "drop"; break } } { print }'\'' "$1" >"$1.qs" && mv -f "$1.qs" "$1"; }; f' \
-		git rebase -q -i --empty=drop --onto "$onto" "$REL_TIP" "$tip"; then
-		rebase_in_progress && die "conflict while rebasing OT $o onto $REL_RELEASE. Solve it: edit the files, git add them, git rebase --continue (repeat while it stops); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git rebase --abort"
-		die "the rebase of $rel onto $REL_RELEASE failed (see above); $REL_AGAIN"
+	say "squashing $rel into $REL_RELEASE..."
+	git checkout -q --detach "$onto"
+	msg="$gd/SQUASH_MSG"
+	git merge --squash --ff -q "$tip" >/dev/null || [ -n "$(git diff --name-only --diff-filter=U)" ] || die "the squash of $rel into $REL_RELEASE failed (see above); $REL_AGAIN"
+	# why: the changelog is rebuilt from the OT sections, never merged line by line
+	if git cat-file -e "$onto:$QS_BR_CHANGELOG" 2>/dev/null; then
+		git checkout -q "$onto" -- "$QS_BR_CHANGELOG"
+	else git rm -q -f --ignore-unmatch -- "$QS_BR_CHANGELOG"; fi
+	version_squash_message "$o" "$rel" "$base" "$tip" "$msg"
+	if [ -n "$(git diff --name-only --diff-filter=U)" ]; then
+		die "conflict while squashing OT $o into $REL_RELEASE, in: $(git diff --name-only --diff-filter=U | tr '\n' ' '). Solve it: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again: it resumes with the next OT. To start this OT again: git reset --hard $REL_RELEASE"
 	fi
+	if git diff --cached --quiet; then
+		rm -f "$msg"
+		git reset -q --hard "$onto"
+		version_rebase_done "$o"
+		say "OT $o: nothing to bring in ($REL_RELEASE already has it)"
+		return 0
+	fi
+	version_squash_commit "$msg" "$onto"
+	rm -f "$msg"
 	head="$(git rev-parse HEAD)"
 	git update-ref "refs/heads/$REL_RELEASE" "$head" "$onto"
 	version_rebase_done "$o"
-	say "OT $o: $(git rev-list --count "$onto..$head") commit(s) on $REL_RELEASE"
+	say "OT $o: 1 squash commit on $REL_RELEASE"
 }
 
 # version_tag_message <file>: write the message of the version tag: 'Release <tag> (<v>)', a blank
@@ -3183,7 +3430,7 @@ version_release_report() {
 	echo
 	echo "## Plan"
 	echo
-	echo "$i. $REL_RELEASE at $REL_TOP; the OT RELEASEs rebased into it, oldest first (changelog-only commits dropped):${REL_VOTS[*]+ ${REL_VOTS[*]}}"
+	echo "$i. $REL_RELEASE at $REL_TOP; each OT RELEASE squashed into it as one commit, oldest first (CHANGELOG.md kept):${REL_VOTS[*]+ ${REL_VOTS[*]}}"
 	i=$((i + 1))
 	echo "$i. up to three commits: $(version_subject "$REL_VERSION"), docs(changelog): $REL_VERSION (union of the OT sections), docs(readme): version $REL_VERSION"
 	i=$((i + 1))
@@ -3262,6 +3509,8 @@ version_release_run() {
 version_release() {
 	local o
 	! rebase_in_progress || die "a rebase is stopped: finish it (git rebase --continue) or give it up (git rebase --abort), then run git release --version $REL_VERSION again"
+	[ -z "$(git config --get "qs.release.$REL_VERSION.current" 2>/dev/null)" ] || [ -z "$(git diff --name-only --diff-filter=U)" ] ||
+		die "the squash of an OT into $REL_VERSION/$QS_BR_RELEASE_LEAF still has conflicts. Solve them: edit the files, git add them, git commit (the message is ready); then run git release --version $REL_VERSION again. To start the OT again: git reset --hard $REL_VERSION/$QS_BR_RELEASE_LEAF"
 	require_clean || die "working tree not clean: commit or stash first"
 	fetch_origin
 	if ! exists_branch "$REL_VERSION/$QS_BR_LEAF" && exists_branch "$REL_VERSION/$QS_BR_RELEASE_LEAF"; then

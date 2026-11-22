@@ -54,6 +54,8 @@ CHECKPOINT, plus TESTING. The creating aliases push by themselves (`publish_on_c
    `Files:` in the body): `git integra -m "<subject>" -m "<why>"`. **Human checkpoint:
    approve each merge.** `git release` (OT RELEASE, version RELEASE), `git publicar` and
    `git combinar` are human only; `git limpiar-unmerged` cleans what a release set aside.
+   Integrate only from the main checkout (it holds the real `.quality-rules.json`): check `"flow":`
+   before, and `git log -1 --format='%P' <ORIGINAL>` (one parent) before pushing.
 7. **Merge conflicts.** The `systems-analyst` suggests a resolution; the human decides.
 
 ## Rules every agent follows here

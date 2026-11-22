@@ -339,7 +339,7 @@ cmd_crear() {
 	tst_say "created $tref from $f/$QS_BR_LEAF with ${#srcs[@]} source(s):"
 	for i in "${!TST_SRC_BR[@]}"; do echo "  ${TST_SRC_BR[$i]} ${TST_SRC_SHA[$i]:0:10}"; done
 	qs_publish_new "$tref"
-	echo "Make commits on $tref; share them with: git push --force-with-lease origin $tref"
+	echo "Make commits on $tref; share it with: git push --force-with-lease origin $tref"
 }
 
 # git testing estado: show the sources and the commits made on TESTING.
