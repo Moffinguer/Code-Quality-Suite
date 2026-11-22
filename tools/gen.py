@@ -261,7 +261,12 @@ def special_schema():
 
 
 def policy_schema():
-    """encoding / commit / branches sections (engine/policy.py holds the defaults)."""
+    """data_class key and the encoding / commit / branches sections (engine/policy.py holds the
+    defaults).
+
+    Returns:
+        dict: the schema properties of the policy keys, merged into the top-level properties.
+    """
     d = policy.DEFAULTS
     cs = {"type": "string", "examples": ["utf-8", "iso-8859-1", "windows-1252", "ascii"]}
     bom = {"enum": ["forbid", "allow", "require"]}
@@ -276,6 +281,13 @@ def policy_schema():
         ]
     }
     return {
+        "data_class": {
+            "enum": list(policy.DATA_CLASSES),
+            "default": d["data_class"],
+            "description": "data class of the repository: public, internal or regulated; "
+            "regulated refuses QUARANTINE (git cuarentena) and the data never goes to free "
+            "model tiers or third-party endpoints that train on prompts",
+        },
         "encoding": {
             "type": "object",
             "description": "charset every shared text file must use; a file in another "

@@ -32,6 +32,7 @@ column; unknown languages/tools only warn.
   "$schema": "file:///…/schema/quality-rules.schema.json",
   "version": 1,
   "level": "standard",
+  "data_class": "internal",
   "exclude": ["generated/**", "*.pb.go"],
   "encoding": { "charset": "utf-8", "bom": "forbid", "by_language": {}, "by_glob": {}, "mojibake": "block" },
   "commit":   { "charset": "ascii", "types": ["feat", "fix", "…"], "subject_max": 50 },
@@ -59,6 +60,19 @@ Tool block: `enabled`, `level` (minimum level for this tool), `args` (extra CLI 
 Categories: `syntax` (parsers), `formatting` (identifying mark + the formatter), `analysis`
 (linters and deep analysers). Language ids and tool ids are listed in `docs/LANGUAGES.md`;
 the JSON Schema gives editors completion and the default rules of each tool.
+
+## Data class (`data_class`)
+
+Top-level key (not a section). The data class of the repository:
+
+| Value | Meaning |
+| --- | --- |
+| `public` | public data and code: any model or endpoint may see it |
+| `internal` | default: the team's own code and data |
+| `regulated` | regulated data: `git cuarentena` (QUARANTINE) refuses the repository, and its data never goes to free model tiers or third-party endpoints that train on prompts |
+
+Invalid values block the commit. The hooks read it from the policy environment as
+`QS_DATA_CLASS`, like the other keys.
 
 ## Encoding (`encoding`)
 

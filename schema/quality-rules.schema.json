@@ -13087,6 +13087,15 @@
    },
    "description": "globs never analysed"
   },
+  "data_class": {
+   "enum": [
+    "public",
+    "internal",
+    "regulated"
+   ],
+   "default": "internal",
+   "description": "data class of the repository: public, internal or regulated; regulated refuses QUARANTINE (git cuarentena) and the data never goes to free model tiers or third-party endpoints that train on prompts"
+  },
   "encoding": {
    "type": "object",
    "description": "charset every shared text file must use; a file in another encoding (or converted) blocks the commit",

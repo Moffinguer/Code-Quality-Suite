@@ -23,6 +23,7 @@ current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 # Arguments: none. Returns: 0.
 # shellcheck disable=SC2034 # why: these QS_* variables are read by the scripts that source this file
 qs_policy_defaults() {
+	QS_DATA_CLASS=internal
 	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
 	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1 QS_COMMIT_FILES=block
 	QS_BR_ENFORCE=block QS_BR_LEAF=ORIGINAL QS_BR_MAINLINE=develop QS_BR_PROTECTED='main master develop'
@@ -242,6 +243,10 @@ qs_policy_load() {
 	root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 	pol="$gd/quality-suite/policy.env"
 	rules="${root:+$root/.quality-rules.json}"
+	# why: a git alias runs outside the hooks, which are the only place that exports
+	# QUALITY_SUITE_DIR; without it the policy.env of an edited rules file is never refreshed
+	[ -n "${QUALITY_SUITE_DIR:-}" ] || [ ! -f "$gd/hooks/quality-suite.env" ] ||
+		. "$gd/hooks/quality-suite.env"
 	if [ -n "$rules" ] && [ -f "$rules" ] && { [ ! -f "$pol" ] || [ "$rules" -nt "$pol" ]; } &&
 		[ -n "${QUALITY_SUITE_DIR:-}" ] && command -v docker >/dev/null 2>&1 && [ "${QS_POLICY_NO_DOCKER:-0}" != 1 ]; then
 		# shellcheck disable=SC1091
@@ -530,7 +535,7 @@ configure_repo() {
 				continue
 			fi
 			printf -v "$k" '%s' "$s"
-			git config "alias.$n" "!bash '$s'"
+			git config "alias.$n" "!QS_ALIAS=$n bash '$s'" # why: one script may serve several aliases
 		done
 	done
 	# why: `git commit --amend -m` looks like a normal commit to the hooks (no /proc on Windows);

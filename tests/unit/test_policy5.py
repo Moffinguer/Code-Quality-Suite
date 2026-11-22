@@ -159,8 +159,34 @@ class DefaultsTest(unittest.TestCase):
             "QS_BR_OT_REF='refs/ot/{version}/{ot}'",
             "QS_BR_TESTING=TESTING",
             "QS_COMMIT_FILES=block",
+            "QS_DATA_CLASS=internal",
         ):
             self.assertIn(frag, lib)
+
+    def test_data_class_default_and_export(self):
+        """data_class defaults to internal and reaches the shell as QS_DATA_CLASS."""
+        self.assertEqual(policy.get({}, "data_class"), "internal")
+        self.assertIn("QS_DATA_CLASS='internal'\n", policy.shell_env({}))
+        self.assertIn("QS_DATA_CLASS='regulated'\n", policy.shell_env({"data_class": "regulated"}))
+
+    def test_data_class_values(self):
+        """The three data classes are valid; any other value is one error."""
+        for val in policy.DATA_CLASSES:
+            self.assertEqual(policy.validate({"data_class": val}), [])
+        errors = policy.validate({"data_class": "secret"})
+        self.assertEqual(len(errors), 1)
+        self.assertTrue(
+            errors[0].startswith("data_class: must be one of public, internal, regulated")
+        )
+
+    def test_data_class_populate(self):
+        """populate adds the top-level key without overwriting a value already set."""
+        data = {}
+        self.assertIn("data_class", policy.populate(data))
+        self.assertEqual(data["data_class"], "internal")
+        data = {"data_class": "public"}
+        self.assertNotIn("data_class", policy.populate(data))
+        self.assertEqual(data["data_class"], "public")
 
 
 class MigrateTest(unittest.TestCase):

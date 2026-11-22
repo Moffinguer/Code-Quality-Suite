@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Any
 
 import semver
 
@@ -173,7 +174,11 @@ SPECIAL_DEFAULTS = {
     ),
 }
 
-DEFAULTS = {
+DATA_CLASSES = ("public", "internal", "regulated")  # values of the top-level data_class key
+# why: typed Any, the entries are sections (dict) and one top-level scalar (data_class)
+DEFAULTS: dict[str, Any] = {
+    # top-level scalar, not a section: the data class of the repository (see DATA_CLASSES)
+    "data_class": "internal",
     "encoding": {
         "enabled": True,
         "charset": "utf-8",
@@ -368,16 +373,22 @@ def populate(data):
 def get(data, sec):
     """Effective policy section: the defaults overridden by the keys set in data.
 
+    A top-level scalar key (data_class) returns its value, or the default when unset.
+
     Args:
         data: the parsed rules file (dict), or None.
-        sec: name of the section, a key of DEFAULTS.
+        sec: name of the section or scalar key, a key of DEFAULTS.
 
     Returns:
-        dict: a new dict; the defaults are never modified.
+        dict or str: a new dict for a section (the defaults are never modified), the value of a
+        scalar key.
 
     Raises:
         KeyError: sec is not a known section.
     """
+    if not isinstance(DEFAULTS[sec], dict):
+        val = (data or {}).get(sec)
+        return DEFAULTS[sec] if val is None else val
     out = copy.deepcopy(DEFAULTS[sec])
     cur = (data or {}).get(sec)
     if isinstance(cur, dict):
@@ -482,8 +493,9 @@ def validate(data):
     errors = []
     for sec in SECTIONS:
         cur = data.get(sec)
-        if cur is not None and not isinstance(cur, dict):
+        if isinstance(DEFAULTS[sec], dict) and cur is not None and not isinstance(cur, dict):
             errors.append(f"{sec}: must be an object")
+    errors += _validate_data_class(get(data, "data_class"))
     errors += _validate_encoding(get(data, "encoding"))
     errors += _validate_commit(get(data, "commit"))
     errors += _validate_branches(get(data, "branches"))
@@ -616,6 +628,20 @@ def _validate_special_names(br):
             if name.lower() == leaf:
                 errors.append(f"branches.{key}: must differ from the special type {name}")
     return errors
+
+
+def _validate_data_class(val):
+    """Check the top-level 'data_class' key.
+
+    Args:
+        val: the value of the key, the default when unset (str).
+
+    Returns:
+        list[str]: one message when val is not one of DATA_CLASSES, else an empty list.
+    """
+    if val in DATA_CLASSES:
+        return []
+    return [f"data_class: must be one of {', '.join(DATA_CLASSES)} (got {val!r})"]
 
 
 def _validate_encoding(enc):
@@ -787,6 +813,7 @@ def shell_env(data):
     """KEY='value' lines for the host hooks (commit-msg, pre-push, git aliases)."""
     com, br = get(data, "commit"), get(data, "branches")
     lines = {
+        "QS_DATA_CLASS": get(data, "data_class"),
         "QS_COMMIT_CHARSET": com["charset"],
         "QS_COMMIT_TYPES": "|".join(com["types"]),
         "QS_COMMIT_SUBJECT_MAX": com["subject_max"],
