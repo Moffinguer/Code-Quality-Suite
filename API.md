@@ -55,13 +55,88 @@ Files can also come from a NUL-separated list: `QS_FILES_FROM=/qs-state/files.ls
 
 ## 4. Git aliases
 
-Installed per repository by `install.sh` (`configure_repo`): `np`, `nr`, `nueva-padre`,
-`nueva-final`, `convertir-padre`, `subir`, `integra`, `arbol`, `estructura`/`es`, `changelog`,
-`release`, `publicar`, `nueva-version`/`nv`, `combinar`, `repo-files`, `encoding`. Global, by
-`setup-global.sh`: `clonar`, `actualizar-suite`. Help: `bash scripts/git-rama.sh` (no arguments).
+Every command of the workflow is a git alias. The manual of each one (syntax, what it does, who
+runs it) is [docs/GIT-COMMANDS.md](docs/GIT-COMMANDS.md); `git ayuda [command]` prints it in the
+terminal. Repository aliases are registered by `install.sh` (`configure_repo`); global aliases by
+`setup-global.sh`. The Version column is the release that first registers the alias.
+
+| Alias | Version | Syntax | Purpose | Manual |
+| --- | --- | --- | --- | --- |
+| `np` / `nueva-padre` | 4.2.1 | `git np <name> [--from <branch>]` | new parent branch (version or OT) | [np](docs/GIT-COMMANDS.md#git-np) |
+| `nr` / `nueva-final` | 4.2.1 | `git nr <name> [--from <ORIGINAL>]` | new final branch for one task | [nr](docs/GIT-COMMANDS.md#git-nr) |
+| `convertir-padre` | 4.2.1 | `git convertir-padre [--yes]` | final branch becomes a parent | [convertir-padre](docs/GIT-COMMANDS.md#git-convertir-padre) |
+| `subir` | 4.2.1 | `git subir` | sync a branch with its parent and push | [subir](docs/GIT-COMMANDS.md#git-subir) |
+| `integra` | 4.2.1 | `git integra [-m "<subject>" [-m "<body>"]] [--force]` | integrate into the parent ORIGINAL | [integra](docs/GIT-COMMANDS.md#git-integra) |
+| `arbol` | 4.2.1 | `git arbol [prefix]` | show the branch tree and state | [arbol](docs/GIT-COMMANDS.md#git-arbol) |
+| `estructura` / `es` | 4.2.1 | `git es [file] [-n] [--push] [--convertir]` | create a branch tree from stdin | [es](docs/GIT-COMMANDS.md#git-estructura--git-es) |
+| `changelog` | 4.2.1 | `git changelog [tag] [--version <v>] [-o <file>]` | preview what a release contains | [changelog](docs/GIT-COMMANDS.md#git-changelog) |
+| `release` | 4.2.1 | `git release [tag] [--version <v>] [--yes] [--no-push]` | prepare a version release | [release](docs/GIT-COMMANDS.md#git-release) |
+| `publicar` | 4.2.1 | `git publicar [tag] [--version <v>] [--yes] [--no-push]` | publish the reviewed release into develop | [publicar](docs/GIT-COMMANDS.md#git-publicar) |
+| `combinar` | 4.2.1 | `git combinar [--incluir <v1,v2...>] [--version <v>] [--yes]` | join prepared releases into one | [combinar](docs/GIT-COMMANDS.md#git-combinar) |
+| `nueva-version` / `nv` | 4.2.1 | `git nv <version> [--from <branch>] [--arbol-completo] [-n]` | test or pre-release version tree | [nv](docs/GIT-COMMANDS.md#git-nueva-version--git-nv) |
+| `repo-files` / `ficheros-repo` | 4.2.1 | `git repo-files [-n] [--force NAME...]` | create missing standard files | [repo-files](docs/GIT-COMMANDS.md#git-repo-files) |
+| `encoding` | 4.2.1 | `git encoding [--fix] [file...]` | check or repair the encoding of changes | [encoding](docs/GIT-COMMANDS.md#git-encoding) |
+| `clonar` | 4.2.1 | `git clonar <url> [folder]` | clone and set up (global) | [clonar](docs/GIT-COMMANDS.md#git-clonar) |
+| `iniciar` | 4.2.1 | `git iniciar [folder] [--sin-ia] [--remoto <url>]` | start a new project (global) | [iniciar](docs/GIT-COMMANDS.md#git-iniciar) |
+| `instalar` | 4.2.1 | `git instalar [repo]` | set up a clone already on disk (global) | [instalar](docs/GIT-COMMANDS.md#git-instalar) |
+| `ia` | 4.2.1 | `git ia [--actualizar]` | add or refresh the AI agent files (global) | [ia](docs/GIT-COMMANDS.md#git-ia) |
+| `ayuda` | 4.2.1 | `git ayuda [command]` | print the manual (global) | [ayuda](docs/GIT-COMMANDS.md#git-ayuda) |
+| `actualizar-suite` | 4.2.1 | `git actualizar-suite [--status \| --langs "..." \| --lazy \| --yes]` | update the suite on this machine (global) | [actualizar-suite](docs/GIT-COMMANDS.md#git-actualizar-suite) |
+| `testing` | 5.0.0-RC1 | `git testing crear \| estado \| repartir ...` | try several branches together in a sandbox | [testing](docs/GIT-COMMANDS.md#git-testing) |
+| `limpiar-unmerged` | 5.0.0-RC1 | `git limpiar-unmerged [-n] [--yes]` | delete archived `unmerged/...` branches already integrated | [limpiar-unmerged](docs/GIT-COMMANDS.md#git-limpiar-unmerged) |
+| `amend` | 5.0.0-RC1 | `git amend [git commit --amend options]` | amend a commit through the hooks | none yet in GIT-COMMANDS.md |
+
+Planned for the 6.0.0 special branches (`migracion`, `docs`, `refactor`, `tests`, `formatear`,
+`spike`, `intentos`, `elegir`, `revision`, `cuarentena`, `aceptar`, `checkpoint`): not registered
+yet, so they are not in the table. Their state is in
+[GIT-COMMANDS.md section 5](docs/GIT-COMMANDS.md#5-branches).
 
 Merge driver `qs-version` (`.git/info/attributes`: `/VERSION`, `pom.xml`, `package.json`):
 `bash scripts/merge-version.sh %O %A %B %P`.
+
+### 4.1 Usage guide
+
+Five common journeys. Each step names who runs it; details are in the
+[manual](docs/GIT-COMMANDS.md). Branch names: `<version>/<ot>/<task>`.
+
+1. **Start a version** (human):
+
+   ```bash
+   git checkout develop && git np patch          # 6.22.7/ORIGINAL
+   ```
+
+2. **Do a task** (developer, on its own final branch):
+
+   ```bash
+   git nr login --from 6.22.7/188858/ORIGINAL    # 6.22.7/188858/login
+   # edit, then: git add -A && git commit -m "feat(login): add certificate login"
+   git subir                                     # rebase onto the OT ORIGINAL and push
+   ```
+
+3. **Bugfix loop** (developer, same final branch):
+
+   ```bash
+   git arbol                                     # where am I, what is behind
+   git encoding --fix                            # only if a commit stopped with ENCODING
+   git commit -m "fix(login): accept expired certificates"
+   git subir                                     # after the parent moved
+   ```
+
+4. **Close an OT** (lead): every task integrated into the OT ORIGINAL, then the OT moves up:
+
+   ```bash
+   git checkout 6.22.7/188858/login && git integra -m "feat(login): add certificate login"
+   git checkout 6.22.7/188858/ORIGINAL && git integra -m "feat(login): OT 188858 login" -m "<why>"
+   ```
+
+5. **Release and publish a version** (human, after every OT is integrated):
+
+   ```bash
+   git changelog                                 # preview: changes, semver advice, checks
+   git release                                   # 6.22.7/RELEASE for review
+   git publicar                                  # after review: into develop, tagged
+   git limpiar-unmerged -n                       # later: preview the archive cleanup
+   ```
 
 ## 5. AI gateway (`ai-stack/`)
 
