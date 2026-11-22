@@ -147,3 +147,25 @@ mv .git/hooks/pre-push.suite .git/hooks/pre-push
 { on_origin 6.0.0/ot1/part1 || on_origin 6.0.0/ot1/part1/ORIGINAL; } &&
 	ok "QA new name refused by pre-push: the work is still on origin under some name" ||
 	fail "QA part-refusal LOST the work on origin (tip $tip): rc=$rc $out"
+
+# --- server side: a pre-receive hook on the bare origin refuses the new name '*/ORIGINAL' of a
+# part while it accepts the deletion; the branch must survive on origin under its old name
+case_sandbox squash
+git np 6.0.0 >/dev/null 2>&1
+git np ot1 >/dev/null 2>&1
+git nr part1 >/dev/null 2>&1
+tip="$(git rev-parse 6.0.0/ot1/part1)"
+mkdir -p "$CASE_REPO.git/hooks"
+cat >"$CASE_REPO.git/hooks/pre-receive" <<'HOOK'
+#!/bin/sh
+while read old new ref; do
+	case "$ref" in */part1/ORIGINAL) echo "server refuses $ref" >&2; exit 1 ;; esac
+done
+exit 0
+HOOK
+chmod +x "$CASE_REPO.git/hooks/pre-receive"
+out="$(git convertir-padre 2>&1)" && rc=0 || rc=$?
+back="$(git ls-remote origin "refs/heads/6.0.0/ot1/part1" | cut -f1)"
+{ [ "$back" = "$tip" ] && ! on_origin 6.0.0/ot1/part1/ORIGINAL; } &&
+	ok "QA pre-receive refuses the new name: the old name is put back on origin (rc=$rc)" ||
+	fail "QA pre-receive: rc=$rc back=$back tip=$tip $out"
