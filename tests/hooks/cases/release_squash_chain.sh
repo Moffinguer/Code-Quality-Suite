@@ -64,8 +64,8 @@ expected="$(printf '%s\n' "chore(version): $V" "chore(ot): OT m of $V" "chore(ot
 	[ "$(git show "$V/RELEASE:n.py")" = 'N = 1' ] && [ "$(git show "$V/RELEASE:n_side.txt")" = 'side of n' ] &&
 	ok "R1: each OT is one squash commit in OT order, no merge commit, nothing replayed" || fail "R1: $subjects / $out"
 body="$(git log -n1 --format=%B --grep="^chore(ot): OT m of $V" "$V/RELEASE")"
-grep -qx "Squashed: $V/m/RELEASE [0-9a-f]\{40\}" <<<"$body" && grep -q "tag ot/$V/m" <<<"$body" && grep -q '^Files:' <<<"$body" &&
-	ok "R1: the squash message names the OT, its tag and Squashed: <ot RELEASE> <sha>" || fail "R1 message: $body"
+grep -qx "Squashed: $V/m/RELEASE [0-9a-f]\{40\}" <<<"$body" && grep -q "ref refs/ot/$V/m" <<<"$body" && grep -q '^Files:' <<<"$body" &&
+	ok "R1: the squash message names the OT, its ref and Squashed: <ot RELEASE> <sha>" || fail "R1 message: $body"
 cl="$(git show "$V/RELEASE:CHANGELOG.md")"
 [ "$(grep -c "^## \[\{0,1\}$V\]\{0,1\} - " <<<"$cl")" = 1 ] && [ "$(grep -c '^- ' <<<"$cl")" = 4 ] && grep -q '^- Add n.py (.*; n)$' <<<"$cl" &&
 	[ "$(git rev-parse "$V^{commit}")" = "$(git rev-parse "$V/RELEASE")" ] &&
