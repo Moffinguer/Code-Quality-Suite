@@ -3883,28 +3883,32 @@ combine_copy_point() {
 	return 0
 }
 
-# combine_contains <later> <earlier>: whether a RELEASE already holds all of another one, so the
-# earlier one must not be squashed again. True when the earlier tip is an ancestor of the later;
-# or when every own commit of the earlier one (not in develop; no release commit, no mainline
-# merge) is an ancestor of the later or is named in a message of its history (the 'Commits:' list
-# of the squash that merged it in); or when applying the earlier one's changes on the later one
-# merges cleanly and changes nothing.
+# combine_contains <later> <earlier>: whether a RELEASE already holds the work of another one it
+# shares no squashed history with, so the earlier one must not be squashed again (a RELEASE built
+# on the earlier one keeps its own squash: see combine_counts). True when the earlier tip is not
+# an ancestor of the later and either every own commit of the earlier one that the later lacks
+# (not in develop; no release commit, no mainline merge) is named in a message of the later
+# history (the 'Commits:' list of the squash that merged it in), or the two share no history
+# beyond develop and applying the earlier one's changes on the later one merges cleanly and
+# changes nothing.
 # Arguments: $1 the later tip; $2 the earlier tip. Exit status: 0 when contained, 1 otherwise.
 combine_contains() {
 	local later="$1" earlier="$2" h s mb out bodies="" n=0
-	if git merge-base --is-ancestor "$earlier" "$later"; then return 0; fi
+	if git merge-base --is-ancestor "$earlier" "$later"; then return 1; fi
 	bodies="$(git log --format=%B "$later" "^$CB_BASE" --)"
 	while IFS=$'\x1f' read -r h s; do
 		combine_mainline_merge "$h" && continue
 		[[ $s =~ $RELEASE_COMMITS_RX ]] && continue
-		n=$((n + 1))
 		git merge-base --is-ancestor "$h" "$later" && continue
 		grep -q -- "^- ${h:0:7}" <<<"$bodies" || {
 			n=-1
 			break
 		}
+		n=$((n + 1))
 	done < <(git log --format='%H%x1f%s' "$earlier" "^$CB_BASE" --)
 	[ "$n" -gt 0 ] && return 0
+	mb="$(git merge-base "$earlier" "$later" | sed -n 1p)"
+	if [ -n "$mb" ] && ! git merge-base --is-ancestor "$mb" "$CB_BASE"; then return 1; fi
 	mb="$(git merge-base "$earlier" "$CB_BASE" | sed -n 1p)"
 	[ -n "$mb" ] || return 1
 	out="$(git merge-tree --write-tree --no-messages "--merge-base=$mb" "$later" "$earlier" 2>/dev/null)" || return 1
