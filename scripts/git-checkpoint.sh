@@ -28,13 +28,19 @@ ck_die() {
 	exit 1
 }
 
-# The CHECKPOINT branch of the current task branch.
+# The CHECKPOINT branch of the current task branch. An attempt '<node>/<task>/ATTEMPT-<n>' has the
+# checkpoints of its task, so it maps through '<node>/<task>'.
 # Arguments: $1 current branch. Returns: 0 and prints '<node>/CHECKPOINT-<task>'; exits 1 with the
-# reason when the branch is not a task (mainline, special or invalid name).
+# reason when the branch is not a task (mainline, other special or invalid name).
 ck_branch_of() {
 	local cur="$1" node task why
 	why="$(valid_branch_name "$cur" 2>&1)" || ck_die "'$cur' is not a valid branch: $why"
 	is_mainline "$cur" && ck_die "'$cur' is not a task branch"
+	# why: the attempt segment is the leaf; its task is the segment before it
+	if [[ ${cur##*/} =~ ^ATTEMPT-[0-9]+$ ]] && [ "$(special_kind "$cur")" = ATTEMPT ]; then
+		ck_branch_of "${cur%/*}"
+		return
+	fi
 	[ -z "$(special_kind "$cur")" ] || ck_die "'$cur' is a special branch: checkpoint a task branch"
 	node="${cur%/"$QS_BR_LEAF"}"
 	[ "$(branch_depth "$node")" -ge 3 ] || ck_die "'$cur' is not a task branch"

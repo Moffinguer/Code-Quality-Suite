@@ -65,3 +65,17 @@ git checkpoint "step 3" >/dev/null || fail "git checkpoint step 3"
 git reset -q --hard
 git checkout -q 6.0.0/ot1/ORIGINAL
 git checkpoint "x" >/dev/null 2>&1 && fail "checkpoint on an ORIGINAL accepted" || ok "an ORIGINAL cannot be checkpointed"
+
+# --- CK4 an attempt saves on the checkpoints of its task; other special branches stay refused
+git np t >/dev/null
+git branch 6.0.0/ot1/t/ATTEMPT-1 6.0.0/ot1/t/ORIGINAL
+git checkout -q 6.0.0/ot1/t/ATTEMPT-1
+printf 'attempt\n' >t.txt
+git checkpoint "attempt step" >/dev/null && ok "git checkpoint saves on an attempt" || fail "checkpoint on an attempt"
+git show-ref --verify -q refs/heads/6.0.0/ot1/CHECKPOINT-t && ok "attempt maps to CHECKPOINT-<task>" || fail "attempt did not map to 6.0.0/ot1/CHECKPOINT-t"
+[ "$(git rev-parse 6.0.0/ot1/CHECKPOINT-t^)" = "$(git rev-parse 6.0.0/ot1/t/ATTEMPT-1)" ] && ok "the attempt point hangs from the attempt tip" || fail "attempt point parent"
+git checkout -q 6.0.0/ot1/ORIGINAL
+git branch 6.0.0/ot1/REFACTOR 6.0.0/ot1/ORIGINAL
+git checkout -q 6.0.0/ot1/REFACTOR
+git checkpoint "x" >/dev/null 2>&1 && fail "checkpoint on a REFACTOR accepted" || ok "another special branch is still refused"
+git checkout -q 6.0.0/ot1/ORIGINAL
