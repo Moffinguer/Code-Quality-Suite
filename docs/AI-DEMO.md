@@ -17,7 +17,7 @@ Groq · Cerebras · Gemini · NVIDIA NIM · SambaNova · OpenRouter · Mistral �
 ```
 
 > **Public or invented code only.** Free tiers may log prompts or train on them. Never run the demo
-> on Junta code: that goes to `role-local` or to the paid configuration.
+> on regulated code: that goes to `role-local` or to the paid configuration.
 
 ## 1. Get the keys
 
