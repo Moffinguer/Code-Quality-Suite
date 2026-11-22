@@ -235,10 +235,10 @@ file is UTF-8 unless the rules say otherwise; the hooks reject anything else.
 
 ## 7. Feeding the Junta norms
 
-Drop each new Junta notification (PDF, DOCX, mail export) into `knowledge/jda/inbox/` and ask:
+Drop each new Junta notification (PDF, DOCX, mail export) into `knowledge/norms/inbox/` and ask:
 *"Ingest the inbox"*. The `jda-ingest` skill splits it into one note per norm under
-`knowledge/jda/norms/`, updates `knowledge/jda/INDEX.md`, and proposes rule changes for
-`.quality-rules.json` in `knowledge/jda/proposals/` for you to approve. From then on every task
+`knowledge/norms/norms/`, updates `knowledge/norms/INDEX.md`, and proposes rule changes for
+`.quality-rules.json` in `knowledge/norms/proposals/` for you to approve. From then on every task
 starts with the `jda-norms` checklist. Your own procedures become recipes: copy
 `.agents/skills/recipe-template/` (see `docs/SKILLS.md`), then `bash <suite>/scripts/ai-sync.sh`.
 

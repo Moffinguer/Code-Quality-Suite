@@ -15,7 +15,7 @@ Last release: 2.6.0. What changed: [CHANGELOG.md](CHANGELOG.md).
 ## Next
 
 - AI layer ([docs/AI-SETUP.md](docs/AI-SETUP.md)): first Junta notifications into
-  `knowledge/jda/inbox/`, then the skills that read them.
+  `knowledge/norms/inbox/`, then the skills that read them.
 - Build order step 4 of [docs/KNOWLEDGE-FLYWHEEL.md](docs/KNOWLEDGE-FLYWHEEL.md): LangGraph triage
   -> worker -> gate -> lessons learned.
 - A model catalog in a database (defined, deleted and reordered without editing YAML).

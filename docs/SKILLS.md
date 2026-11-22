@@ -30,12 +30,12 @@ reads. `scripts/ai-init.sh <repo>` creates them from `ai-template/`; existing fi
 
 ```text
 Junta notification (PDF, DOCX, e-mail)
-   -> knowledge/jda/inbox/                     you drop it there
+   -> knowledge/norms/inbox/                     you drop it there
    -> "ingest the inbox" (skill jda-ingest)    agent extracts atomic rules
-   -> knowledge/jda/norms/<area>-<name>.md     one note per rule: id, quoted text, status,
+   -> knowledge/norms/norms/<area>-<name>.md     one note per rule: id, quoted text, status,
                                                applies_to, source, date, supersedes, check
-   -> knowledge/jda/INDEX.md                   topic -> norms -> enforced by
-   -> knowledge/jda/proposals/<date>.md        rule changes for .quality-rules.json (you approve)
+   -> knowledge/norms/INDEX.md                   topic -> norms -> enforced by
+   -> knowledge/norms/proposals/<date>.md        rule changes for .quality-rules.json (you approve)
    -> every later task: skill jda-norms        checklist of applicable norms, cited in commits
 ```
 

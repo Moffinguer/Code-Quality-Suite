@@ -1,9 +1,9 @@
 ---
-id: JDA-VCS-001
+id: VCS-001
 title: Branch model per version and work order (example note)
 status: mandatory
 applies_to: [git]
-source: "Team agreement 2026-10 (example; replace with the real Junta document)"
+source: "Team agreement 2026-10 (example; replace with the real source document)"
 date: 2026-10-12
 supersedes: []
 check: "branches: <version>/<ot>/.../ORIGINAL (hooks pre-push, pre-rebase, pre-merge-commit)"

@@ -1,4 +1,4 @@
-# Junta de Andalucia norms map
+# Norms map
 
 | Topic | Norms | Enforced by |
 | --- | --- | --- |
@@ -9,7 +9,7 @@
 | Front end (JSP, HTML, CSS, JS) | | |
 | Naming and code style | | |
 | Documentation and delivery | | |
-| Version control | JDA-VCS-001 (branch model, example) | branches policy, hooks |
+| Version control | VCS-001 (branch model, example) | branches policy, hooks |
 
 ## Changelog
 

@@ -13,7 +13,7 @@ skills and in `knowledge/`.
 ## Rules that always apply
 
 1. **Norms first.** Before designing or writing code, use the `jda-norms` skill: it reads
-   `knowledge/jda/INDEX.md` and tells you which Junta norms apply. Cite the norm ids you
+   `knowledge/norms/INDEX.md` and tells you which Junta norms apply. Cite the norm ids you
    applied in the commit body (`Norms: JDA-ARQ-003, JDA-SEG-010`).
 2. **Quality gate.** After editing files, run `bash <SUITE>/scripts/qs-run.sh <files>` (Claude
    Code does it automatically through a hook). Fix every finding; never weaken a rule in
@@ -61,6 +61,6 @@ plan, approve each merge (bottom-up) and the merge into `develop`.
 
 ## Where things are
 
-- `knowledge/jda/` norms map (INDEX.md, one note per norm), `knowledge/recipes/` the team's
+- `knowledge/norms/` norms map (INDEX.md, one note per norm), `knowledge/recipes/` the team's
   recipe book, `knowledge/lessons/` lessons learned, `knowledge/decisions/` ADRs.
 - `.agents/skills/` skills for all agents (Claude Code reads the synced copy in `.claude/skills/`).

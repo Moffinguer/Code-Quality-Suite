@@ -1,11 +1,11 @@
 ---
 name: jda-norms
-description: Use before designing, coding or reviewing anything in a Junta de Andalucia project. Finds the Junta development norms that apply to the task in knowledge/jda and lists what they require.
+description: Use before designing, coding or reviewing anything in a Junta de Andalucia project. Finds the Junta development norms that apply to the task in knowledge/norms and lists what they require.
 ---
 
 # Apply the Junta norms
 
-1. Read `knowledge/jda/INDEX.md`. It maps topics (architecture, security, accessibility,
+1. Read `knowledge/norms/INDEX.md`. It maps topics (architecture, security, accessibility,
    documentation, databases, front end, naming, delivery) to norm notes.
 2. Pick every note whose `applies_to` matches the task (file types, layers, deliverables).
    Read those notes in full; read the `sources` excerpt only if a rule is ambiguous.
