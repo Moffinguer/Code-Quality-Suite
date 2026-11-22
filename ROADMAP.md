@@ -2,56 +2,80 @@
 
 <!-- Convention: informal; GitLab direction pages (https://about.gitlab.com/direction/) as a model. -->
 
-Last release: 4.2.1. What changed: [CHANGELOG.md](CHANGELOG.md).
+Last release: 6.1.0. What changed: [CHANGELOG.md](CHANGELOG.md).
 
-## Now
+Items are not promises. Built items leave this page and stay in the changelog only.
 
-- **5.0.0-RC1**: squash flow (`branches.flow = squash`), one OT release per OT
-  (`<v>/<ot>/RELEASE`, tag `ot/<v>/<ot>`), one version release (`<v>/RELEASE`) that is refused while
-  an OT is open, `git publicar` as one commit on `develop`, `Files:` in every commit, the TESTING
-  sandbox (`git testing`) and `git limpiar-unmerged`. See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md)
-  and [docs/UPDATING.md](docs/UPDATING.md).
+## 7.0.0
+
+- GitHub project as code, and GitHub Actions that re-run the quality gate and the branch rules
+  (the repository settings branch is already built).
+- Rulesets and remote hook checks on the server side.
+
+## 7.1.0 (not shipped yet)
+
+- Parallel agents and prompt engineering.
+- Agent development is work in progress: only Claude Code is tested. OpenCode, other models,
+  the gateway and the AI-stack database are not working yet.
+- AI layer ([docs/AI-SETUP.md](docs/AI-SETUP.md)): feed client notifications into the knowledge
+  inbox first, then add the skills that read them.
 - Install on Windows 11 following [INSTALL.md](INSTALL.md): check whether the hooks become
   symbolic links (Developer Mode) or stubs, and report what breaks.
 - Try the release flow on a real Maven repository: `git np patch`, `git release`, `git publicar`,
   the `pom.xml` version and the merge driver after a second release.
 - Pin the `sha256` of every download once the first real build prints them.
 
-## Next
+## 7.1.1
 
-- **6.0.0: special branches.** New final branches under `<v>/special` (spec in
-  `docs/6.0.0/spec.md`), with auto-publish of new branches, the rules upgrade and the agent flow
-  as separate parts, and the `merge` flow is removed (as [docs/UPDATING.md](docs/UPDATING.md) and
-  [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) say). The final scope is defined in the approved
-  6.0.0 spec.
-- **6.1.0 = 5.0.0-RC1 + 6.0.0**, combined with `git combinar` and published to `develop`:
-  - auto-publish of new branches;
-  - the rules upgrade on suite update (`git actualizar-suite` applies the rules-file changes);
-  - the branch flow in each agent's context (the `branch-workflow` and `team-flow` skills and
-    `AGENTS.md`).
-- **6.1.1: more Conventional Commits types** accepted by the subject check and the changelog
-  groups.
-- **7.0.0: GitHub project and Actions.** Repository settings and rulesets for `main`, `develop`,
-  `ORIGINAL` and `RELEASE` branches; GitHub Actions that re-run the gate and the branch-model
-  checks on every push. The hooks are still missing.
-- **7.1.0: documentation sweep and parallel agents.** Unified root docs; parallel agents and
-  prompt engineering; new repositories start on `main` instead of `master`.
-- AI layer ([docs/AI-SETUP.md](docs/AI-SETUP.md)): first Junta notifications into
-  `knowledge/jda/inbox/`, then the skills that read them.
-- Build order step 4 of [docs/KNOWLEDGE-FLYWHEEL.md](docs/KNOWLEDGE-FLYWHEEL.md): LangGraph triage
-  -> worker -> gate -> lessons learned.
-- A model catalog in a database (defined, deleted and reordered without editing YAML).
+- General refactor of all files: remove duplication and dead code.
+- Commit-flow guards: `git integra` refuses a flow mismatch or a default rules file; the
+  pre-push hook refuses merge commits on an ORIGINAL branch.
+- `KNOWN_BUGS.md` at the root, with the rule to cherry-pick bug fixes first.
+- One agent per feature.
 
-## Later
+## 7.2.0
 
-- **HOTFIX, REPRO and BACKPORT branches.** They need a decision first on how `main` moves when a
-  fix leaves `develop` for a live release (which branch carries it, and how it returns to
-  `develop`).
-- **Baseline cleanup of the pre-existing gate findings.** The first push of `main` found 328
-  findings in 268 files (shfmt, markdownlint, ruff, prettier, yamlfmt, xmllint, ...), including the
-  deliberately broken `tests/noclash/bad/*` fixtures. Plan: exclude the test fixtures through a
-  tracked mechanism (like `qs-generated`), then format and fix the rest, logged in the quality log.
-- Agent hierarchy by change risk (orchestrator, analysts, QA, developers, interns) with paid
+- Forge integration MVP, GitHub first. A provider module per forge, chosen by the repository
+  host; unknown hosts stay off.
+- Per OT, a project view per version. An issue per feature ORIGINAL branch. A milestone per
+  version with an estimated end date.
+- First, research the GitHub API limits.
+
+## 7.2.1 and 7.2.1-RC1
+
+- FEAT_and BUG_ branches outside the version trees (bugs start from main), gathered into a
+  version on demand.
+- Pilot 7.2.1-RC1: one FEAT_branch per language that rewrites the linter and formatter
+  configs from common community configs; BUG_ branches for open known bugs. Maybe an RC2.
+- Discuss new branch types: snapshot, beta, experimental.
+- Deferred 6.0.0 work lands here too: `refactor_tests`, `format_branch`, the changelog writer
+  chain (DOCS writes the changelog) and the full manual.
+- Engine: `detect_language` skips files whose language is already detected (7.2.1-RC1).
+- Temporary branches (fix, sync and QA branches the lead makes and integrates): `git integra`
+  deletes the integrated final at once, local and origin, or offers to. Before an OT or version
+  release, `git release` audits every branch of the tree: content already in the ORIGINAL
+  (`Squashed:` trailer or patch-equivalent) is deleted; content missing is asked about, then
+  kept or renamed `unmerged/`; a stale pre-rebase copy on origin is reconciled, not refused.
+
+## Later (no version yet)
+
+- Test battery wired into the hooks (`.quality-tests`): a fast set on pre-push, the full run in
+  Actions and before a release.
+- Micro-task orchestration: the lead plans atomic tasks (file or function, change, test) for
+  cheap agents, with one integration test run per batch.
+- Agent hierarchy by change risk (orchestrator, analysts, QA, developers, interns), with paid
   models only at the top levels.
+- HOTFIX, REPRO and BACKPORT branches (decide the main-branch policy first).
+- 6.1.1: extra Conventional Commit types.
+- Baseline cleanup of the findings the gate already reports on old code.
+- Other temp-copy tools in check mode.
+- Image cleanup that keeps the images still in use: no leftover versions on update, and
+  `rules_upgrade` runs it.
+- LangGraph flywheel step 4 ([docs/KNOWLEDGE-FLYWHEEL.md](docs/KNOWLEDGE-FLYWHEEL.md)): triage,
+  worker, gate, lessons learned.
+- A model catalog in a database, so models can be defined, deleted and reordered without
+  editing YAML.
 - Server-side checks of the branch model and repository files in Azure DevOps pipelines.
 - Formatters for JSP and PL/SQL when a reliable one exists.
+- Overlap detector `git solape`, if it is not built yet.
+- Retrospective: novelty, gaps, more quality levels, own tools and parsers.
