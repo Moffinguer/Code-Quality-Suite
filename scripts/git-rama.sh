@@ -2671,6 +2671,35 @@ ot_branch_in() {
 	[ "$(head -n1 <<<"$tree")" = "$(git rev-parse "$pt^{tree}")" ]
 }
 
+# release_special_leftover <branch>: one policy for the special leftovers of an OT release: a branch
+# whose special type has on_release = delete (SPIKE, ATTEMPT, REVIEW, QUARANTINE, CHECKPOINT) is
+# deleted with the tree, never set aside (a CHECKPOINT must never reach origin: push = never). It
+# is recorded in REL_SPECIAL ("<branch><TAB><type><TAB><tip sha>") and queued for deletion, on
+# origin too (under a lease) when it was published.
+# Arguments: $1 branch. Returns: 0 when it is such a leftover (recorded); 1 otherwise.
+release_special_leftover() {
+	local b="$1" kind ref
+	kind="$(special_kind "$b")"
+	[ -n "$kind" ] && [ "$(special_prop "$kind" ON_RELEASE)" = delete ] || return 1
+	ref="$(best_ref "$b" || true)"
+	[ -n "$ref" ] || return 1
+	REL_SPECIAL+=("$b"$'\t'"$kind"$'\t'"$(git rev-parse "$ref")")
+	exists_ref "refs/remotes/origin/$b" && REL_DELETE_REMOTE+=("$b")
+	exists_ref "refs/heads/$b" && REL_DELETE_LOCAL+=("$b")
+	return 0
+}
+
+# release_special_say: one line per special leftover deleted by the OT release: its tip and the
+# command that restores it. Arguments: none; reads REL_SPECIAL. Returns: 0.
+release_special_say() {
+	local entry b kind sha
+	for entry in ${REL_SPECIAL[@]+"${REL_SPECIAL[@]}"}; do
+		IFS=$'\t' read -r b kind sha <<<"$entry"
+		say "deleted $kind branch $b, was at $sha: git branch $b $sha"
+	done
+	return 0
+}
+
 # ot_release_analyse: analyse the OT REL_OT for its release; fills the REL_* variables of
 # release_analyse plus REL_VTOP (the version ORIGINAL), REL_OT_REF and REL_DONE, prints only the
 # TESTING warnings. Errors (REL_ERRORS): no OT ORIGINAL (and no RELEASE), local and origin
@@ -2683,7 +2712,7 @@ ot_branch_in() {
 ot_release_analyse() {
 	local v="${REL_OT%%/*}" b p tb tp n rt vt entry archived=$'\n' here wt
 	REL_TOP="$REL_OT/$QS_BR_LEAF" REL_RELEASE="$REL_OT/$QS_BR_RELEASE_LEAF" REL_VTOP="$v/$QS_BR_LEAF"
-	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n'
+	REL_ERRORS=() REL_OK=() REL_ARCHIVE=() REL_DELETE_LOCAL=() REL_DELETE_REMOTE=() REL_PLANNED=$'\n' REL_SPECIAL=()
 	REL_TIP="" REL_BASE="" REL_CL_BASE="" REL_RESUME=0 REL_DONE=0
 	REL_OT_REF="$(render_ot_ref "$REL_OT")"
 	if [ -n "$REL_OT_REF" ] && { ! git check-ref-format "$REL_OT_REF" || [ "${REL_OT_REF#refs/ot/}" = "$REL_OT_REF" ]; }; then
@@ -2727,6 +2756,7 @@ ot_release_analyse() {
 	# every other branch of the OT against its nearest ORIGINAL; TESTING sandboxes never block (O7)
 	while IFS= read -r b; do
 		[ -n "$b" ] && [ "$b" != "$REL_TOP" ] && [ "$b" != "$REL_RELEASE" ] || continue
+		if release_special_leftover "$b"; then continue; fi
 		tb="$(branch_tip "$b")"
 		p="$(nearest_original "$b")"
 		tp="$(branch_tip "$p")"
@@ -2848,12 +2878,20 @@ ot_release_report() {
 		IFS=$'\t' read -r b new p n <<<"$entry"
 		echo "[!!] $b: $n commit(s) not in $p -> will be set aside as $new"
 	done
+	for entry in ${REL_SPECIAL[@]+"${REL_SPECIAL[@]}"}; do
+		IFS=$'\t' read -r b p new <<<"$entry"
+		echo "[ok] $b: $p branch, will be deleted (was at $new)"
+	done
 	[ "$REL_RESUME" = 1 ] && echo "[ok] $REL_RELEASE exists and contains $REL_TOP: git release resumes from there"
 	echo
 	echo "## Plan"
 	echo
 	if [ "${#REL_ARCHIVE[@]}" -gt 0 ]; then
 		echo "$i. set aside ${#REL_ARCHIVE[@]} branch(es) as $QS_BR_ARCHIVE/... (local and origin)"
+		i=$((i + 1))
+	fi
+	if [ "${#REL_SPECIAL[@]}" -gt 0 ]; then
+		echo "$i. delete ${#REL_SPECIAL[@]} special branch(es) (on_release = delete), with the restore line of each"
 		i=$((i + 1))
 	fi
 	echo "$i. $REL_TOP -> $REL_RELEASE with one commit \"$(ot_changelog_subject)\" ($QS_BR_CHANGELOG); $QS_BR_VERSION_FILE and the README badge untouched"
@@ -2934,6 +2972,7 @@ ot_release_run() {
 	fi
 	[ "${#REL_DELETE_LOCAL[@]}" -eq 0 ] || git branch -q -D "${REL_DELETE_LOCAL[@]}"
 	! exists_ref "refs/heads/$REL_TOP" || git branch -q -D "$REL_TOP"
+	release_special_say
 	say "OT $REL_OT released on $REL_RELEASE: $((${#REL_DELETE_LOCAL[@]} + 1)) branch(es) of the OT deleted, ${#REL_ARCHIVE[@]} set aside"
 	return 0
 }
