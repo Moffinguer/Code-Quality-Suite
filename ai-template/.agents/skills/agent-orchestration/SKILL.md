@@ -87,6 +87,13 @@ Keep it under 200 words:
 developer -> qa -> (findings: the same developer fixes on the same branch) -> qa again ->
 reviewer for docs -> lead integrates. Record every finding in `dev_documents/`.
 
+## Rebases and conflicts (lead)
+
+- Every worktree's hooks and aliases run the scripts of the main checkout. Never rebase or
+  resolve conflicts there: a half-resolved file breaks every agent's commit. Rebase and resolve
+  in a separate worktree (`git worktree add --detach <path>`), and push from there with `git subir`.
+- Keep the main checkout on the latest integrated ORIGINAL (stable scripts), clean.
+
 ## Integration (lead)
 
 Integrate from the main checkout only, where the real `.quality-rules.json` is. Check the
