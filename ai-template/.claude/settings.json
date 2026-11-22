@@ -23,8 +23,10 @@
       "Bash(git log:*)",
       "Bash(git arbol:*)",
       "Bash(git es -n:*)",
+      "Bash(git es:*)",
       "Bash(git np:*)",
       "Bash(git nr:*)",
+      "Bash(git nv:*)",
       "Bash(git subir:*)",
       "Bash(git switch:*)",
       "Bash(git encoding:*)",
@@ -37,6 +39,9 @@
       "Bash(bash <SUITE>/scripts/ai-ask.sh:*)"
     ],
     "ask": [
+      "Bash(git push:*)",
+      "Bash(git integra:*)",
+      "Bash(git convertir-padre:*)",
       "Bash(git intentos:*)",
       "Bash(git testing:*)",
       "Bash(git cuarentena:*)",
@@ -48,6 +53,7 @@
       "Bash(git push -f:*)",
       "Bash(git push --no-verify:*)",
       "Bash(git push -n --no-verify:*)",
+      "Bash(git push * --no-verify*)",
       "Bash(git release:*)",
       "Bash(git publicar:*)",
       "Bash(git combinar:*)",
