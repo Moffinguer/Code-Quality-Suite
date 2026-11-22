@@ -13,8 +13,9 @@
 #       (Commits:, Files:, Norms:, Refs:, Squashed: and 'Chosen-from: ATTEMPT-<n>', the comparison in
 #       the body); then every attempt and its worktree is deleted and the tips are printed.
 #       --auto does not exist (decision 9: a person always confirms).
-# why one script, two aliases: the alias line cannot tell the script which name was used, so the
-# arguments decide: '<task> <N>' creates, a task that already has attempts is chosen.
+# why one script, two aliases: the alias passes the name it was called with in QS_ALIAS (see
+# configure_repo), and att_main dispatches on it. Any other name, or the wrong number of arguments
+# for the name, prints the usage and exits 2.
 # Nothing here pushes an ORIGINAL: the squash lands locally and the push command is printed.
 
 # shellcheck disable=SC1091
@@ -383,8 +384,16 @@ cmd_elegir() {
 	att_say "done. Push: git push origin $orig   (then git integra from '$orig' when the work is complete)"
 }
 
-# Entry point: decide between the two commands from the arguments.
-# Arguments: the command line. Returns: 0; exits through att_die on a usage error.
+# Print the usage and exit 2 (a wrong alias name or a wrong number of arguments).
+# Arguments: none. Returns: never (exit 2).
+att_usage() {
+	echo "usage: git intentos <task> <N>   |   git elegir <task>" >&2
+	exit 2
+}
+
+# Entry point: dispatch on the alias name (QS_ALIAS, default 'intentos'): 'intentos' takes
+# <task> <N>, 'elegir' takes <task>; anything else prints the usage and exits 2.
+# Arguments: the command line. Returns: 0; exits through att_die on a refusal, att_usage on usage.
 att_main() {
 	local args=() subject="" a
 	while [ "$#" -gt 0 ]; do
@@ -402,16 +411,17 @@ att_main() {
 		shift
 	done
 	qs_policy_load
-	a="${args[0]:-}"
-	[ -n "$a" ] || att_die "usage: git intentos <task> <N>   |   git elegir <task>"
-	if [ "${#args[@]}" -ge 2 ]; then
-		[ "${#args[@]}" -eq 2 ] || att_die "too many arguments"
-		cmd_intentos "$a" "${args[1]}"
-	elif [ -n "$(att_list "${a%/"$QS_BR_LEAF"}")" ] || [[ $a =~ /ATTEMPT-[0-9]+(/ORIGINAL)?$ ]]; then
-		cmd_elegir "$a" "$subject"
-	else
-		att_die "usage: git intentos <task> <N>   |   git elegir <task>   ('$a' has no attempts yet)"
-	fi
+	case "${QS_ALIAS:-intentos}" in
+	intentos)
+		[ "${#args[@]}" -eq 2 ] || att_usage
+		cmd_intentos "${args[0]}" "${args[1]}"
+		;;
+	elegir)
+		[ "${#args[@]}" -eq 1 ] || att_usage
+		cmd_elegir "${args[0]}" "$subject"
+		;;
+	*) att_usage ;;
+	esac
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then att_main "$@"; fi
