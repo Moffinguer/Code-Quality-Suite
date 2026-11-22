@@ -87,9 +87,14 @@ mg_docs_mode() {
 # mode, create '<v>/DOCS' at '<v>/ORIGINAL' (unless it exists) and publish it. Integrated leftovers
 # are the children kept at their own integration; the ones named as pending (a --force squash
 # left them out) are kept, and so is everything when the MIGRATION branch itself was kept.
+# The origin deletes are one '--atomic' push, each leased to the sha of its 'origin/<ref>' seen
+# here (--force-with-lease=<ref>:<sha>): when a lease is lost (origin moved since), the push is
+# refused, a warning names the branch and its local copy is kept. A local copy goes only after its
+# origin delete succeeded (or when it is local only).
 # Arguments: $1 version, $2... branches that were pending at the squash. Returns: 0.
 mg_after_squash() {
-	local v="$1" b where pend=" ${*:2} "
+	local v="$1" b pend=" ${*:2} "
+	local -a gone=() leases=() refs=()
 	if git rev-parse -q --verify "refs/heads/$v/MIGRATION" >/dev/null 2>&1 ||
 		git rev-parse -q --verify "refs/heads/$v/MIGRATION/$QS_BR_LEAF" >/dev/null 2>&1; then
 		mg_say "the MIGRATION branch was kept: its lock stays until it is deleted"
@@ -102,14 +107,27 @@ mg_after_squash() {
 			continue
 			;;
 		esac
-		where="locally"
-		git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1 && where="locally and on origin"
-		git branch -q -D "$b" 2>/dev/null || true
 		if git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1; then
-			git push -q origin --delete "$b" 2>/dev/null || mg_say "could not delete '$b' on origin"
+			gone+=("$b")
+			leases+=("--force-with-lease=refs/heads/$b:$(git rev-parse "refs/remotes/origin/$b")")
+			refs+=(":refs/heads/$b")
+		else
+			git branch -q -D "$b" 2>/dev/null || true
+			mg_say "deleted '$b' locally"
 		fi
-		mg_say "deleted '$b' $where"
 	done < <(mg_others "$v")
+	if [ "${#refs[@]}" -gt 0 ]; then
+		if git push -q --atomic "${leases[@]}" origin "${refs[@]}" 2>/dev/null; then
+			for b in "${gone[@]}"; do
+				git branch -q -D "$b" 2>/dev/null || true
+				mg_say "deleted '$b' locally and on origin"
+			done
+		else
+			for b in "${gone[@]}"; do
+				echo "[migracion] warning: '$b' not deleted on origin (the atomic push was refused: a lease was lost): local copy kept" >&2
+			done
+		fi
+	fi
 	special_migration_open "$v" >/dev/null && return 0
 	if mg_docs_mode && ! mg_exists "$v/DOCS"; then
 		git branch -q --no-track "$v/DOCS" "$(best_ref "$v/$QS_BR_LEAF")"
