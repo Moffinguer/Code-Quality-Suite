@@ -432,13 +432,15 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
 
 ### git combinar
 
-- **Syntax:** `git combinar [--incluir <v1,v2...>] [--version <v>] [--yes]`
+- **Syntax:** `git combinar [--incluir <v1,v2...>] [--contenida <v1,v2...>] [--version <v>] [--yes]`
 - **Does:** asks yes/no for each `<v>/RELEASE` and the version of the result. A `RELEASE` without
   `develop` gets a temporary merge of `develop` (no branch moves; release-file conflicts are solved
   for `develop`, any other conflict stops with "nothing was changed"). The result starts at
   `develop` and gets one `chore(combine): <v> changes` squash per RELEASE with only its own
-  changes, then the version, `CHANGELOG.md` (the **union** of the combined sections) and README
-  badge commits. The joined branches are kept as `unmerged/<v>/RELEASE` (local and origin). The plan
+  changes, then the version, `CHANGELOG.md` (the **union** of the combined sections, each commit
+  once) and README badge commits. A RELEASE that a later chosen one already holds (ancestor, its
+  commits listed in the later history, or the same changes) is not squashed again; `--contenida`
+  names, by hand, versions whose content a later one took in with its own conflict resolution. The joined branches are kept as `unmerged/<v>/RELEASE` (local and origin). The plan
   lists every rename before the confirmation (`--yes` answers it). All or nothing: commits are made
   in a temporary worktree, the local branches move in one transaction, then one `git push
   --atomic` to origin. Then `git publicar --version <v>` lands the result as one commit.

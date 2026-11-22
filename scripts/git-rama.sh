@@ -73,7 +73,10 @@
 #                         branches.flow = squash: the entry is the union of the reviewed sections of
 #                         the combined RELEASEs, each squash has its Files: block, and their local
 #                         version tags are deleted; git publicar then lands it as ONE commit
-#                         --version <v>, --incluir <v1,v2...>, --yes
+#                         --version <v>, --incluir <v1,v2...>, --yes; a RELEASE that a later chosen
+#                         one already holds (ancestor, commits listed in its history, or the same
+#                         changes) is not squashed again; --contenida <v1,v2...> says so by hand for
+#                         versions whose content the later one took in with its own resolution
 #   git repo-files [NAME] the standard repository files that are missing (README, CHANGELOG, VERSION,
 #                         CONTRIBUTING, ... DEVELOPMENT), filled from git history and pom.xml; never
 #                         overwrites; --force NAME regenerates one; -n shows the plan
@@ -3880,6 +3883,38 @@ combine_copy_point() {
 	return 0
 }
 
+# combine_contains <later> <earlier>: whether a RELEASE already holds the work of another one it
+# shares no squashed history with, so the earlier one must not be squashed again (a RELEASE built
+# on the earlier one keeps its own squash: see combine_counts). True when the earlier tip is not
+# an ancestor of the later and either every own commit of the earlier one that the later lacks
+# (not in develop; no release commit, no mainline merge) is named in a message of the later
+# history (the 'Commits:' list of the squash that merged it in), or the two share no history
+# beyond develop and applying the earlier one's changes on the later one merges cleanly and
+# changes nothing.
+# Arguments: $1 the later tip; $2 the earlier tip. Exit status: 0 when contained, 1 otherwise.
+combine_contains() {
+	local later="$1" earlier="$2" h s mb out bodies="" n=0
+	if git merge-base --is-ancestor "$earlier" "$later"; then return 1; fi
+	bodies="$(git log --format=%B "$later" "^$CB_BASE" --)"
+	while IFS=$'\x1f' read -r h s; do
+		combine_mainline_merge "$h" && continue
+		[[ $s =~ $RELEASE_COMMITS_RX ]] && continue
+		git merge-base --is-ancestor "$h" "$later" && continue
+		grep -q -- "^- ${h:0:7}" <<<"$bodies" || {
+			n=-1
+			break
+		}
+		n=$((n + 1))
+	done < <(git log --format='%H%x1f%s' "$earlier" "^$CB_BASE" --)
+	[ "$n" -gt 0 ] && return 0
+	mb="$(git merge-base "$earlier" "$later" | sed -n 1p)"
+	if [ -n "$mb" ] && ! git merge-base --is-ancestor "$mb" "$CB_BASE"; then return 1; fi
+	mb="$(git merge-base "$earlier" "$CB_BASE" | sed -n 1p)"
+	[ -n "$mb" ] || return 1
+	out="$(git merge-tree --write-tree --no-messages "--merge-base=$mb" "$later" "$earlier" 2>/dev/null)" || return 1
+	[ "$(sed -n 1p <<<"$out")" = "$(git rev-parse "$later^{tree}")" ]
+}
+
 # combine_only_release_after <source> <copy point>: whether all the source tree got after the copy
 # point (and develop lacks) is release commits and mainline merges.
 # Arguments: $1 the source tip; $2 the copy point. Exit status: 0 when so, 1 otherwise.
@@ -4090,7 +4125,7 @@ EOF
 # nothing changed; when only the push to origin fails, the local result is kept and the push to
 # run by hand is printed.
 cmd_combinar() {
-	local target="" incl="" rels=() chosen=() ordered=() done_tips=() links=() r t c d cp src bad=0
+	local target="" incl="" held="" rels=() chosen=() ordered=() done_tips=() cp_tips=() links=() r t c d cp src bad=0 covered after
 	local btree ntree p s h tree sq made here wt b m only res pairs=()
 	local -A tip=() up=() orig=() okey=()
 	while [ "$#" -gt 0 ]; do
@@ -4105,7 +4140,12 @@ cmd_combinar() {
 			shift
 			;;
 		--incluir=* | --include=*) incl="${1#*=}" ;;
-		*) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --yes)" ;;
+		--contenida | --contained)
+			held="${2:?$1 needs versions}"
+			shift
+			;;
+		--contenida=* | --contained=*) held="${1#*=}" ;;
+		*) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --contenida <v1,v2...>, --yes)" ;;
 		esac
 		shift
 	done
@@ -4201,10 +4241,35 @@ cmd_combinar() {
 	if [ -f "$here/.quality-rules.json" ]; then cp "$here/.quality-rules.json" "$CB_WT/"; fi
 	for r in "${ordered[@]}"; do
 		t="${tip[$r]}"
+		# why: a later RELEASE that already holds this one (merged in and squashed, or the same
+		# changes) would squash it a second time and conflict with itself: it is not applied again
+		covered=""
+		after=0
+		for c in "${ordered[@]}"; do
+			if [ "$c" = "$r" ]; then
+				after=1
+			elif [ "$after" = 1 ] && { combine_contains "${tip[$c]}" "$t" || case ",$held," in *",$(branch_version "$r"),"* | *",$r,"*) true ;; *) false ;; esac } then
+				covered="$c"
+				break
+			fi
+		done
+		if [ -n "$covered" ]; then
+			say "$r: already contained in $covered; not squashed again"
+			done_tips+=("$t")
+			if [ -n "${orig[$r]}" ]; then
+				while read -r b c; do
+					done_tips+=("$c")
+					links+=("$c")
+				done <<<"${orig[$r]}"
+			fi
+			links+=("$t")
+			CB_UNION+=("$(branch_version "$r")"$'\t'"$t")
+			continue
+		fi
 		combine_paths "$t"
 		only="$CB_ONLY"
 		btree="$(git rev-parse "$CB_BASE^{tree}")"
-		cp="$(combine_copy_point "$t" ${done_tips[@]+"${done_tips[@]}"})"
+		cp="$(combine_copy_point "$t" ${cp_tips[@]+"${cp_tips[@]}"})"
 		if [ -n "$cp" ]; then
 			read -r c d <<<"$cp"
 			# why: the source's own develop merge holds the resolution when it only added release commits
@@ -4249,9 +4314,11 @@ cmd_combinar() {
 		fi
 		say "$r: $CB_N own commit(s) squashed; dropped $CB_M mainline merge(s), $CB_K release commit(s), $CB_J already combined$([ "$made" = 1 ] || echo "; nothing new, no squash commit")"
 		done_tips+=("$t")
+		cp_tips+=("$t")
 		if [ -n "${orig[$r]}" ]; then
 			while read -r b c; do
 				done_tips+=("$c")
+				cp_tips+=("$c")
 				links+=("$c")
 			done <<<"${orig[$r]}"
 		fi
