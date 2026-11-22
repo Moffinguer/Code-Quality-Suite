@@ -340,7 +340,7 @@ git limpiar-unmerged -n                     # later: preview the cleanup of the 
 `develop` and the tag, and deletes the release branch. If `develop` moved since the release was
 prepared, it says so: merge `develop` into the release, review, and publish again. The entry of
 `CHANGELOG.md` is built from the integrated subjects, so write those for the reader. Details:
-[GIT-WORKFLOW.md section on releases](GIT-WORKFLOW.md#closing-a-version-git-changelog-git-release-git-publicar).
+[GIT-WORKFLOW.md section on releases](GIT-WORKFLOW.md#closing-a-version-git-release-version-release-and-git-publicar).
 
 ### 3.11 Several versions: git combinar (human)
 

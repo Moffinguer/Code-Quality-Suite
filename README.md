@@ -125,4 +125,5 @@ Full matrix and opt-in tools: [docs/LANGUAGES.md](docs/LANGUAGES.md). Pinned ver
 
 ## License
 
-<!-- qs:fill: the license of the suite (see LICENSE) --> See [LICENSE](LICENSE).
+<!-- qs:fill: the license of the suite (see LICENSE) -->
+See [LICENSE](LICENSE).
