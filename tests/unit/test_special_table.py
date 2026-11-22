@@ -265,7 +265,7 @@ class ShellEnvTest(unittest.TestCase):
         self.assertIn("QS_SP_CHECKPOINT_PUSH='never'\n", env)
         self.assertIn("QS_BR_TESTING='TESTING'\n", env)
         count = sum(1 for k in policy.special_env({}) if k != "QS_SP_NAMES")
-        self.assertEqual(count, len(ALL_TYPES) * len(policy.SPECIAL_PROPS))
+        self.assertEqual(count, len(ALL_TYPES) * (len(policy.SPECIAL_PROPS) + 1))  # + GLOBS
 
     def test_override_exported(self):
         """A project override reaches the export; a disabled type does not."""

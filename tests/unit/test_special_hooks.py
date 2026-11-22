@@ -3,12 +3,14 @@
 python3 -m unittest discover -s tests/unit -v
 
 Covers the gate level override of the engine (QS_GATE_LEVEL) and the parity of the shell path
-tokens (`special_expand_paths`) with `policy.expand_paths`.
+tokens (exported as QS_SP_<TYPE>_GLOBS) with `policy.expand_paths`.
 """
 
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -54,31 +56,46 @@ class GateLevelTest(unittest.TestCase):
 
 
 class PathTokensTest(unittest.TestCase):
-    """The shell expansion of @tokens equals policy.expand_paths."""
+    """The hooks read the expanded globs from the engine export; no second copy of the tokens."""
 
-    def shell(self, token):
-        """Expand one token with special_expand_paths.
+    def shell_globs(self, data):
+        """Load the shell defaults and the engine export, and read QS_SP_*_GLOBS in shell.
 
         Args:
-            token: the @token or glob.
+            data: the rules to export (dict).
 
         Returns:
-            list[str]: the globs printed one per line.
+            dict[str, str]: type -> the GLOBS value the shell sees after loading policy.env.
         """
-        code = f'. "{LIB}"; special_expand_paths "$1"'
-        out = subprocess.run(
-            ["bash", "-c", code, "_", token], capture_output=True, text=True, check=True
+        with tempfile.TemporaryDirectory() as d:
+            env_file = os.path.join(d, "policy.env").replace("\\", "/")
+            with open(env_file, "w", encoding="utf-8", newline="\n") as fh:
+                fh.write(policy.shell_env(data))
+            code = (
+                f'. "{LIB}"; . "$1"; for t in $QS_SP_NAMES; do special_prop "$t" GLOBS; echo; done'
+            )
+            out = subprocess.run(
+                ["bash", "-c", code, "_", env_file], capture_output=True, text=True, check=True
+            )
+        return dict(zip(policy.special_table(data), out.stdout.split("\n"), strict=False))
+
+    def test_tokens_expanded_in_export(self):
+        """GLOBS is PATHS with every @token expanded by policy.expand_paths."""
+        data = {"branches": {"special": {"TESTS": {"paths": ["@tests", "qa/**"]}}}}
+        env = policy.special_env(data)
+        self.assertEqual(
+            env["QS_SP_TESTS_GLOBS"], "|".join(policy.expand_paths(["@tests", "qa/**"]))
         )
-        return out.stdout.split()
+        self.assertEqual(env["QS_SP_DOCS_GLOBS"], "|".join(policy.expand_paths(["@docs"])))
+        self.assertEqual(env["QS_SP_MIGRATION_GLOBS"], "")
 
-    def test_tokens_match_policy(self):
-        """Every token of the engine expands to the same globs in shell."""
+    @unittest.skipUnless(shutil.which("bash"), "bash is required")
+    def test_shell_sees_expanded_globs(self):
+        """The shell reads the same globs, for every @token of the engine."""
         for token in policy.PATH_TOKENS:
-            self.assertEqual(self.shell(token), policy.expand_paths([token]), token)
-
-    def test_plain_glob_kept(self):
-        """A plain glob is kept as is."""
-        self.assertEqual(self.shell("qa/**"), ["qa/**"])
+            data = {"branches": {"special": {"TESTS": {"paths": [token]}}}}
+            got = self.shell_globs(data)["TESTS"]
+            self.assertEqual(got.split("|"), policy.expand_paths([token]), token)
 
 
 if __name__ == "__main__":

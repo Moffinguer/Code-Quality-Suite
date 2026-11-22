@@ -293,28 +293,6 @@ special_summary() {
 # --- hook rules (6.0.0 hooks_rules): the checks of pre-commit, commit-msg and pre-push, all read
 # from the table (QS_SP_<TYPE>_<PROP>). A rule is refused only for the branch's own special type.
 
-# Expand the @tokens of a paths value into globs, one per line. It mirrors PATH_TOKENS of
-# engine/policy.py (tests/unit/test_special_hooks.py compares both).
-# Arguments: $1 a paths value: globs and @tokens joined with '|' (as QS_SP_<TYPE>_PATHS holds it).
-# Returns: 0; prints the globs in order, an unknown @token as is.
-special_expand_paths() {
-	local repo='README.md|CHANGELOG.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|SUPPORT.md|CONTRIBUTORS.md|MAINTAINERS.md|ROADMAP.md|FAQ.md|INSTALL.md|ARCHITECTURE.md|API.md|DEVELOPMENT.md|AUTHORS|LICENSE|CODEOWNERS|CITATION.cff'
-	local tests='src/test/**|**/test/**|**/tests/**|**/*_test.*|**/test_*.py|**/*.spec.*|**/*.test.*'
-	local item list=() parts=() rep=() tst=()
-	IFS='|' read -ra parts <<<"$1"
-	IFS='|' read -ra rep <<<"$repo"
-	IFS='|' read -ra tst <<<"$tests"
-	for item in ${parts[@]+"${parts[@]}"}; do
-		case "$item" in
-		@repo-files) list+=("${rep[@]}") ;;
-		@docs) list+=('*.md' '**/*.md' 'docs/**' "${rep[@]}") ;;
-		@tests) list+=("${tst[@]}") ;;
-		*) list+=("$item") ;;
-		esac
-	done
-	printf '%s\n' "${list[@]}" | awk '!seen[$0]++'
-}
-
 # Translate a glob into an extended regular expression: '**/' any folders, '**' anything, '*'
 # anything but '/', '?' one character but '/'.
 # Arguments: $1 glob. Returns: 0; sets SP_RE to the anchored regex (no subshell: a hook compiles
@@ -415,7 +393,8 @@ special_check_staged() {
 	g=""
 	[ -z "$t" ] || g="$(special_prop "$t" PATHS)"
 	if [ -n "$g" ]; then
-		mapfile -t paths < <(special_expand_paths "$g")
+		# why: GLOBS is PATHS with the @tokens already expanded by the engine (policy.special_env)
+		IFS='|' read -ra paths <<<"$(special_prop "$t" GLOBS)"
 		special_compile_globs "${paths[@]}"
 		for f in "$@"; do
 			special_rx_match "$f" && continue

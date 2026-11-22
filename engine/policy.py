@@ -817,9 +817,10 @@ def special_env(data):
 
     `QS_SP_NAMES` lists the enabled types separated by spaces; every enabled type has one
     `QS_SP_<TYPE>_<PROP>` per property (PROP upper case: AT, CHILDREN, SUFFIX, INTEGRATES, ORDER,
-    REBASE, TYPES, PATHS, LEVEL, PUSH, PUSH_CHECKS, TRAILERS, LOCKS, ON_RELEASE, CHANGELOG).
+    REBASE, TYPES, PATHS, GLOBS, LEVEL, PUSH, PUSH_CHECKS, TRAILERS, LOCKS, ON_RELEASE, CHANGELOG).
     Booleans are 1/0, a null level is '', lists are joined with '|' (`types` ['*'] = all
-    types, `paths` keep their @tokens: expand them with expand_paths).
+    types, `paths` keep their @tokens; `GLOBS` is `paths` with the @tokens expanded, for the
+    hooks).
 
     Args:
         data: the parsed rules file (dict), or None.
@@ -832,6 +833,8 @@ def special_env(data):
     for name, props in table.items():
         for prop in SPECIAL_PROPS:
             env[f"QS_SP_{name}_{prop.upper()}"] = _sp_value(props[prop])
+        # why: the hooks match these globs; expanding the @tokens here keeps one copy of them
+        env[f"QS_SP_{name}_GLOBS"] = _sp_value(expand_paths(props["paths"]))
     return env
 
 
