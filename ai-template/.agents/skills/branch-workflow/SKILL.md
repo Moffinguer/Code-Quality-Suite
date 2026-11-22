@@ -5,8 +5,19 @@ description: Use when creating, syncing, integrating or naming git branches, tag
 
 # Branch model and workflow
 
-Short version and rules. Syntax of every command: the `git-commands` skill (`git ayuda <cmd>`).
-Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
+The model and its rules. Syntax and `Who:` of every command: the `git-commands` skill
+(`git ayuda <cmd>`). Who may do what: `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
+
+## Commit and merge flow (mandatory, every project)
+
+1. Flow `squash` (`branches.flow`): every integration is ONE single-parent commit with
+   `Commits:`, `Files:`, `Refs:`; a merge commit in an `ORIGINAL` is a defect.
+2. Commit only on final or special branches, through the hooks; never `--no-verify`. Never
+   move an ORIGINAL by hand (no merge, pull without `--rebase`, cherry-pick, reset, push).
+3. Run `git integra` only from the main checkout (the personal `.quality-rules.json` is
+   git-ignored; a worktree falls back to `flow: merge`). Agents never integrate.
+4. Before integrating check `"flow":`; before pushing check `%P` (one parent). On a mismatch
+   STOP and ask the human; a wrong pushed integration is never rewritten.
 
 ## The tree
 
@@ -22,60 +33,48 @@ develop
 ```
 
 - Names: `<version>/<ot>/<detail>/...`, ASCII segments, never only `<version>`.
-- A branch with children is a parent and ends in `ORIGINAL` (git cannot have a branch and a
-  folder with the same name). Any other branch is final. Siblings share a folder; the parent of
-  `<F>/<x>` is `<F>/ORIGINAL`, derived from the name.
-- A final branch that needs children: `git convertir-padre` (`<F>/<x>` -> `<F>/<x>/ORIGINAL`,
-  local rename), then `git nr <child>`.
+- A branch with children ends in `ORIGINAL` (a parent); any other branch is final. The parent
+  of `<F>/<x>` is `<F>/ORIGINAL`. A final branch that needs children: `git convertir-padre`.
+- Create: `git np <name>` (parent), `git nr <name>` (final; in a worktree add
+  `--from <ORIGINAL>`), a whole tree `git es -n` then `git es`, a version `git np <version>`.
+  With `publish_on_create` (default `true`) the creating aliases push the new branch by
+  themselves. See the tree: `git arbol`.
 
-## Rebase or merge
+## Squash per level
 
-| Branch | Gets parent changes (`git subir`) | Goes up (`git integra`) |
-| --- | --- | --- |
-| final | rebase onto its ORIGINAL | rebase, then merge `--no-ff` (or squash) into its ORIGINAL |
-| ORIGINAL | merge of its parent; never rebased | merge `--no-ff` into the parent ORIGINAL once all children are in |
-| `<version>/ORIGINAL` | merge of `develop` | `git release`, then `git publicar` (below) |
+- `git subir`: a final branch rebases onto its ORIGINAL; an ORIGINAL merges its parent.
+- `git integra` goes up one level and makes **one squash commit** with `Commits:` and `Files:`
+  in the body; the subject becomes a CHANGELOG.md line. Agents never run it; the lead does,
+  after the human's OK: `git integra -m "feat(login): add login page" -m "<why>"`.
 
-## Creating branches
+## Special branches (reserved UPPERCASE names, one table in `.quality-rules.json`)
 
-- From `develop`: `git np <version>` or `git np patch|minor|major` (version tree). From an
-  ORIGINAL: `git np <name>` (parent) or `git nr <name>` (final). In a worktree, where the ORIGINAL
-  is checked out elsewhere: `git nr <name> --from <ORIGINAL>`.
-- A whole tree at once (stdin, indented children or paths): `git es -n` to preview, then
-  `git es`. Existing branches are only checked. See it with `git arbol`.
+- MIGRATION: version upgrade, before the rest of the version. DOCS: CHANGELOG.md and badge.
+- REFACTOR, FORMAT, TESTS, SPIKE: controls for people (FORMAT only by the human).
+- ATTEMPT-n (`git intentos`), REVIEW-<task> (`git revision`), QUARANTINE-<task>
+  (`git cuarentena`), CHECKPOINT-<task> (`git checkpoint`): controls for agents. CHECKPOINT is
+  never pushed.
+- TESTING (`git testing`): a sandbox per level to try integrations without touching the tree.
 
-## Versions
+## Closing
 
-- Creating a version tree commits `chore(version): <version>` on its ORIGINAL: `VERSION`, the
-  `pom.xml` versions and `package.json`. A merge driver keeps each tree's own version.
+- OT RELEASE: `git release` inside an OT closes it (hidden ref `refs/ot/...`, subtree deleted).
+- version RELEASE: `git release --version <v>`, then `git publicar` into `develop`.
+  `git changelog` previews; `git limpiar-unmerged` cleans the `unmerged/...` leftovers.
+- `git release`, `git publicar`, `git combinar`, `git changelog --escribir`: human only.
 - Never edit `VERSION`, the `<version>` of pom.xml, CHANGELOG.md or the README badge by hand.
-
-## Closing a version (two steps)
-
-1. `git changelog`: preview only. Then, when the human asks, `git release`: creates
-   `<version>/RELEASE` with the version, CHANGELOG.md and README badge commits, sets aside never
-   integrated branches as `unmerged/<name>` and deletes the rest of the tree. Review it there.
-2. `git publicar` (the human's): merges RELEASE into `develop`, tags, pushes, deletes RELEASE.
-   Several trees: `git publicar --version <v>` one at a time, or join them first with
-   `git combinar` (the human's).
 
 ## Hooks
 
-| Hook | Runs on | Checks |
-| --- | --- | --- |
-| prepare-commit-msg | editor commits | preloads a Conventional Commits template with the file list |
-| commit-msg | every commit | ASCII only, Conventional Commits, subject <= 50 characters |
-| pre-commit | every commit | the quality gate on the staged files |
-| pre-push | `git push`, `git subir` | branch names, a final branch contains its ORIGINAL, no force-push of shared branches, the gate |
-| pre-rebase | `git rebase` | finals rebase onto their parent; shared branches only onto their remote |
-| pre-merge-commit | `git merge`, `git integra` | into an ORIGINAL only its children or parent; never into a final |
-| post-checkout | `git checkout`, `git switch` | refreshes config and aliases; warns about off-model names |
+| Hook | Checks |
+| --- | --- |
+| commit-msg | ASCII only, Conventional Commits, subject <= 50 characters |
+| pre-commit | the quality gate on the staged files |
+| pre-push | branch names, a final branch contains its ORIGINAL, no force-push, the gate |
+| pre-rebase, pre-merge-commit | finals rebase onto their parent; into an ORIGINAL only children or parent |
 
 ## Rules
 
-- Only the lead integrates, and only into ORIGINAL branches; merging into `develop` is the human's.
-  Agents pass the message: `git integra -m "feat(login): add login page" -m "<why>"`; the subject
-  becomes a CHANGELOG.md line.
 - Commits: `type(scope): subject`, ASCII, <= 50 characters, body explains why, `Norms: <ids>`;
   never an AI co-author, never `--no-verify`.
 - Never force-push an ORIGINAL, develop or main; never merge into a final branch.

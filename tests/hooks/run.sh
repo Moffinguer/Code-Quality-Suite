@@ -9,6 +9,7 @@ set -euo pipefail
 SUITE="$(cd "$(dirname "$0")/../.." && pwd)"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
+export SUITE T
 export FAKE_DOCKER_DIR="$T/docker" QS_SUITE_HOST="$SUITE" QS_NO_PROMPT=1 QS_REPO_FILES=0
 # why: never touch the real global git config or the real list of installed repositories
 export GIT_CONFIG_GLOBAL="$T/gitconfig" QS_HOME="$T/qs-home"
@@ -19,11 +20,8 @@ mkdir -p "$HOME"
 mkdir -p "$T/bin"
 ln -s "$SUITE/tests/hooks/fake-docker" "$T/bin/docker"
 export PATH="$T/bin:$PATH"
-fail() {
-	echo "FAIL: $*" >&2
-	exit 1
-}
-ok() { echo "ok   $*"; }
+# shellcheck source=tests/hooks/case-lib.sh
+. "$SUITE/tests/hooks/case-lib.sh"
 
 git init -q -b main "$T/repo"
 cd "$T/repo"
@@ -133,8 +131,11 @@ git push -q origin main 2>/dev/null && ok "push verified in check mode" || fail 
 # damage already committed (and pushed) only warns: the commit and the push touch another line
 printf 'old = "Canci\303\203\302\263n"\n' >legacy.py
 git add legacy.py
-git -c core.hooksPath=/dev/null commit -q -m "feat: legacy" || fail "legacy commit"
-git push -q --no-verify origin main 2>/dev/null || fail "legacy push"
+# why plumbing: the legacy commit is made with commit-tree and update-ref (no hook runs), and the
+# bare origin gets it by a fetch from this repository, so no push hook runs either
+legacy="$(git commit-tree "$(git write-tree)" -p "$(git rev-parse HEAD)" -m "feat: legacy")" || fail "legacy commit"
+git update-ref refs/heads/main "$legacy" "$(git rev-parse HEAD)" || fail "legacy commit ref"
+git --git-dir="$T/remote.git" fetch -q "$T/repo" main:main || fail "legacy push"
 printf 'old = "Canci\303\203\302\263n"\ny = 2\n' >legacy.py
 git add legacy.py
 out="$(git commit -m 'fix: legacy' 2>&1)" || fail "pre-existing mojibake blocked the commit: $out"
@@ -146,7 +147,9 @@ grep -q 'comp=pre-push.*status=SUCCESS' .git/quality-suite/quality-suite.log && 
 # push checks the committed tree, not the working tree
 printf 'def broken(:\n  pass\n' >late.py
 git add late.py
-git commit -q --no-verify -m "feat: late"
+# why plumbing: the broken commit is made with commit-tree and update-ref, so no commit hook runs
+late="$(git commit-tree "$(git write-tree)" -p "$(git rev-parse HEAD)" -m "feat: late")" || fail "late commit"
+git update-ref refs/heads/main "$late" "$(git rev-parse HEAD)" || fail "late commit ref"
 printf 'x = 1\n' >late.py # fixed only in the working tree
 if git push -q origin main 2>/dev/null; then fail "broken commit was pushed"; else ok "push checks the committed content"; fi
 git reset -q --hard HEAD~1
@@ -171,6 +174,8 @@ rm -f latin.txt
 python3 - <<'PY'
 import json; p='.quality-rules.json'; d=json.load(open(p))
 d['encoding']['by_glob'] = {'legacy/*.properties': 'iso-8859-1'}
+# why: the 4.x regression suite below is pinned to the merge flow
+d.setdefault('branches', {})['flow'] = 'merge'
 json.dump(d, open(p, 'w'), indent=2)
 PY
 mkdir -p legacy
@@ -229,6 +234,7 @@ git integra >/dev/null 2>&1 && git integra >/dev/null 2>&1 || fail "integra RF00
 git integra >/dev/null 2>&1 && [ "$(git branch --show-current)" = develop ] && git rev-parse -q --verify refs/tags/6.22.6 >/dev/null &&
 	git show develop:fix.py >/dev/null && git show develop:login.py >/dev/null && ok "version ORIGINAL tagged and merged into develop" ||
 	fail "version -> develop"
+# why: hooksPath is part of the check - the shared-ORIGINAL rebase guard must be active
 if QUALITY_ALLOW_REBASE=0 git -c core.hooksPath=.git/hooks rebase 6.22.6/188858/ORIGINAL 6.22.6/ORIGINAL >/dev/null 2>&1; then
 	fail "shared ORIGINAL was rebased"
 else
@@ -313,7 +319,7 @@ grep -q '^#### 7.1.0/300100/RF1/login' cl.out && grep -q 'fix(login): check user
 	cat cl.out
 	fail "changelog"
 }
-grep -q '^- Login page (.*OT 300100, JDA-SEG-010' cl.out && ok "git changelog: CHANGELOG.md entry in Common Changelog format" ||
+grep -q '^- Login page (.*; 300100)' cl.out && ok "git changelog: CHANGELOG.md entry in Common Changelog format" ||
 	{
 		cat cl.out
 		fail "release notes preview"
@@ -392,7 +398,7 @@ if git checkout -q develop && git np 7.2 >np.out 2>&1; then fail "non-semver ver
 rm -f np.out
 # another release reached develop: bringing develop into a tree keeps the tree's version, merges the rest
 sed -i 's|<version>7.1.0</version>|<version>7.1.5</version>\n  <description>d</description>|' pom.xml && printf '7.1.5\n' >VERSION &&
-	git add pom.xml VERSION && git -c core.hooksPath=/dev/null commit -q -m "chore(version): 7.1.5" || fail "develop 7.1.5"
+	git add pom.xml VERSION && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m "chore(version): 7.1.5")" || fail "develop 7.1.5"
 git checkout -q 7.1.1/ORIGINAL && git merge -q --no-edit develop >m.out 2>&1 && [ "$(cat VERSION)" = 7.1.1 ] &&
 	grep -q '<version>7.1.1</version>' pom.xml && grep -q '<description>d</description>' pom.xml &&
 	ok "merge driver: VERSION and pom.xml keep the tree version, other pom changes merged" || {
@@ -520,7 +526,7 @@ combine_checks() {
 		fail "combinar $c changelog"
 	}
 	for f in "$@"; do
-		[ "$(grep -c "^- .*${f%.py} (.*OT " <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
+		[ "$(grep -c "^- .*${f%.py} (.*; [A-Za-z0-9][A-Za-z0-9]*)$" <<<"$cl")" = 1 ] && git show "$c/RELEASE:$f" >/dev/null || {
 			echo "$cl"
 			fail "combinar $c: $f once in the changelog with its OT, and in the tree"
 		}
@@ -670,6 +676,7 @@ if command -v script >/dev/null 2>&1; then
 fi
 mkdir -p "$T/reject-hooks" && printf '#!/bin/sh\necho "rejected by the test" >&2\nexit 1\n' >"$T/reject-hooks/pre-commit" &&
 	chmod +x "$T/reject-hooks/pre-commit"
+# why: the rejecting hook is what the test checks (combinar must survive a failing commit hook)
 if git -c core.hooksPath="$T/reject-hooks" combinar --incluir 12.0.0,12.0.1 --version 12.1.0 --yes >rel.out 2>&1; then
 	fail "combinar passed a rejected release commit"
 fi
@@ -737,6 +744,7 @@ if [ "$(git symbolic-ref -q HEAD)" = refs/heads/13.1.0/RELEASE ]; then
 fi
 EOF
 chmod +x "$T/move-hooks/post-checkout"
+# why: the failing post-checkout hook is what the test checks
 git -c core.hooksPath="$T/move-hooks" combinar --incluir 13.0.0,13.0.1 --version 13.1.0 --yes >rel.out 2>&1 && fail "combinar passed a failing post-checkout"
 { ! git symbolic-ref -q HEAD >/dev/null || git rev-parse -q --verify "$(git symbolic-ref -q HEAD)" >/dev/null; } &&
 	git rev-parse -q --verify HEAD >/dev/null && grep -q 'WARN: HEAD was left detached' rel.out &&
@@ -1151,7 +1159,7 @@ grep -q '^### git np' <<<"$a1" && ! grep -q '^### git nr' <<<"$a1" && grep -q 'g
 	}
 # AI files committed by mistake: git ia takes them out of the index and keeps them on disk
 (cd "$T/nuevo" && git config user.email t@example.com && git config user.name tester &&
-	git add -f AGENTS.md knowledge .claude && git -c core.hooksPath=/dev/null commit -q -m "chore: oops" &&
+	git add -f AGENTS.md knowledge .claude && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -m "chore: oops")" &&
 	git ia >../ia.out 2>&1 && grep -q 'taken out of the index' ../ia.out && [ -f AGENTS.md ] &&
 	[ -z "$(git ls-files --cached -- AGENTS.md knowledge .claude | grep -v '^$' | head -n1)" ] &&
 	git diff --cached --name-only | grep -q '^AGENTS.md$' && git ia --actualizar | grep -q 'untouched') &&
@@ -1165,7 +1173,7 @@ grep -q '^### git np' <<<"$a1" && ! grep -q '^### git nr' <<<"$a1" && grep -q 'g
 	git check-ignore -q docs/123456/spec.md && git check-ignore -q docs/3.0.0/notes.md && git check-ignore -q dev_documents/Requirements.md &&
 	! git check-ignore -q docs/GIT-WORKFLOW.md && ! git check-ignore -q docs/guide/x.md &&
 	mkdir -p docs/77 dev_documents && echo a >docs/77/spec.md && echo b >dev_documents/Tests.md &&
-	git add -f docs/77/spec.md dev_documents/Tests.md && git -c core.hooksPath=/dev/null commit -q -m "chore: oops docs" &&
+	git add -f docs/77/spec.md dev_documents/Tests.md && git update-ref HEAD "$(git commit-tree "$(git write-tree)" -p HEAD -m "chore: oops docs")" &&
 	git ia >../ia2.out 2>&1 && grep -q 'taken out of the index' ../ia2.out && [ -f docs/77/spec.md ] && [ -f dev_documents/Tests.md ] &&
 	[ -z "$(git ls-files -- docs/77 dev_documents)" ]) &&
 	ok "git ia: docs/<n>/ and dev_documents/ ignored, tracked ones out of the index (kept on disk)" ||
@@ -1178,7 +1186,7 @@ git init -q -b develop "$T/ai"
 (cd "$T/ai" && bash "$SUITE/scripts/ai-init.sh" . >/dev/null) || fail "ai-init"
 [ -f "$T/ai/opencode.json" ] && grep -q '^model: litellm/role-dev$' "$T/ai/.opencode/agents/developer.md" &&
 	grep -q '^model: litellm/role-review$' "$T/ai/.opencode/agents/reviewer.md" &&
-	grep -q '^  edit: deny$' "$T/ai/.opencode/agents/reviewer.md" &&
+	! grep -q 'edit: deny' "$T/ai/.opencode/agents/reviewer.md" &&
 	! grep -q 'edit: deny' "$T/ai/.opencode/agents/developer.md" && [ -f "$T/ai/.claude/skills/quality-gate/SKILL.md" ] &&
 	ok "ai-init: OpenCode agents on gateway roles, permissions from the tools, skills synced" || fail "ai-init opencode"
 # dev_documents templates: created when missing, never overwritten, not even by --actualizar
@@ -1229,4 +1237,6 @@ git init -q -b develop "$T/dd"
 	cat "$T/dd-act.out" 2>/dev/null
 	fail "git ia dev_documents"
 }
+# new end-to-end cases live in tests/hooks/cases/*.sh (one file per area)
+run_cases "$SUITE/tests/hooks/cases"
 echo "all hook checks passed"

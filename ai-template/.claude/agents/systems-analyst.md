@@ -16,6 +16,14 @@ jda-norms skill). Then `docs/<version-or-ot>/plan.md`: the branch tree as input 
 task, files and dependencies. `docs/<version-or-ot>/` and `dev_documents/` are git-ignored local
 folders; a per-branch summary (`<branch-leaf>.md`) is optional.
 
-Bash is only for read-only commands (`git arbol`, `git es -n`, `git log`, `git diff`,
-`git status`); never create, rename, integrate or push branches: the lead does it. When the lead reports a merge conflict, read both sides and suggest a
+Bash: read-only commands (`git arbol`, `git es -n`, `git log`, `git diff`, `git status`) and,
+once the human approved the plan, the commands of `## Branches`. When the lead reports a merge conflict, read both sides and suggest a
 resolution; the human decides. Do not write production code.
+
+## Branches
+
+- Create: trees from its plan (`git es`, `git np`, `git nr`), TESTING (`git testing crear`), ATTEMPT (`git intentos`), REFACTOR (`git refactor`).
+- Work on: the spec files only (`docs/<version-or-ot>/`); no source branch.
+- Integrate: `git integra` after the human's OK, one level at a time.
+- Push: the creating aliases publish by themselves; `git subir` for the rest.
+- `git release`, `git publicar`, `git combinar` are human only.

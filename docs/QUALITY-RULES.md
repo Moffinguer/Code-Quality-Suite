@@ -32,6 +32,7 @@ column; unknown languages/tools only warn.
   "$schema": "file:///…/schema/quality-rules.schema.json",
   "version": 1,
   "level": "standard",
+  "data_class": "internal",
   "exclude": ["generated/**", "*.pb.go"],
   "encoding": { "charset": "utf-8", "bom": "forbid", "by_language": {}, "by_glob": {}, "mojibake": "block" },
   "commit":   { "charset": "ascii", "types": ["feat", "fix", "…"], "subject_max": 50 },
@@ -59,6 +60,19 @@ Tool block: `enabled`, `level` (minimum level for this tool), `args` (extra CLI 
 Categories: `syntax` (parsers), `formatting` (identifying mark + the formatter), `analysis`
 (linters and deep analysers). Language ids and tool ids are listed in `docs/LANGUAGES.md`;
 the JSON Schema gives editors completion and the default rules of each tool.
+
+## Data class (`data_class`)
+
+Top-level key (not a section). The data class of the repository:
+
+| Value | Meaning |
+| --- | --- |
+| `public` | public data and code: any model or endpoint may see it |
+| `internal` | default: the team's own code and data |
+| `regulated` | regulated data: `git cuarentena` (QUARANTINE) refuses the repository, and its data never goes to free model tiers or third-party endpoints that train on prompts |
+
+Invalid values block the commit. The hooks read it from the policy environment as
+`QS_DATA_CLASS`, like the other keys.
 
 ## Encoding (`encoding`)
 
@@ -143,7 +157,62 @@ A rejected message prints the offending lines and an ASCII suggestion
 
 The branch model and its keys are described in `docs/GIT-WORKFLOW.md` (including the release
 keys `release_leaf`, `archive_prefix`, `version_file`, `changelog_file`, `readme_file`,
-`pom_version`, `tag_url`, `commit_url`).
+`pom_version`, `tag_url`, `commit_url`, and `build_cmd`, the full build a MIGRATION push runs)
+and `publish_on_create` (default `true`: every branch a suite
+command creates is pushed to origin with `-u`; `false`, or `QS_PUBLISH=0` for one command, leaves
+it to `git subir`).
+
+### Special branches (`branches.special`)
+
+One table says which reserved branch types exist and what rules each one has. The defaults
+(6.0.0) are in `engine/policy.py`; the JSON schema lists every property. A project overrides
+one property (`"TESTS": {"paths": ["qa/**"]}`: the other properties keep their defaults) or
+disables a whole type (`"FORMAT": false`): a disabled type is not reserved, a branch with that
+name is an ordinary branch. TESTING (`branches.testing_leaf`) is not in the table.
+
+| Type | Where (`at`) | Integrates | Order | Notes |
+| --- | --- | --- | --- | --- |
+| `MIGRATION` | version | squash | first, locks the version | build commits, no `feat`; full build on push |
+| `DOCS` | version, no children | squash | last | docs and chore commits, paths `@docs`; the only place for CHANGELOG.md and the badge |
+| `REFACTOR` | node | squash | last | refactor commits, gate level `strict` |
+| `FORMAT` | node, no children | squash, never rebased | alone | `style` commits |
+| `TESTS` | node | squash | any | test and chore commits, paths `@tests` |
+| `SPIKE` | node | `apply` (commits are taken out) | any | deleted at the release |
+| `ATTEMPT-<n>` | task | `choose` (only the attempt choice) | any | counts in the task changelog |
+| `REVIEW-<task>` | task | `apply` | any | deleted at the release |
+| `QUARANTINE-<task>` | task | `apply` | any | `Generated-by` trailer, gate level `strict` |
+| `CHECKPOINT-<task>` | task, no children | never | any | never pushed, gate level `format` |
+
+Properties of an entry:
+
+| Property | Values | Meaning |
+| --- | --- | --- |
+| `at` | `version`, `node`, `task` | where the branch may live |
+| `children` | bool | may become `<X>/ORIGINAL` with children |
+| `suffix` | `none`, `n`, `task` | `ATTEMPT-<n>`, `REVIEW-<task>` |
+| `integrates` | `squash`, `never`, `choose`, `apply` | how the integration treats the branch |
+| `order` | `any`, `first`, `last`, `alone` | when it integrates among its siblings |
+| `rebase` | bool | `false` for FORMAT: regenerated, never rebased |
+| `types` | list of Conventional Commits types, `["*"]` = all, `[]` = no own commits | allowed commit types |
+| `paths` | list of globs and `@repo-files`, `@docs`, `@tests`; `[]` = any | allowed paths |
+| `level` | `off`, `syntax`, `format`, `standard`, `strict` or `null` | gate level for the branch |
+| `push` | `normal`, `never` | CHECKPOINT never pushes |
+| `push_checks` | `default`, `full` | `full`: full build and tests on push |
+| `trailers` | list | trailers every own commit must carry |
+| `locks` | bool | while it exists no other branch of the version may be created |
+| `on_release` | `required`, `optional`, `delete`, `set_aside` | what the version release does with it |
+| `changelog` | `none`, `changed`, `task` | how it appears in the changelog |
+
+Not configurable (the validation refuses another value): `FORMAT.rebase` (`false`),
+`ATTEMPT.integrates` (`choose`), `CHECKPOINT.push` (`never`). Also refused: an unknown type
+(`HOTFIX`), an unknown property, a bad value and a type named like `parent_leaf`,
+`release_leaf` or `testing_leaf` (ignoring case).
+
+`DOCS.on_release` is `required` in new files (DOCS writes the changelog). A file written by
+5.x gets `optional` when the suite migrates it (`branches.model` 6), so the 5.x changelog
+writer keeps working until the project sets `required` (see `docs/UPDATING.md`). The hooks and
+scripts read the table as `QS_SP_NAMES` (enabled types) and `QS_SP_<TYPE>_<PROP>` from
+`policy.env` (booleans `1`/`0`, lists joined with `|`).
 
 ## Repository files (`qs-repo-files`)
 

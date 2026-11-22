@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# The qs-version merge driver (scripts/merge-version.sh) during a rebase. Only the rebase of a
+# '<v>/RELEASE' with branches.flow = squash (git publicar, git subir) keeps the version of the
+# commit replayed (the RELEASE side); that case is in publish_mainline.sh. Every other rebase
+# keeps the 4.x rule, the new base wins: a final branch rebased onto its bumped ORIGINAL (git
+# subir) takes the ORIGINAL's version, and git pull --rebase takes the version of origin.
+# why: every check is written `cond && ok "..." || fail "..."`, and ok never fails
+# shellcheck disable=SC2015
+set -euo pipefail
+: "${SUITE:?run the cases through tests/hooks/run.sh}"
+# shellcheck source=tests/hooks/case-lib.sh
+. "$SUITE/tests/hooks/case-lib.sh"
+
+case_sandbox squash
+V=5.1.0
+F="$V/700"
+git np "$V" >/dev/null && git push -q origin "$V/ORIGINAL" 2>/dev/null || fail "tree $V"
+git np 700 >/dev/null && git push -q origin "$F/ORIGINAL" 2>/dev/null || fail "OT 700"
+git nr work >/dev/null || fail "nr work"
+[ "$(git show "$F/ORIGINAL:VERSION")" = "$V" ] || fail "the version tree has no VERSION $V"
+
+# --- a final branch rebased onto its bumped ORIGINAL keeps the ORIGINAL's version (4.x) --------
+# why: the branch's own commit and the ORIGINAL both changed VERSION, so the driver runs
+plumb_commit local "$F/work" VERSION 5.1.0-work "chore: branch version" >/dev/null
+plumb_commit both "$F/ORIGINAL" VERSION 5.1.1 "chore(version): 5.1.1" >/dev/null
+git checkout -q "$F/work"
+out="$(git rebase "origin/$F/ORIGINAL" 2>&1)" || fail "rebase of $F/work: $out"
+git merge-base --is-ancestor "$F/ORIGINAL" "$F/work" && [ "$(git show "$F/work:VERSION")" = 5.1.1 ] &&
+	ok "rebase of a final branch onto its bumped ORIGINAL: the ORIGINAL's version wins (4.x)" ||
+	fail "final rebase kept $(git show "$F/work:VERSION"): $out"
+
+# --- git pull --rebase keeps the version of origin (4.x) ---------------------------------------
+plumb_commit origin "$F/work" VERSION 5.1.2-remote "chore: remote version" >/dev/null
+plumb_commit local "$F/work" VERSION 5.1.2-local "chore: local version" >/dev/null
+out="$(git pull -q --rebase origin "$F/work" 2>&1)" || fail "git pull --rebase: $out"
+git merge-base --is-ancestor "origin/$F/work" "$F/work" && [ "$(git show "$F/work:VERSION")" = 5.1.2-remote ] &&
+	ok "git pull --rebase: the version of origin (the new base) wins (4.x)" ||
+	fail "pull --rebase kept $(git show "$F/work:VERSION"): $out"
+
+# --- a PUBLISHED final branch behind its moved ORIGINAL is rebased and pushed by git subir -------
+# (publish on create is on: the branch is on origin from its creation; no VERSION change, so the
+# squash model's pre-push checks pass)
+git checkout -q "$F/ORIGINAL"
+git nr work2 >/dev/null 2>&1 || fail "nr work2"
+plumb_commit local "$F/work2" w2.txt "work" "feat: work two" >/dev/null
+plumb_commit both "$F/ORIGINAL" o.txt "moved" "chore: original moves" >/dev/null
+out="$(git subir 2>&1)" || fail "git subir of $F/work2: $out"
+git merge-base --is-ancestor "$F/ORIGINAL" "$F/work2" &&
+	[ "$(git ls-remote origin "refs/heads/$F/work2" | cut -f1)" = "$(git rev-parse "$F/work2")" ] &&
+	[ "$(git rev-parse --abbrev-ref "$F/work2@{u}")" = "origin/$F/work2" ] &&
+	ok "git subir of a published final branch: rebased onto the moved ORIGINAL and pushed" || fail "subir work2: $out"

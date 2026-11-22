@@ -1,5 +1,8 @@
 # Model provider inventory
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 Reference for feeding the router and the DB. **Limits change every few weeks**;
 figures are indicative (verified ~Aug 2026). Keep it current with the aggregators
 at the end.

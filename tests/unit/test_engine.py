@@ -527,16 +527,16 @@ class Changelog(unittest.TestCase):
             "group": "Added",
             "breaking": False,
             "text": "Add login",
-            "refs": ["abc1234", "OT 1"],
-            "authors": ["Ana"],
+            "ref": "abc1234",
+            "ot": "1",
             "order": 1,
         },
         {
             "group": "Fixed",
             "breaking": True,
             "text": "Drop cookie",
-            "refs": ["def5678"],
-            "authors": [],
+            "ref": "def5678",
+            "ot": None,
             "order": 2,
         },
     ]
@@ -551,7 +551,7 @@ class Changelog(unittest.TestCase):
         self.assertEqual(changelog.versions(text), ["1.1.0", "1.0.0"])
         self.assertEqual(changelog.validate(text), ([], []))
         self.assertIn("- **Breaking:** Drop cookie (def5678)", text)
-        self.assertIn("- Add login (abc1234, OT 1; Ana)", changelog.section(text, "1.1.0"))
+        self.assertIn("- Add login (abc1234; 1)", changelog.section(text, "1.1.0"))
         bad = "# Changelog\n\n## [Unreleased]\n\n## 1.0 - 2020-1-1\n\n### Security\n\n- x\n"
         errs = " ".join(changelog.validate(bad)[0])
         for want in ("Unreleased", "semantic version", "YYYY-MM-DD", "not allowed"):
@@ -658,10 +658,11 @@ class AlphanumericOt(unittest.TestCase):
                 self.assertIsNone(changelog._ot_of(src, policy.OT_RX))
         self.assertIsNone(changelog._ot_of("4.0.2/ABC123/login", "^[0-9]+$"))
 
-    def test_changelog_entry_refs(self):
+    def test_changelog_entry_ot(self):
         c = {"hash": "a" * 40, "body": "feat: x\n\nNorms: N1\n"}
-        refs = changelog._entry_refs(c, "4.0.2/ABC123/login", (), "", policy.OT_RX)
-        self.assertEqual(refs, ["aaaaaaa", "OT ABC123", "N1"])
+        self.assertEqual(changelog._entry_ot(c, "4.0.2/ABC123/login", "", policy.OT_RX), "ABC123")
+        self.assertEqual(changelog._entry_ot(c, None, "git", policy.OT_RX), "git")
+        self.assertIsNone(changelog._entry_ot(c, None, "", policy.OT_RX))
 
 
 class RegistryIntegrity(unittest.TestCase):
@@ -680,6 +681,24 @@ class RegistryIntegrity(unittest.TestCase):
                 self.assertLessEqual(
                     len(fm), 1, f"{lang['id']}/{st['id']} has several formatters: {fm}"
                 )
+
+
+def load_tests(loader, tests, pattern):
+    """Add every sibling tests/unit/test_*.py module when this file is run directly.
+
+    Parameters: loader (unittest loader), tests (suite to extend), pattern (None when the
+    file is run directly; a discovery pattern such as "test*.py" under discover).
+    Returns the extended suite. Under discover the siblings are already found, so nothing
+    is added there (otherwise they would run twice).
+    """
+    if pattern is not None:
+        return tests
+    here = os.path.dirname(os.path.abspath(__file__))
+    own = os.path.basename(__file__)
+    for name in sorted(os.listdir(here)):
+        if name.startswith("test_") and name.endswith(".py") and name != own:
+            tests.addTests(loader.loadTestsFromName(name[:-3]))
+    return tests
 
 
 if __name__ == "__main__":
