@@ -349,6 +349,9 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   `<v>/<ot>/RELEASE`; `<v>/RELEASE` gets each OT rebased in, oldest first.
   A release given up by deleting `<v>/RELEASE` by hand leaves no state behind: the next
   `git release` says so (`stale release state ... is cleared`) and takes every OT that exists then.
+  The OT release (`git release` inside `<v>/<ot>/...` or `--ot <v>/<ot>`) creates no tag: tags
+  are version numbers only. It writes and pushes the hidden ref `refs/ot/<v>/<ot>`
+  (`branches.ot_ref`) at the OT `ORIGINAL` tip, so the `CHANGELOG.md` hash links stay valid.
 - **Use it when:** every OT of the version is integrated into `<version>/ORIGINAL`.
 - **Who:** human. Then review `CHANGELOG.md` on `<version>/RELEASE` (edit and commit there).
 

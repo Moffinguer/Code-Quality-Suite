@@ -107,6 +107,12 @@ working. New files get `required`: DOCS writes the changelog. To switch an exist
 finish its open version trees, then set `on_release` to `"required"` in `.quality-rules.json`.
 `"FORMAT": false` (or any type) disables a type; any property can be overridden on its own.
 
+`branches.ot_tag` is now `branches.ot_ref` (default `refs/ot/{version}/{ot}`): tags are version
+numbers only, so the OT release writes a hidden ref instead of the tag `ot/<v>/<ot>`. The
+migration renames the key and maps `ot/...` to `refs/ot/...`. Tags `ot/...` already pushed stay
+as they are; move one with `git update-ref refs/ot/<v>/<ot> ot/<v>/<ot>`, push the ref, then
+delete the tag (`git push origin --delete ot/<v>/<ot>`).
+
 ## What an update keeps
 
 | Kept | Where |
