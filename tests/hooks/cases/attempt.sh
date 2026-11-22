@@ -29,7 +29,7 @@ rc=0
 out="$(QS_ALIAS=elegir git elegir b 2 2>&1)" || rc=$?
 [ "$rc" = 2 ] && grep -q '^usage: ' <<<"$out" && [ -z "$(git for-each-ref refs/heads/b/)" ] && ok "AT0: git elegir b 2 is refused with the usage" || fail "AT0: rc=$rc out=$out"
 rc=0
-out="$(QS_ALIAS=bogus git intentos "$TASK" 2 2>&1)" || rc=$?
+out="$(QS_ALIAS=bogus bash "$SUITE/scripts/git-intentos.sh" "$TASK" 2 2>&1)" || rc=$?
 [ "$rc" = 2 ] && grep -q '^usage: ' <<<"$out" && ok "AT0: an unknown alias name prints the usage (exit 2)" || fail "AT0: unknown name rc=$rc out=$out"
 
 # --- AT1: the structure and one worktree per attempt
