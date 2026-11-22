@@ -73,3 +73,9 @@ out="$(git combinar --incluir 9.8.0,9.8.1 --version 9.8.2 --yes 2>&1)" || rc=$?
 [ "$rc" != 0 ] && grep -q 'conflict' <<<"$out" &&
 	! git rev-parse -q --verify 9.8.2/RELEASE >/dev/null &&
 	ok "C2: a real conflict between RELEASEs is still refused" || fail "C2: rc=$rc $out"
+
+# --- C3: --contenida says by hand that the later RELEASE took the earlier one in ---------------
+out="$(git combinar --incluir 9.8.0,9.8.1 --contenida 9.8.0 --version 9.8.2 --yes 2>&1)" || fail "C3: combinar: $out"
+[ "$(git show 9.8.2/RELEASE:p.txt)" = P2 ] &&
+	[ "$(git log --format=%s --grep='^chore(combine)' "develop..9.8.2/RELEASE" | wc -l)" = 1 ] &&
+	ok "C3: --contenida: the earlier RELEASE is not squashed, no conflict" || fail "C3: $out"
