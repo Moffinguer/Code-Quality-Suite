@@ -372,3 +372,68 @@ git limpiar-unmerged             # deletes the integrated and superseded ones, l
 
 A deleted branch prints its last commit, so `git branch <branch> <sha>` restores it. Details:
 [GIT-COMMANDS.md section 7](GIT-COMMANDS.md#git-limpiar-unmerged).
+
+### 3.13 Special branches (6.0.0)
+
+Some branches have reserved names: `MIGRATION` under a version, `ATTEMPT-<n>` under a task,
+`REVIEW-<task>`, `QUARANTINE-<task>` and `CHECKPOINT-<task>` next to a task, and `SPIKE` under a
+node. `git np`, `git nr` and `git es` refuse these names and point to the command that creates
+them. A type set to `false` in `branches.special` of [QUALITY-RULES.md](QUALITY-RULES.md) frees its
+name. The reference of each command is in [GIT-COMMANDS.md section 5](GIT-COMMANDS.md#5-branches).
+
+- **MIGRATION (human).** `git migracion` creates `<version>/MIGRATION`, the same as
+  `git np <version> --migracion`. While a version has an open `MIGRATION`, local or only on origin,
+  nothing else can be created in it. `git arbol` warns about it.
+
+- **ATTEMPT (lead).** Several attempts at the same task, each in its own worktree:
+
+  ```bash
+  git intentos login 3           # three ATTEMPT branches of the task
+  git elegir login               # ranks the attempts; the human confirms the choice
+  ```
+
+- **REVIEW (reviewer, author).** A review branch of a task, to apply or discard the reviewer's
+  changes:
+
+  ```bash
+  git revision login                  # REVIEW-login, next to the task
+  git revision login --aplicar        # applies the review; --aplicar <c...> takes chosen commits
+  git revision login --descartar      # discards it
+  ```
+
+- **QUARANTINE (external-worker; lead or human).** Work from an external model, through the
+  gateway, lands in a quarantine branch and never on the task directly. Regulated code and data
+  never go to external models: only local models or paid endpoints that do not train on prompts.
+
+  ```bash
+  git cuarentena login                # QUARANTINE-login: the external work, to review
+  git aceptar 3f2a1c9 --a 7.1.1/188858/login   # cherry-pick one reviewed commit, with Reviewed-by:
+  git cuarentena login --borrar       # deletes the quarantine when it is no longer needed
+  ```
+
+- **CHECKPOINT (any agent).** Local save points while you work. They are never pushed:
+
+  ```bash
+  git checkpoint "before the refactor"
+  git checkpoint --lista              # the save points
+  git checkpoint --volver 2           # back to the second one
+  ```
+
+- **SPIKE (anyone).** A throwaway exploration under a node. Commits can be carried from a SPIKE
+  to a task with `--llevar`:
+
+  ```bash
+  git spike                           # <node>/SPIKE
+  git spike --llevar 7.1.1/188858/SPIKE 7.1.1/188858/login
+  ```
+
+The commands above are described by the API reference of the suite ([../API.md](../API.md)
+section 4), which lists the aliases and their version. Check each one with `git ayuda <command>`
+before you rely on it in a script.
+
+### 3.14 The merge flow (deprecated)
+
+Repositories created before the squash flow may have `"flow": "merge"` in `branches` of
+`.quality-rules.json`. That flow is deprecated: the squash flow is the default and the one this
+manual describes. Check the flow before you integrate (section 3.6). The migration of old
+branches and the difference between the two flows are in [GIT-WORKFLOW.md](GIT-WORKFLOW.md#configuration-quality-rulesjson---branches).
