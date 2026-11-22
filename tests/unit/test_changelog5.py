@@ -242,6 +242,12 @@ class MigrationLine(unittest.TestCase):
         self.assertTrue(lines[0].endswith("; MIGRATION)"))
         self.assertTrue(lines[1].endswith("; MIGRATION)"))
 
+    def test_build_breaking_first_under_changed(self):
+        items, _ = changelog.entries(GIT + ["-C", self.d], self.tip, self.base)
+        block = changelog.render("6.0.0", "2026-11-16", items)
+        self.assertIn("### Changed\n\n- **Breaking:** Raise the Java baseline (", block)
+        self.assertLess(block.index("Raise the Java baseline"), block.index("Move to Java 17"))
+
 
 class GateLevel(unittest.TestCase):
     """repofiles.check() passes the version being written to the changelog validation."""
