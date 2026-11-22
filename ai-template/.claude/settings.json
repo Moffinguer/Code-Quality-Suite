@@ -40,11 +40,15 @@
       "Bash(git intentos:*)",
       "Bash(git testing:*)",
       "Bash(git cuarentena:*)",
-      "Bash(git aceptar:*)"
+      "Bash(git aceptar:*)",
+      "Bash(git push:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(git push -n --no-verify:*)",
+      "Bash(git release:*)",
       "Bash(git publicar:*)",
       "Bash(git combinar:*)",
       "Bash(git changelog --escribir:*)",

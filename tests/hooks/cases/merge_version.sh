@@ -23,7 +23,8 @@ git nr work >/dev/null || fail "nr work"
 # why: the branch's own commit and the ORIGINAL both changed VERSION, so the driver runs
 plumb_commit local "$F/work" VERSION 5.1.0-work "chore: branch version" >/dev/null
 plumb_commit both "$F/ORIGINAL" VERSION 5.1.1 "chore(version): 5.1.1" >/dev/null
-out="$(git subir 2>&1)" || fail "git subir of $F/work: $out"
+git checkout -q "$F/work"
+out="$(git rebase "origin/$F/ORIGINAL" 2>&1)" || fail "rebase of $F/work: $out"
 git merge-base --is-ancestor "$F/ORIGINAL" "$F/work" && [ "$(git show "$F/work:VERSION")" = 5.1.1 ] &&
 	ok "rebase of a final branch onto its bumped ORIGINAL: the ORIGINAL's version wins (4.x)" ||
 	fail "final rebase kept $(git show "$F/work:VERSION"): $out"
@@ -35,3 +36,16 @@ out="$(git pull -q --rebase origin "$F/work" 2>&1)" || fail "git pull --rebase: 
 git merge-base --is-ancestor "origin/$F/work" "$F/work" && [ "$(git show "$F/work:VERSION")" = 5.1.2-remote ] &&
 	ok "git pull --rebase: the version of origin (the new base) wins (4.x)" ||
 	fail "pull --rebase kept $(git show "$F/work:VERSION"): $out"
+
+# --- a PUBLISHED final branch behind its moved ORIGINAL is rebased and pushed by git subir -------
+# (publish on create is on: the branch is on origin from its creation; no VERSION change, so the
+# squash model's pre-push checks pass)
+git checkout -q "$F/ORIGINAL"
+git nr work2 >/dev/null 2>&1 || fail "nr work2"
+plumb_commit local "$F/work2" w2.txt "work" "feat: work two" >/dev/null
+plumb_commit both "$F/ORIGINAL" o.txt "moved" "chore: original moves" >/dev/null
+out="$(git subir 2>&1)" || fail "git subir of $F/work2: $out"
+git merge-base --is-ancestor "$F/ORIGINAL" "$F/work2" &&
+	[ "$(git ls-remote origin "refs/heads/$F/work2" | cut -f1)" = "$(git rev-parse "$F/work2")" ] &&
+	[ "$(git rev-parse --abbrev-ref "$F/work2@{u}")" = "origin/$F/work2" ] &&
+	ok "git subir of a published final branch: rebased onto the moved ORIGINAL and pushed" || fail "subir work2: $out"

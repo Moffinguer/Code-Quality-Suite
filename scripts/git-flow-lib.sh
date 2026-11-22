@@ -27,7 +27,7 @@ qs_policy_defaults() {
 	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1 QS_COMMIT_FILES=block
 	QS_BR_ENFORCE=block QS_BR_LEAF=ORIGINAL QS_BR_MAINLINE=develop QS_BR_PROTECTED='main master develop'
 	QS_BR_SEGMENT='^[A-Za-z0-9][A-Za-z0-9_-]*$' QS_BR_LEAF_MERGE=merge QS_BR_REQUIRE_CHILDREN=1
-	QS_BR_FLOW=squash QS_BR_OT_TAG='ot/{version}/{ot}' QS_BR_TESTING=TESTING
+	QS_BR_FLOW=squash QS_BR_OT_TAG='ot/{version}/{ot}' QS_BR_TESTING=TESTING QS_BR_PUBLISH=1
 	QS_BR_TAG='{version}' QS_BR_TAG_LEVEL=1 QS_BR_LEVELS=2 QS_BR_ALLOW=0
 	QS_BR_RELEASE_LEAF=RELEASE QS_BR_ARCHIVE=unmerged
 	QS_BR_VERSION_FILE=VERSION QS_BR_CHANGELOG=CHANGELOG.md QS_BR_README=README.md QS_BR_POM=update
@@ -74,6 +74,94 @@ qs_special_need_squash() {
 	[ "${QS_BR_FLOW:-squash}" != merge ] && return 0
 	echo "[rama] ERROR: special branches need the squash flow (set branches.flow to squash)" >&2
 	return 1
+}
+
+# Whether branches are published when created: branches.publish_on_create and QS_PUBLISH.
+# Arguments: none. Returns: 0 when enabled, 1 when QS_PUBLISH=0 or the policy says false.
+qs_publish_on() {
+	[ "${QS_PUBLISH:-1}" != 0 ] && [ "${QS_BR_PUBLISH:-1}" != 0 ]
+}
+
+# Publish the branches a suite command has just created: one push of all of them to origin, with
+# upstream (branches.publish_on_create, QS_PUBLISH=0 turns it off for one command). The hooks run
+# as in any push (never --no-verify) and no credential prompt can block the command. Branches of a
+# special type whose push is 'never' (CHECKPOINT) are skipped. A failure never fails the caller:
+# the branch stays as created and a WARN line says how to publish it later.
+# Arguments: $@ the branch names. Returns: 0 always (nothing to do, published, or warned).
+# Output: the note "no remote origin" on stdout; the WARN lines on stderr.
+qs_publish_new() {
+	local b t list=() reason
+	qs_publish_on || return 0
+	for b in "$@"; do
+		t="$(special_kind "$b")"
+		if [ -n "$t" ] && [ "$(special_prop "$t" PUSH)" = never ]; then continue; fi
+		list+=("$b")
+	done
+	[ "${#list[@]}" -gt 0 ] || return 0
+	if ! git remote get-url origin >/dev/null 2>&1; then
+		for b in "${list[@]}"; do echo "[rama] no remote origin: $b stays local"; done
+		return 0
+	fi
+	if reason="$(GIT_TERMINAL_PROMPT=0 git push -q -u origin "${list[@]}" 2>&1 </dev/null)"; then return 0; fi
+	reason="$(printf '%s
+' "$reason" | grep -v '^[[:space:]]*$' | tail -n1 | cut -c1-160)"
+	for b in "${list[@]}"; do
+		echo "[rama] WARN: $b is not on origin (${reason:-push failed}). Publish it later: git subir (or git push -u origin $b)" >&2
+	done
+	return 0
+}
+
+# Move a published branch to its new name on origin in ONE atomic push: the new name is created
+# and the old one deleted under a lease on the old tip, so a push by someone else in between
+# changes nothing. Only when the new name sits below the old one ('a' -> 'a/ORIGINAL': a folder
+# and a file ref cannot coexist in one push) the same lease is used in two pushes, the deletion
+# first, and only after a dry run proved that the new name is acceptable; should the second push
+# still fail, the old name is put back.
+# Arguments: $1 old name, $2 new name (a local branch), $3 the old tip the lease expects.
+# Returns: 0 when origin has the new name and no longer the old one; 2 when the lease was lost
+# (someone else pushed the old name: nothing changed on origin); 1 on any other failure (origin
+# unreachable, push refused), with the reason on stderr; origin keeps the old name unless the
+# message says otherwise.
+qs_publish_rename() {
+	local old="$1" new="$2" sha="$3" lease cur
+	lease="--force-with-lease=refs/heads/$old:$sha"
+	if GIT_TERMINAL_PROMPT=0 git push -q --atomic -u "$lease" origin "refs/heads/$new:refs/heads/$new" ":refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+		return 0
+	fi
+	cur="$(GIT_TERMINAL_PROMPT=0 git ls-remote origin "refs/heads/$old" 2>/dev/null </dev/null)" || {
+		echo "[rama] origin is unreachable; nothing changed on origin" >&2
+		return 1
+	}
+	cur="${cur%%[[:space:]]*}"
+	if [ -n "$cur" ] && [ "$cur" != "$sha" ]; then
+		echo "[rama] origin/$old moved to ${cur:0:10} since ${sha:0:10}; nothing changed on origin" >&2
+		return 2
+	fi
+	case "$new" in
+	"$old"/*) ;;
+	*)
+		echo "[rama] origin refused the rename of $old to $new; nothing changed on origin" >&2
+		return 1
+		;;
+	esac
+	# why: the new name is checked (hooks included) before the old one is deleted
+	if ! GIT_TERMINAL_PROMPT=0 git push -q --dry-run origin "refs/heads/$new:refs/heads/$new" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin would refuse $new; nothing changed on origin" >&2
+		return 1
+	fi
+	if [ -n "$cur" ] && ! GIT_TERMINAL_PROMPT=0 git push -q "$lease" origin ":refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+		echo "[rama] origin refused the deletion of $old; nothing changed on origin" >&2
+		return 1
+	fi
+	if ! GIT_TERMINAL_PROMPT=0 git push -q -u origin "$new" >/dev/null 2>&1 </dev/null; then
+		if [ -n "$cur" ] && GIT_TERMINAL_PROMPT=0 git push -q origin "$sha:refs/heads/$old" >/dev/null 2>&1 </dev/null; then
+			echo "[rama] origin refused $new; $old was put back on origin" >&2
+		else
+			echo "[rama] origin refused $new and $old is gone from origin: git push origin $sha:refs/heads/$old" >&2
+		fi
+		return 1
+	fi
+	return 0
 }
 
 # Load the commit/branch policy into QS_* variables. The engine writes <state>/policy.env on
