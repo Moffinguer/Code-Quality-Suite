@@ -6,7 +6,7 @@
 # The files stay OUT of the repository: a managed .gitignore block lists them (and the personal
 # .quality-rules.json), and any of them already committed is taken out of the index (the files
 # stay on disk; commit afterwards). Existing files are kept; --actualizar rewrites the suite's own
-# files (skills, subagents, settings) but never AGENTS.md, CLAUDE.md, GEMINI.md, opencode.json or
+# files (skills, subagents), merges its rows into .claude/settings.json (yours stay), but never AGENTS.md, CLAUDE.md, GEMINI.md, opencode.json or
 # knowledge/ or dev_documents/, which are yours (the dev_documents/ templates are added only when missing).
 set -euo pipefail
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -34,11 +34,27 @@ yours() {
 	case "$1" in AGENTS.md | CLAUDE.md | GEMINI.md | opencode.json | knowledge/* | dev_documents/*) return 0 ;; esac
 	return 1
 }
+# merge_settings TEMPLATE DEST: merge the suite's settings.json rows into DEST (created when
+# missing), keeping the project's own keys and rows. The list of rows the suite installed lives in
+# the common git dir, so every worktree of the repository shares it. A settings file that cannot
+# be read only skips this step (settings-merge.py warns and exits 0).
+merge_settings() {
+	local tmp common
+	common="$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd)"
+	tmp="$(mktemp)"
+	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$1" >"$tmp"
+	python3 "$SUITE/scripts/settings-merge.py" "$tmp" "$2" "$common/qs-settings-owned.json" || true
+	rm -f "$tmp"
+}
 while IFS= read -r -d '' f; do
 	rel="${f#"$tpl"/}"
 	dst="$repo/$rel"
 	if [ -e "$dst" ]; then
-		if [ "$update" = 1 ] && ! yours "$rel"; then
+		if [ "$update" = 1 ] && [ "$rel" = ".claude/settings.json" ]; then
+			before="$(cat "$dst")"
+			merge_settings "$f" "$dst"
+			[ "$before" = "$(cat "$dst")" ] || updated=$((updated + 1))
+		elif [ "$update" = 1 ] && ! yours "$rel"; then
 			new="$(sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f")"
 			if [ "$new" != "$(cat "$dst")" ]; then
 				printf '%s\n' "$new" >"$dst"
@@ -51,7 +67,11 @@ while IFS= read -r -d '' f; do
 		continue
 	fi
 	mkdir -p "$(dirname "$dst")"
-	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$dst"
+	if [ "$rel" = ".claude/settings.json" ]; then
+		merge_settings "$f" "$dst"
+	else
+		sed "s|<SUITE>|${SUITE//|/\\|}|g" "$f" >"$dst"
+	fi
 	added=$((added + 1))
 done < <(find "$tpl" -type f -print0)
 
@@ -60,7 +80,7 @@ skill="$repo/.agents/skills/git-commands/SKILL.md"
 mkdir -p "$(dirname "$skill")"
 {
 	printf -- '---\nname: git-commands\n'
-	printf 'description: Manual of every git command of this repository (np, nr, nv, es, subir, integra, arbol, changelog, release, publicar, combinar, encoding, repo-files, iniciar, instalar, ia, ayuda): syntax, when to use each and who runs it. Read it before running any git command here.\n---\n\n'
+	printf 'description: Manual of every git command of this repository (np, nr, nv, es, subir, integra, arbol, changelog, release, publicar, combinar, encoding, repo-files, iniciar, instalar, ia, ayuda): syntax, when to use each and which role runs it (the Who line of each command). Read it before running any git command here.\n---\n\n'
 	sed -e 's/ *<!--[^>]*-->//g' "$SUITE/docs/GIT-COMMANDS.md"
 } >"$skill.tmp"
 mv "$skill.tmp" "$skill"

@@ -12,10 +12,9 @@ Claude Code you run in your own git worktree (its branch is `worktree-...`, neve
 elsewhere, in the project checkout. First read the shared context: the spec, the plan and any
 `<branch-leaf>.md` summary in `docs/<version-or-ot>/`, the files of `dev_documents/`, and for a
 bugfix branch `docs/<version-or-ot>/<req>/bugfix.md`. They are git-ignored, so they are not in
-your worktree: use the absolute paths the lead gave you. Then create the final branch named in
-the plan with
-`git nr <name> --from <its ORIGINAL>` (for example `git nr login --from 1.0.0/100001/ORIGINAL`),
-or `git switch <branch>` when it already exists (`git es` may have created the whole tree).
+your worktree: use the absolute paths the lead gave you. Then `git switch` to the final
+branch named in the plan (the lead created it, for example with `git es`); if it does not
+exist, ask the lead.
 Follow the applicable norms. Write code, identifiers and comments in English, with a doc comment
 (Javadoc, JSDoc, docstring or the language's equivalent) on every function you add or change.
 After each edit the gate must pass (Claude Code runs it by itself;
@@ -27,3 +26,11 @@ run the gate on every changed file and let the hooks pass (`git subir` runs pre-
 with `git subir`, then `git switch -` (frees the final branch so the lead can
 integrate it), and a short report: branch, what changed, tests run, anything you could not do.
 Never merge into an ORIGINAL.
+
+## Branches
+
+- Create: CHECKPOINT-<task> (`git checkpoint`, never pushed).
+- Work on: its final branch (the lead created it) or its ATTEMPT-<n>; `git revision --aplicar` on it.
+- Integrate: never (no `git integra`, no `git merge`, no `git pull` without `--rebase`, no `git np` / `git nr`; the lead does it).
+- Push: `git subir` (CHECKPOINT never; no raw `git push`, never an ORIGINAL).
+- `git release`, `git publicar`, `git combinar` are human only.

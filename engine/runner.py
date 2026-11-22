@@ -38,6 +38,8 @@ class Ctx:
         )  # files whose extension was ambiguous (confidently resolved)
         self.protect = {}  # file -> non-UTF-8 charset: formatters/markers never touch it
         self.charsets = {}  # lang -> charset name for {charset} (e.g. PMD --encoding)
+        # why: a format check runs on copies in a temp root; {repo} stays the real repository
+        self.repo = root
 
 
 class StepResult:
@@ -80,6 +82,7 @@ _RULE_RE = re.compile(r"\{rule:([A-Za-z0-9_.-]+)\}")
 def _subst(t, ctx, tool, version, vv):
     cfg = ctx.cfg_paths.get((tool.get("_lang"), tool["id"]), "")
     s = t.replace("{root}", ctx.root).replace("{tmp}", ctx.tmp).replace("{suite}", SUITE)
+    s = s.replace("{repo}", getattr(ctx, "repo", ctx.root))
     s = s.replace("{npm}", os.environ.get("QS_NPM", "/opt/npm"))
     s = s.replace("{charset}", ctx.charsets.get(tool.get("_lang"), "UTF-8"))
     s = _ENV_RE.sub(lambda m: os.environ.get(m.group(1), ""), s)
@@ -496,6 +499,9 @@ def run_tool(tool, settings, lang, ctx, files, version, lid=None):  # noqa: C901
             res.note = f"no {tool['group_by']} found for some files (skipped)"
     if role == "format" and ctx.mode != "fix" and cmds.get("check") == "diff":
         return _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra)
+    pipe = isinstance(cmds.get("check"), dict) and "pipe" in cmds["check"]
+    if role == "format" and ctx.mode != "fix" and pipe:
+        return _pipe_check(tool, ctx, groups, version, res, env, timeout, args, extra)
     seq = cmds.get("fix") if fixing else cmds.get("check")
     if not seq:
         for f in files:
@@ -541,6 +547,69 @@ def _seqs(seq):
     return seq["all"] if isinstance(seq, dict) else [seq]
 
 
+def _run_bytes(cmd, cwd, env, timeout, data):
+    """Run a command that reads a file on stdin and prints the result on stdout, as bytes.
+
+    Args:
+        cmd: the expanded command.
+        cwd: working directory.
+        env: environment.
+        timeout: seconds before the run is abandoned.
+        data: bytes fed on stdin.
+
+    Returns:
+        tuple: (exit code, stdout bytes, stderr text); 127 when the tool is missing and
+        124 on timeout. Bytes keep the line endings, which text mode would rewrite.
+    """
+    try:
+        p = subprocess.run(
+            cmd, cwd=cwd, env=env, capture_output=True, timeout=timeout, input=data, check=False
+        )
+        return p.returncode, p.stdout, p.stderr.decode("utf-8", "replace")
+    except FileNotFoundError as e:
+        return 127, b"", str(e)
+    except subprocess.TimeoutExpired:
+        return 124, b"", f"timeout after {timeout}s"
+
+
+# why: shared engine call contract; a parameter object would change every caller
+def _pipe_check(tool, ctx, groups, version, res, env, timeout, args, extra):  # noqa: PLR0913, PLR0917
+    """Check mode that pipes each file through stdin filters run on the real repository.
+
+    cmd.check = {"pipe": [cmd, ...]}: the file's bytes go to the first command, each
+    output feeds the next, and the last output is compared with the file. The commands run
+    with the fix mode's working directory and {file} is the real path, so tools that find
+    their config or project layout from the path (ruff --stdin-filename) see the same
+    repository as the fix, unlike a copy in a temp root.
+
+    Args:
+        tool, ctx, groups, version, env, timeout, args, extra: as in run_tool.
+        res: the StepResult to fill.
+
+    Returns:
+        StepResult: res, with SUCCESS for formatted files and ERROR otherwise.
+    """
+    ok_codes = tool.get("success_fix", tool.get("success", [0]))
+    for gdir, gfiles in groups.items():
+        for f in gfiles:
+            cur = builtin.slurp(os.path.join(ctx.root, f))
+            data, failed = cur, False
+            for s in tool["cmd"]["check"]["pipe"]:
+                gextra = dict(extra, group=gdir or ctx.root)
+                cmd = expand(s, ctx, tool, _paths(tool, ctx, [f]), args, version, gextra)
+                cwd = _cwd(tool, ctx, gdir or ctx.root, [f])
+                rc, data, err = _run_bytes(cmd, cwd, env, timeout, data)
+                if rc not in ok_codes:
+                    res.output += [f"{f}: {line}" for line in err.splitlines() if line.strip()]
+                    res.output += [f"{f}: exit {rc}"] if not err.strip() else []
+                    failed = True
+                    break
+            res.status[f] = "SUCCESS" if not failed and data == cur else "ERROR"
+            if not failed and data != cur:
+                res.output.append(f"{f}: not formatted (a commit formats it)")
+    return res
+
+
 # why: shared engine call contract; a parameter object would change every caller
 def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):  # noqa: C901, PLR0913, PLR0917
     """Check mode for formatters without a reliable --check: format a copy and compare."""
@@ -564,6 +633,7 @@ def _diff_check(tool, ctx, groups, version, res, env, timeout, args, extra):  # 
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(os.path.join(gdir, marker), dst)
     sub = Ctx(work, "fix", ctx.tmp, ctx.cfg_paths, ctx.exec_files, ctx.ambiguous)
+    sub.repo, sub.charsets = ctx.repo, ctx.charsets
     ok_codes = tool.get("success_fix", tool.get("success", [0]))
     for gdir, gfiles in groups.items():
         units = [gfiles] if tool.get("batch", True) else [[f] for f in gfiles]

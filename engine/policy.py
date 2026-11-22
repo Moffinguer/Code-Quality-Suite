@@ -12,14 +12,173 @@ import codecs
 import contextlib
 import copy
 import fnmatch
+import json
 import os
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Any
+
+import semver
+
+from registry import LEVELS
 
 # level 2 of a branch name: the OT (work order), ASCII letters and digits ('188858', 'ABC123');
 # no '-' or '_', so it never collides with the leaf names of the branch model
 OT_RX = r"^[A-Za-z0-9]+$"
 
-DEFAULTS = {
+# ------------------------------------------------------------ special branches table
+
+# Allowed values per property of a `branches.special.<TYPE>` entry; a tuple is an enumeration,
+# a string names a kind checked by _special_value_error.
+SPECIAL_PROPS = {
+    "at": ("version", "node", "task"),  # where the branch may live
+    "children": "bool",  # may become '<X>/ORIGINAL' with children
+    "suffix": ("none", "n", "task"),  # 'ATTEMPT-<n>', 'REVIEW-<task>'
+    "integrates": ("squash", "never", "choose", "apply"),  # how `git integra` treats it
+    "order": ("any", "first", "last", "alone"),
+    "rebase": "bool",  # False: regenerated, never rebased (FORMAT)
+    "types": "types",  # Conventional Commits types; ["*"] = all, [] = no own commits
+    "paths": "paths",  # allowed globs and @tokens; [] = any
+    "level": "level",  # gate level of the branch, or None
+    "push": ("normal", "never"),
+    "push_checks": ("default", "full"),  # 'full': full build and tests on push
+    "trailers": "trailers",  # trailers every own commit must carry
+    "locks": "bool",  # while it exists no other branch of the version may be created
+    "on_release": ("required", "optional", "delete", "set_aside"),
+    "changelog": ("none", "changed", "task"),
+}
+# (type, property) pairs a project cannot change: validate refuses any other value
+SPECIAL_FIXED = {
+    ("FORMAT", "rebase"): False,
+    ("ATTEMPT", "integrates"): "choose",
+    ("CHECKPOINT", "push"): "never",
+}
+# standard files of `git repo-files` except VERSION (it changes only with the version commit)
+REPO_FILES_GLOBS = (
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    "CONTRIBUTORS.md",
+    "MAINTAINERS.md",
+    "ROADMAP.md",
+    "FAQ.md",
+    "INSTALL.md",
+    "ARCHITECTURE.md",
+    "API.md",
+    "DEVELOPMENT.md",
+    "AUTHORS",
+    "LICENSE",
+    "CODEOWNERS",
+    "CITATION.cff",
+)
+# @tokens usable in `paths`; expand_paths turns them into globs
+PATH_TOKENS = {
+    "@repo-files": REPO_FILES_GLOBS,
+    "@docs": ("*.md", "**/*.md", "docs/**", *REPO_FILES_GLOBS),
+    "@tests": (
+        "src/test/**",
+        "**/test/**",
+        "**/tests/**",
+        "**/*_test.*",
+        "**/test_*.py",
+        "**/*.spec.*",
+        "**/*.test.*",
+    ),
+}
+_SP_BASE = {
+    "at": "node",
+    "children": True,
+    "suffix": "none",
+    "integrates": "squash",
+    "order": "any",
+    "rebase": True,
+    "types": ["*"],
+    "paths": [],
+    "level": None,
+    "push": "normal",
+    "push_checks": "default",
+    "trailers": [],
+    "locks": False,
+    "on_release": "set_aside",
+    "changelog": "none",
+}
+
+
+def _sp(**over):
+    """Build one default entry of the special table: the base properties plus overrides.
+
+    Args:
+        **over: the properties that differ from _SP_BASE.
+
+    Returns:
+        dict: a new entry (lists are copied), keys in SPECIAL_PROPS order.
+    """
+    return copy.deepcopy({**_SP_BASE, **over})
+
+
+# 6.0.0 default table; the order of the entries is the order of QS_SP_NAMES and `git ayuda`.
+# TESTING (branches.testing_leaf, 5.0.0-RC1) is not in the table: it is not configurable here.
+SPECIAL_DEFAULTS = {
+    "MIGRATION": _sp(
+        at="version",
+        order="first",
+        types=["build", "fix", "refactor", "perf", "test", "docs", "chore", "ci", "style"],
+        push_checks="full",
+        locks=True,
+        on_release="required",
+        changelog="changed",
+    ),
+    "DOCS": _sp(
+        at="version",
+        children=False,
+        order="last",
+        types=["docs", "chore"],
+        paths=["@docs"],
+        on_release="required",
+    ),
+    "REFACTOR": _sp(
+        order="last",
+        types=["refactor", "style", "perf", "test", "docs", "chore"],
+        level="strict",
+    ),
+    "FORMAT": _sp(children=False, order="alone", rebase=False, types=["style"]),
+    "TESTS": _sp(types=["test", "chore"], paths=["@tests"]),
+    "SPIKE": _sp(integrates="apply", on_release="delete"),
+    "ATTEMPT": _sp(
+        at="task", suffix="n", integrates="choose", on_release="delete", changelog="task"
+    ),
+    "REVIEW": _sp(at="task", suffix="task", integrates="apply", on_release="delete"),
+    "QUARANTINE": _sp(
+        at="task",
+        suffix="task",
+        integrates="apply",
+        trailers=["Generated-by"],
+        level="strict",
+        on_release="delete",
+        changelog="task",
+    ),
+    "CHECKPOINT": _sp(
+        at="task",
+        children=False,
+        suffix="task",
+        integrates="never",
+        level="format",
+        push="never",
+        on_release="delete",
+    ),
+}
+
+DATA_CLASSES = ("public", "internal", "regulated")  # values of the top-level data_class key
+# why: typed Any, the entries are sections (dict) and one top-level scalar (data_class)
+DEFAULTS: dict[str, Any] = {
+    # top-level scalar, not a section: the data class of the repository (see DATA_CLASSES)
+    "data_class": "internal",
     "encoding": {
         "enabled": True,
         "charset": "utf-8",
@@ -46,6 +205,7 @@ DEFAULTS = {
         ],
         "subject_max": 50,
         "conventional": True,
+        "files": "block",  # block | warn | off: the 'Files:' block in every commit message
     },
     "branches": {
         "enforce": "block",  # block | warn | off
@@ -61,10 +221,14 @@ DEFAULTS = {
         ],
         "segment": r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
         "allow": [],
-        "leaf_merge": "merge",  # merge (--no-ff) | squash
+        "model": 6,  # marker of the one-time migration to the 6.x branch model (migrate)
+        "flow": "squash",  # squash (5.x) | merge (4.x, deprecated)
+        "ot_ref": "refs/ot/{version}/{ot}",  # hidden ref at the OT release; empty = none
+        "testing_leaf": "TESTING",  # reserved leaf of the TESTING sandbox '<level>/TESTING'
+        "leaf_merge": "merge",  # merge (--no-ff) | squash; only used with flow = merge
         "require_children_merged": True,
         "tag": "{version}",
-        "tag_level": 1,  # tag when a level-N ORIGINAL is integrated (0 = never)
+        "tag_level": 1,  # tag when a level-N ORIGINAL is integrated (0 = never); flow = merge only
         "release_leaf": "RELEASE",  # git release: '<version>/ORIGINAL' becomes '<version>/RELEASE'
         "archive_prefix": "unmerged",  # git release: branches not integrated -> 'unmerged/<name>'
         "version_file": "VERSION",  # committed on '<version>/ORIGINAL' when the tree is created
@@ -73,10 +237,113 @@ DEFAULTS = {
         "pom_version": "update",  # update | snapshot | check | off: pom.xml follows the version
         "tag_url": "",  # changelog links: '' = from origin, '-' = none, or '...{tag}'
         "commit_url": "",  # changelog references: '' = from origin, '-' = none, '...{commit}'
+        "build_cmd": "",  # full build of a push_checks: full type ('' = QUALITY_HEAVY_CMD)
+        "publish_on_create": True,  # every branch a command creates is pushed to origin
+        "special": SPECIAL_DEFAULTS,  # table of special branches (see SPECIAL_PROPS)
     },
 }
 SECTIONS = tuple(DEFAULTS)
 BOM_UTF8 = codecs.BOM_UTF8
+MODEL = DEFAULTS["branches"]["model"]
+OLD_OT_RX = r"^[0-9]+$"  # level 2 default before 4.2.1 (numeric OTs only)
+FLOW_NOTICE = (
+    "existing rules file: `branches.flow` set to `merge` to keep the 4.x behaviour; "
+    "set `branches.flow` to `squash` in .quality-rules.json to adopt the 5.x flow"
+)
+
+
+DOCS_NOTICE = (
+    "6.0 kept the 5.x changelog writer (OT RELEASE). To make DOCS write it, finish the open "
+    "version trees and set `branches.special.DOCS.on_release` to `required`, see "
+    "docs/UPDATING.md"
+)
+
+
+def migrate(data):
+    """One-time migration of a rules file to the current branch model. Run before populate.
+
+    Step 5 (`branches.model` missing or below 5): `branches.levels[1]` equal to the old default
+    `^[0-9]+$` becomes OT_RX (any other value is kept), `branches.flow` is added as `merge`
+    (4.x behaviour kept; new files get `squash` from populate) and the model is set to 5.
+    Step 6 (model below 6): `branches.special.DOCS.on_release` is added as `optional`, so the
+    5.x changelog writer (OT RELEASE) keeps working until the project switches to `required`
+    (never written over an existing value or over `"DOCS": false`); the model is set to 6.
+    A 4.x file goes through both steps. A second run changes nothing. Never weakens a rule.
+
+    Args:
+        data: the parsed rules file (dict), changed in place.
+
+    Returns:
+        list[str]: one message per change (the log lines); the notices are FLOW_NOTICE and
+        DOCS_NOTICE inside their messages.
+    """
+    br = data.get("branches") if isinstance(data, dict) else None
+    if not isinstance(br, dict):
+        return []
+    model = br.get("model")
+    if not isinstance(model, int) or isinstance(model, bool):
+        model = 0
+    if model >= MODEL:
+        return []
+    msgs = []
+    if model < 5:
+        levels = br.get("levels")
+        if isinstance(levels, list) and len(levels) > 1 and levels[1] == OLD_OT_RX:
+            levels[1] = OT_RX
+            msgs.append(f"migrated branches.levels[1]: {OLD_OT_RX} -> {OT_RX}")
+        if "flow" not in br:
+            br["flow"] = "merge"
+            msgs.append(f"migrated branches.flow: merge ({FLOW_NOTICE})")
+        msgs.append("migrated branches.model: 5")
+    msgs += _migrate_special(br)
+    msgs += _migrate_ot_ref(br)
+    br["model"] = MODEL
+    msgs.append(f"migrated branches.model: {MODEL}")
+    return msgs
+
+
+def _migrate_ot_ref(br):
+    """Rename `branches.ot_tag` to `branches.ot_ref` and map `ot/...` to `refs/ot/...`.
+
+    Tags are version numbers only; the OT release writes a hidden ref instead. An existing
+    `ot_ref` is never overwritten (the old key is then just dropped).
+
+    Args:
+        br: the branches section (dict), changed in place.
+
+    Returns:
+        list[str]: one message when the key was renamed, else an empty list.
+    """
+    if "ot_tag" not in br:
+        return []
+    old = br.pop("ot_tag")
+    if "ot_ref" in br:
+        return []
+    if isinstance(old, str) and old.startswith("ot/"):
+        old = "refs/" + old
+    br["ot_ref"] = old
+    return [f"migrated branches.ot_tag -> branches.ot_ref: {old!r}"]
+
+
+def _migrate_special(br):
+    """Step 6 of migrate: keep the 5.x changelog writer by setting DOCS.on_release to optional.
+
+    Args:
+        br: the `branches` section of the rules file (dict), changed in place.
+
+    Returns:
+        list[str]: the one message of the change, empty when nothing was set.
+    """
+    special = br.setdefault("special", {})
+    if not isinstance(special, dict):
+        return []
+    docs = special.get("DOCS")
+    if docs is None:
+        special["DOCS"] = docs = {}
+    if not isinstance(docs, dict) or "on_release" in docs:
+        return []
+    docs["on_release"] = "optional"
+    return [f"migrated branches.special.DOCS.on_release: optional ({DOCS_NOTICE})"]
 
 
 def populate(data):
@@ -106,20 +373,95 @@ def populate(data):
 def get(data, sec):
     """Effective policy section: the defaults overridden by the keys set in data.
 
+    A top-level scalar key (data_class) returns its value, or the default when unset.
+
     Args:
         data: the parsed rules file (dict), or None.
-        sec: name of the section, a key of DEFAULTS.
+        sec: name of the section or scalar key, a key of DEFAULTS.
 
     Returns:
-        dict: a new dict; the defaults are never modified.
+        dict or str: a new dict for a section (the defaults are never modified), the value of a
+        scalar key.
 
     Raises:
         KeyError: sec is not a known section.
     """
+    if not isinstance(DEFAULTS[sec], dict):
+        val = (data or {}).get(sec)
+        return DEFAULTS[sec] if val is None else val
     out = copy.deepcopy(DEFAULTS[sec])
     cur = (data or {}).get(sec)
     if isinstance(cur, dict):
         out.update(cur)
+        if sec == "branches":
+            out["special"] = _merge_special(cur.get("special"))
+    return out
+
+
+def _merge_special(over):
+    """Merge a project's `branches.special` over the default table, one property at a time.
+
+    Args:
+        over: the project's value (dict), or anything else when absent or malformed.
+
+    Returns:
+        dict: a new table. A type set to a dict keeps the defaults of the properties it does not
+        mention; a type set to anything else (False) or unknown is kept as written so that
+        validate and special_table can see it. A non-dict `over` gives the defaults.
+    """
+    out = copy.deepcopy(SPECIAL_DEFAULTS)
+    if not isinstance(over, dict):
+        return out
+    for name, val in over.items():
+        if isinstance(val, dict) and isinstance(out.get(name), dict):
+            out[name].update(copy.deepcopy(val))
+        elif val is not True or name not in out:
+            # a type set to true keeps its defaults
+            out[name] = copy.deepcopy(val)
+    return out
+
+
+def special_table(data):
+    """The effective table of special branches: enabled known types only.
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        dict[str, dict]: {TYPE: properties} in table order. A type set to `false` is absent (not
+        reserved); `true` or `{}` means the defaults; properties not overridden keep their
+        default; entries that are not objects are dropped.
+    """
+    table = get(data, "branches")["special"]
+    return {n: p for n, p in table.items() if n in SPECIAL_DEFAULTS and isinstance(p, dict)}
+
+
+def special_names(data):
+    """Names of the enabled special types, in table order.
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        list[str]: e.g. ['MIGRATION', 'DOCS', ...]; the `QS_SP_NAMES` of the shell export.
+    """
+    return list(special_table(data))
+
+
+def expand_paths(paths):
+    """Expand the @tokens of a `paths` list into globs.
+
+    Args:
+        paths: list of globs and @tokens (`@repo-files`, `@docs`, `@tests`).
+
+    Returns:
+        list[str]: the globs, in order, without duplicates; an unknown @token is kept as is.
+    """
+    out = []
+    for p in paths:
+        for g in PATH_TOKENS.get(p, (p,)):
+            if g not in out:
+                out.append(g)
     return out
 
 
@@ -151,12 +493,155 @@ def validate(data):
     errors = []
     for sec in SECTIONS:
         cur = data.get(sec)
-        if cur is not None and not isinstance(cur, dict):
+        if isinstance(DEFAULTS[sec], dict) and cur is not None and not isinstance(cur, dict):
             errors.append(f"{sec}: must be an object")
+    errors += _validate_data_class(get(data, "data_class"))
     errors += _validate_encoding(get(data, "encoding"))
     errors += _validate_commit(get(data, "commit"))
     errors += _validate_branches(get(data, "branches"))
+    raw = data.get("branches")
+    errors += _validate_special(raw.get("special") if isinstance(raw, dict) else None)
+    errors += _validate_special_names(get(data, "branches"))
     return errors
+
+
+def _special_value_error(kind, val):
+    """Check one value of a special-table property against its kind.
+
+    Args:
+        kind: a tuple of allowed values or one of 'bool', 'types', 'paths', 'level', 'trailers'.
+        val: the value found in the rules file.
+
+    Returns:
+        str: what is wrong ('' when the value is valid).
+    """
+    if isinstance(kind, tuple):
+        ok = isinstance(val, str) and val in kind
+        return "" if ok else "must be one of " + ", ".join(kind)
+    if kind == "bool":
+        return "" if isinstance(val, bool) else "must be true or false"
+    if kind == "level":
+        return "" if val is None or val in LEVELS else "must be null or " + ", ".join(LEVELS)
+    if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
+        return "must be a list of strings"
+    return _special_list_error(kind, val)
+
+
+def _special_list_error(kind, val):
+    """Check a list-valued property of the special table (its items are already strings).
+
+    Args:
+        kind: 'types', 'paths' or 'trailers'.
+        val: the list.
+
+    Returns:
+        str: what is wrong ('' when the list is valid).
+    """
+    if kind == "types":
+        word = re.compile(r"[a-z][a-z0-9-]*")
+        if val == ["*"] or all(word.fullmatch(x) for x in val):
+            return ""
+        return "must be ['*'] (all) or a list of lowercase Conventional Commits types"
+    if kind == "trailers":
+        ok = all(re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", x) for x in val)
+        return "" if ok else "must be a list of trailer names (letters, digits, '-')"
+    for p in val:
+        if p.startswith("@"):
+            if p not in PATH_TOKENS:
+                return f"unknown token {p!r} (known: {', '.join(PATH_TOKENS)})"
+        elif not p or p.startswith("/") or ".." in p.split("/") or "\\" in p or "|" in p:
+            return f"{p!r} is not a glob inside the repository"
+    return ""
+
+
+def _validate_special(special):
+    """Check `branches.special` as written in the rules file.
+
+    Args:
+        special: the raw value (None when absent).
+
+    Returns:
+        list[str]: one message per problem: not an object, unknown type (HOTFIX), type neither an
+        object nor a boolean, unknown property, bad value, change of a non-configurable property
+        (SPECIAL_FIXED).
+    """
+    if special is None:
+        return []
+    if not isinstance(special, dict):
+        return ["branches.special: must be an object"]
+    errors = []
+    for name, val in special.items():
+        base = f"branches.special.{name}"
+        if name not in SPECIAL_DEFAULTS:
+            errors.append(f"{base}: unknown type (known: {', '.join(SPECIAL_DEFAULTS)})")
+        elif isinstance(val, bool):
+            continue
+        elif not isinstance(val, dict):
+            errors.append(f"{base}: must be an object, true or false")
+        else:
+            errors += _validate_special_entry(name, val)
+    return errors
+
+
+def _validate_special_entry(name, entry):
+    """Check the properties of one type of the special table.
+
+    Args:
+        name: the type, a key of SPECIAL_DEFAULTS.
+        entry: the properties set by the project (dict).
+
+    Returns:
+        list[str]: one message per problem.
+    """
+    errors = []
+    for prop, val in entry.items():
+        path = f"branches.special.{name}.{prop}"
+        if prop not in SPECIAL_PROPS:
+            errors.append(f"{path}: unknown property (known: {', '.join(SPECIAL_PROPS)})")
+            continue
+        err = _special_value_error(SPECIAL_PROPS[prop], val)
+        if err:
+            errors.append(f"{path}: {err}")
+        elif (name, prop) in SPECIAL_FIXED and val != SPECIAL_FIXED[(name, prop)]:
+            errors.append(f"{path}: not configurable (always {SPECIAL_FIXED[(name, prop)]!r})")
+    return errors
+
+
+def _validate_special_names(br):
+    """Check that no enabled special type is named like a reserved leaf of the branch model.
+
+    Args:
+        br: the 'branches' section merged with its defaults (dict).
+
+    Returns:
+        list[str]: one message per clash with parent_leaf, release_leaf or testing_leaf,
+        ignoring case (refs are case-insensitive on Windows).
+    """
+    leaves = {
+        key: str(br.get(key, "")).lower() for key in ("parent_leaf", "release_leaf", "testing_leaf")
+    }
+    errors = []
+    for name, props in br["special"].items():
+        if name not in SPECIAL_DEFAULTS or not isinstance(props, dict):
+            continue
+        for key, leaf in leaves.items():
+            if name.lower() == leaf:
+                errors.append(f"branches.{key}: must differ from the special type {name}")
+    return errors
+
+
+def _validate_data_class(val):
+    """Check the top-level 'data_class' key.
+
+    Args:
+        val: the value of the key, the default when unset (str).
+
+    Returns:
+        list[str]: one message when val is not one of DATA_CLASSES, else an empty list.
+    """
+    if val in DATA_CLASSES:
+        return []
+    return [f"data_class: must be one of {', '.join(DATA_CLASSES)} (got {val!r})"]
 
 
 def _validate_encoding(enc):
@@ -212,6 +697,8 @@ def _validate_commit(com):
     errors = []
     if com.get("charset") not in ("ascii", "utf-8", "any"):
         errors.append("commit.charset: must be ascii, utf-8 or any")
+    if com.get("files") not in ("block", "warn", "off"):
+        errors.append("commit.files: must be block, warn or off")
     if not (
         isinstance(com.get("types"), list)
         and all(isinstance(t, str) and re.fullmatch(r"[a-z][a-z0-9-]*", t) for t in com["types"])
@@ -236,11 +723,21 @@ def _validate_branches(br):
         errors.append("branches.enforce: must be block, warn or off")
     if br.get("leaf_merge") not in ("merge", "squash"):
         errors.append("branches.leaf_merge: must be merge or squash")
-    for key in ("parent_leaf", "release_leaf", "archive_prefix"):
+    if br.get("flow") not in ("squash", "merge"):
+        errors.append("branches.flow: must be squash or merge")
+    ot_ref = br.get("ot_ref")
+    bad = ot_ref != "" and ("{ot}" not in ot_ref or not ot_ref.startswith("refs/ot/"))
+    if not isinstance(ot_ref, str) or bad:
+        errors.append("branches.ot_ref: must be '' or start with refs/ot/ and contain {ot}")
+    if not isinstance(br.get("model"), int) or isinstance(br.get("model"), bool):
+        errors.append("branches.model: must be an integer")
+    for key in ("parent_leaf", "release_leaf", "archive_prefix", "testing_leaf"):
         if not re.fullmatch(r"[A-Za-z0-9_-]+", str(br.get(key, ""))):
             errors.append(f"branches.{key}: letters, digits, '-' or '_' only")
     if len({br.get("parent_leaf"), br.get("release_leaf")}) < 2:
         errors.append("branches.release_leaf: must differ from parent_leaf")
+    if br.get("testing_leaf") in (br.get("parent_leaf"), br.get("release_leaf")):
+        errors.append("branches.testing_leaf: must differ from parent_leaf and release_leaf")
     if br.get("pom_version") not in ("update", "snapshot", "check", "off"):
         errors.append("branches.pom_version: must be update, snapshot, check or off")
     errors += _validate_branch_paths(br)
@@ -264,10 +761,14 @@ def _validate_branch_paths(br):
         v = br.get(key)
         if not isinstance(v, str) or (v not in ("", "-") and ph not in v):
             errors.append(f"branches.{key}: '' (from origin), '-' (none) or a URL with {ph}")
+    if not isinstance(br.get("build_cmd"), str):
+        errors.append("branches.build_cmd: a shell command ('' = the heavy stage command)")
     for key in ("version_file", "changelog_file", "readme_file"):
         v = br.get(key)
         if not isinstance(v, str) or v.startswith(("/", "-")) or ".." in v.split("/") or "\\" in v:
             errors.append(f"branches.{key}: a path inside the repository ('' = off)")
+    if not isinstance(br.get("publish_on_create"), bool):
+        errors.append("branches.publish_on_create: must be true or false")
     return errors
 
 
@@ -312,16 +813,22 @@ def shell_env(data):
     """KEY='value' lines for the host hooks (commit-msg, pre-push, git aliases)."""
     com, br = get(data, "commit"), get(data, "branches")
     lines = {
+        "QS_DATA_CLASS": get(data, "data_class"),
         "QS_COMMIT_CHARSET": com["charset"],
         "QS_COMMIT_TYPES": "|".join(com["types"]),
         "QS_COMMIT_SUBJECT_MAX": com["subject_max"],
         "QS_COMMIT_CONVENTIONAL": "1" if com.get("conventional", True) else "0",
+        "QS_COMMIT_FILES": com["files"],
         "QS_BR_ENFORCE": br["enforce"],
         "QS_BR_LEAF": br["parent_leaf"],
         "QS_BR_MAINLINE": br["mainline"],
         "QS_BR_PROTECTED": " ".join(br["protected"]),
         "QS_BR_SEGMENT": br["segment"],
         "QS_BR_LEAF_MERGE": br["leaf_merge"],
+        "QS_BR_FLOW": br["flow"],
+        "QS_BR_OT_REF": br["ot_ref"],
+        "QS_BR_PUBLISH": "1" if br.get("publish_on_create", True) is not False else "0",
+        "QS_BR_TESTING": br["testing_leaf"],
         "QS_BR_REQUIRE_CHILDREN": "1" if br.get("require_children_merged", True) else "0",
         "QS_BR_TAG": br["tag"],
         "QS_BR_TAG_LEVEL": br["tag_level"],
@@ -333,6 +840,7 @@ def shell_env(data):
         "QS_BR_POM": br["pom_version"],
         "QS_BR_TAG_URL": br["tag_url"],
         "QS_BR_COMMIT_URL": br["commit_url"],
+        "QS_BR_BUILD_CMD": br["build_cmd"],
         "QS_BR_LEVELS": len(br["levels"]),
         "QS_BR_ALLOW": len(br["allow"]),
     }
@@ -340,7 +848,53 @@ def shell_env(data):
         lines[f"QS_BR_LEVEL_{i}"] = rx
     for i, rx in enumerate(br["allow"], 1):
         lines[f"QS_BR_ALLOW_{i}"] = rx
+    lines.update(special_env(data))
     return "".join(f"{k}={_sh(v)}\n" for k, v in lines.items())
+
+
+def _sp_value(val):
+    """Encode one property of the special table as a shell string.
+
+    Args:
+        val: the property value: bool, None, str or list of str.
+
+    Returns:
+        str: '1'/'0' for a bool, '' for None, the items joined with '|' for a list (a list
+        never has '|' in an item that validate accepts), otherwise str(val).
+    """
+    if isinstance(val, bool):
+        return "1" if val else "0"
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return "|".join(val)
+    return str(val)
+
+
+def special_env(data):
+    """The special table as shell variables: the query helper of the hooks and scripts.
+
+    `QS_SP_NAMES` lists the enabled types separated by spaces; every enabled type has one
+    `QS_SP_<TYPE>_<PROP>` per property (PROP upper case: AT, CHILDREN, SUFFIX, INTEGRATES, ORDER,
+    REBASE, TYPES, PATHS, GLOBS, LEVEL, PUSH, PUSH_CHECKS, TRAILERS, LOCKS, ON_RELEASE, CHANGELOG).
+    Booleans are 1/0, a null level is '', lists are joined with '|' (`types` ['*'] = all
+    types, `paths` keep their @tokens; `GLOBS` is `paths` with the @tokens expanded, for the
+    hooks).
+
+    Args:
+        data: the parsed rules file (dict), or None.
+
+    Returns:
+        dict[str, str]: variable name -> value, in table order. Disabled types are absent.
+    """
+    table = special_table(data)
+    env = {"QS_SP_NAMES": " ".join(table)}
+    for name, props in table.items():
+        for prop in SPECIAL_PROPS:
+            env[f"QS_SP_{name}_{prop.upper()}"] = _sp_value(props[prop])
+        # why: the hooks match these globs; expanding the @tokens here keeps one copy of them
+        env[f"QS_SP_{name}_GLOBS"] = _sp_value(expand_paths(props["paths"]))
+    return env
 
 
 # ---------------------------------------------------------------- encoding
@@ -897,3 +1451,250 @@ def repair(raw, old_raw=None):
             notes.append(f"{restored} line(s) took their accents back from the previous version")
     left = [describe(f) for f in mojibake(text)[0]]
     return (BOM_UTF8 if bom else b"") + text.encode("utf-8"), notes, left
+
+
+def _migrate_file(path):
+    """Migrate a rules file on disk (host-side, no engine image needed).
+
+    The new text goes to a uniquely named temporary file (`mkstemp`) in the same directory;
+    the permission bits of the original are copied to it and it is then moved over the
+    original (`os.replace`). Its line endings (LF or CRLF) are kept. If the write or the
+    replace fails, the temporary file is removed and the OSError propagates; the original is
+    left unchanged. A file with a BOM or that is not UTF-8 is skipped with a warning.
+
+    Args:
+        path: the rules file; a missing, empty or unreadable file is left alone.
+
+    Returns:
+        int: 0 (also when nothing changed or the file is not usable).
+
+    Raises:
+        OSError: when the temporary file cannot be written, copied or moved over the file.
+    """
+    name = os.path.basename(path)
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0
+    if raw.startswith(BOM_UTF8):
+        print(f"[quality-suite] WARN {name}: UTF-8 BOM, not migrated", file=sys.stderr)
+        return 0
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        print(f"[quality-suite] WARN {name}: not UTF-8, not migrated", file=sys.stderr)
+        return 0
+    except ValueError:
+        return 0
+    msgs = migrate(data)
+    if msgs:
+        eol = "\r\n" if b"\r\n" in raw else "\n"
+        text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+        directory = os.path.dirname(os.path.abspath(path))
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+                fh.write(text)
+            shutil.copymode(path, tmp)
+            os.replace(tmp, path)
+        finally:
+            # after a successful replace the temp name is gone; otherwise drop the leftover
+            with contextlib.suppress(OSError):
+                os.remove(tmp)
+        for m in msgs:
+            print(f"[quality-suite] {name}: {m}")
+    return 0
+
+
+RULES_NAME = ".quality-rules.json"
+NO_RULES_MSG = "no rules file (created on the first commit)"
+
+
+def upgrade(data):
+    """Bring a parsed rules file to the current suite version: migrate, then populate.
+
+    `migrate` applies the one-time `branches.model` steps (a 4.x file keeps `flow: merge`);
+    `populate` then adds the missing sections and `section.key` defaults. Nothing is ever
+    overwritten, nothing is written inside an existing `branches.special.<TYPE>` entry nor over
+    `"FORMAT": false` (`get` merges nested defaults at run time). A second call changes nothing.
+
+    Args:
+        data: the parsed rules file (dict), changed in place.
+
+    Returns:
+        list[str]: `migrated <path>: <old> -> <new>` / `added <path>` lines, empty when the file
+        was already up to date.
+    """
+    changes = list(migrate(data))
+    changes += [f"added {path}" for path in populate(data)]
+    return changes
+
+
+def suite_version():
+    """The version of this suite folder (its VERSION file).
+
+    Returns:
+        str: the version, or '' when the file is missing or unreadable.
+    """
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read().strip()
+    except OSError:
+        return ""
+
+
+def stamp_path(repo):
+    """The stamp file of a repository: one per clone, shared by every worktree (git common dir).
+
+    Args:
+        repo: the repository (or worktree) folder.
+
+    Returns:
+        str: the path of `<common dir>/quality-suite/suite-version`, or '' outside a git repository.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", repo, "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
+    return os.path.join(os.path.abspath(os.path.join(repo, out)), "quality-suite", "suite-version")
+
+
+def _write_rules(path, raw, data):
+    """Write the upgraded rules file next to itself, then move it over the original.
+
+    Args:
+        path: the rules file.
+        raw: the original bytes (their line ending, LF or CRLF, is kept).
+        data: the upgraded rules (dict).
+
+    Raises:
+        OSError: the temporary file cannot be written or moved over the file.
+    """
+    eol = "\r\n" if b"\r\n" in raw else "\n"
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    name = os.path.basename(path)
+    fd, tmp = tempfile.mkstemp(
+        dir=os.path.dirname(os.path.abspath(path)), prefix=name + ".", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=eol) as fh:
+            fh.write(text)
+        shutil.copymode(path, tmp)
+        os.replace(tmp, path)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+
+
+def _write_stamp(repo, version):
+    """Record the suite version a repository was upgraded to.
+
+    Args:
+        repo: the repository folder.
+        version: the suite version.
+
+    Raises:
+        OSError: the stamp cannot be written.
+    """
+    path = stamp_path(repo)
+    if not path or not version:
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(version + "\n")
+
+
+def _stamp_is_newer(repo, version):
+    """Whether the stamp of a repository is newer than the suite version (a downgrade).
+
+    Args:
+        repo: the repository folder.
+        version: the suite version.
+
+    Returns:
+        bool: True when the stamp holds a valid version greater than `version`.
+    """
+    path = stamp_path(repo)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            stamp = fh.read().strip()
+    except OSError:
+        return False
+    return semver.valid(stamp) and semver.valid(version) and semver.compare(stamp, version) > 0
+
+
+def rules_upgrade(repo):
+    """`rules-upgrade <repo>`: upgrade the rules file of a repository and write the stamp.
+
+    The file is rewritten only when something changed (2-space indent, key order kept, new keys
+    appended, UTF-8 without BOM, final newline). Without a rules file only the stamp is written.
+    A stamp newer than the suite is a warning: nothing is written (downgrade is out of scope).
+
+    Args:
+        repo: the repository folder.
+
+    Returns:
+        int: 0 on success (the change lines or a note go to stdout); 1 when the file is not valid
+        JSON, has a BOM or cannot be written (message on stderr; file and stamp untouched).
+    """
+    version = suite_version()
+    if _stamp_is_newer(repo, version):
+        print(
+            f"[quality-suite] WARN: rules stamp is newer than the suite {version}; not upgraded",
+            file=sys.stderr,
+        )
+        return 0
+    path = os.path.join(repo, RULES_NAME)
+    changes = []
+    if not os.path.isfile(path):
+        print(NO_RULES_MSG)
+    else:
+        try:
+            with open(path, "rb") as fh:
+                raw = fh.read()
+            if raw.startswith(BOM_UTF8):
+                raise ValueError("UTF-8 BOM")
+            data = json.loads(raw.decode("utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+            changes = upgrade(data)
+            if changes:
+                _write_rules(path, raw, data)
+        except (OSError, ValueError) as err:
+            print(f"[quality-suite] ERROR {RULES_NAME}: {err}; not upgraded", file=sys.stderr)
+            return 1
+    try:
+        _write_stamp(repo, version)
+    except OSError as err:
+        print(f"[quality-suite] ERROR cannot write the suite stamp: {err}", file=sys.stderr)
+        return 1
+    for line in changes:
+        print(line)
+    return 0
+
+
+def _main(argv):
+    """Command line: `migrate <file>` or `rules-upgrade <repo>`.
+
+    Args:
+        argv: the arguments after the program name.
+
+    Returns:
+        int: the exit status; 2 for a wrong command line.
+    """
+    if len(argv) == 2 and argv[0] == "migrate":
+        return _migrate_file(argv[1])
+    if len(argv) == 2 and argv[0] == "rules-upgrade":
+        return rules_upgrade(argv[1])
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))
