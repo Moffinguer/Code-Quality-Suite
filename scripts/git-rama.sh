@@ -73,7 +73,10 @@
 #                         branches.flow = squash: the entry is the union of the reviewed sections of
 #                         the combined RELEASEs, each squash has its Files: block, and their local
 #                         version tags are deleted; git publicar then lands it as ONE commit
-#                         --version <v>, --incluir <v1,v2...>, --yes
+#                         --version <v>, --incluir <v1,v2...>, --yes; a RELEASE that a later chosen
+#                         one already holds (ancestor, commits listed in its history, or the same
+#                         changes) is not squashed again; --contenida <v1,v2...> says so by hand for
+#                         versions whose content the later one took in with its own resolution
 #   git repo-files [NAME] the standard repository files that are missing (README, CHANGELOG, VERSION,
 #                         CONTRIBUTING, ... DEVELOPMENT), filled from git history and pom.xml; never
 #                         overwrites; --force NAME regenerates one; -n shows the plan
@@ -4118,7 +4121,7 @@ EOF
 # nothing changed; when only the push to origin fails, the local result is kept and the push to
 # run by hand is printed.
 cmd_combinar() {
-	local target="" incl="" rels=() chosen=() ordered=() done_tips=() cp_tips=() links=() r t c d cp src bad=0 covered after
+	local target="" incl="" held="" rels=() chosen=() ordered=() done_tips=() cp_tips=() links=() r t c d cp src bad=0 covered after
 	local btree ntree p s h tree sq made here wt b m only res pairs=()
 	local -A tip=() up=() orig=() okey=()
 	while [ "$#" -gt 0 ]; do
@@ -4133,7 +4136,12 @@ cmd_combinar() {
 			shift
 			;;
 		--incluir=* | --include=*) incl="${1#*=}" ;;
-		*) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --yes)" ;;
+		--contenida | --contained)
+			held="${2:?$1 needs versions}"
+			shift
+			;;
+		--contenida=* | --contained=*) held="${1#*=}" ;;
+		*) die "unknown argument '$1' (combinar: --version <v>, --incluir <v1,v2...>, --contenida <v1,v2...>, --yes)" ;;
 		esac
 		shift
 	done
@@ -4236,7 +4244,7 @@ cmd_combinar() {
 		for c in "${ordered[@]}"; do
 			if [ "$c" = "$r" ]; then
 				after=1
-			elif [ "$after" = 1 ] && combine_contains "${tip[$c]}" "$t"; then
+			elif [ "$after" = 1 ] && { combine_contains "${tip[$c]}" "$t" || case ",$held," in *",$(branch_version "$r"),"* | *",$r,"*) true ;; *) false ;; esac } then
 				covered="$c"
 				break
 			fi
