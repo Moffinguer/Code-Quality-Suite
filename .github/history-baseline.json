@@ -1,0 +1,101 @@
+{
+  "generated_from": "ee049e4",
+  "findings": [
+    {
+      "sha": "8df035dcd40bf80e9adc2054207e8d93c3f4f9b1",
+      "check": "subject_max"
+    },
+    {
+      "sha": "8df035dcd40bf80e9adc2054207e8d93c3f4f9b1",
+      "check": "files"
+    },
+    {
+      "sha": "6f8231839f471cdd6e0a175345eb66b80ffe5e64",
+      "check": "conventional"
+    },
+    {
+      "sha": "6f8231839f471cdd6e0a175345eb66b80ffe5e64",
+      "check": "files"
+    },
+    {
+      "sha": "7acdc317b63f23e30d9db876124f679bda2aa233",
+      "check": "subject_max"
+    },
+    {
+      "sha": "7acdc317b63f23e30d9db876124f679bda2aa233",
+      "check": "files"
+    },
+    {
+      "sha": "7acdc317b63f23e30d9db876124f679bda2aa233",
+      "check": "coauthor"
+    },
+    {
+      "sha": "cfe2741e76dbb2a6719bb32eef8c8385c543a06a",
+      "check": "conventional"
+    },
+    {
+      "sha": "cfe2741e76dbb2a6719bb32eef8c8385c543a06a",
+      "check": "files"
+    },
+    {
+      "sha": "e3fd2e45d3900bd662edc434dbe0522fd779b510",
+      "check": "conventional"
+    },
+    {
+      "sha": "e3fd2e45d3900bd662edc434dbe0522fd779b510",
+      "check": "files"
+    },
+    {
+      "sha": "f34904231192fbc539f2c45942e6d17d2e0af3f0",
+      "check": "subject_max"
+    },
+    {
+      "sha": "f34904231192fbc539f2c45942e6d17d2e0af3f0",
+      "check": "files"
+    },
+    {
+      "sha": "f34904231192fbc539f2c45942e6d17d2e0af3f0",
+      "check": "coauthor"
+    },
+    {
+      "sha": "d4fb3a45adf8dc1e32786c4f77f55565f6cbc438",
+      "check": "conventional"
+    },
+    {
+      "sha": "d4fb3a45adf8dc1e32786c4f77f55565f6cbc438",
+      "check": "files"
+    },
+    {
+      "sha": "05e6415a82962c8551e7c8bba3cdc488266b4272",
+      "check": "files"
+    },
+    {
+      "sha": "dc9e18fe24578ad8c0ff3b45feb9b3d7aabfaa92",
+      "check": "conventional"
+    },
+    {
+      "sha": "dc9e18fe24578ad8c0ff3b45feb9b3d7aabfaa92",
+      "check": "files"
+    },
+    {
+      "sha": "fcfac8eb791ec716d16f5d82788d68afcdb11ede",
+      "check": "files"
+    },
+    {
+      "sha": "652ead8c317195d8db94e6367d0b146ec0679098",
+      "check": "files"
+    },
+    {
+      "sha": "b2e2e9b452f1a2072342a19174fe22ae8d266de3",
+      "check": "files"
+    },
+    {
+      "sha": "c5db6ed9ad50aad53d55b4517f9e9ae2ecbfd98a",
+      "check": "files"
+    },
+    {
+      "sha": "7b12fcbfe7b0beec153d7be106d832a686740fad",
+      "check": "files"
+    }
+  ]
+}
