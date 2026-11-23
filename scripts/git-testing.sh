@@ -26,16 +26,13 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then set -euo pipefail; fi
 
 TST_SRC_BR=() TST_SRC_SHA=() TST_ORIG_SHA=""
 
-# Print an error and exit.
+# Print an error tagged "[testing]" and exit.
 # Arguments: $@ message. Returns: never (exit 1).
-tst_die() {
-	echo "[testing] $*" >&2
-	exit 1
-}
+tst_die() { QS_TAG=testing qs_die "$@"; }
 
-# Print a progress line.
+# Print a progress line tagged "[testing]".
 # Arguments: $@ message. Returns: 0.
-tst_say() { echo "[testing] $*"; }
+tst_say() { QS_TAG=testing qs_say "$@"; }
 
 # Level of the sandbox: the explicit one, or the level of the current branch.
 # Arguments: $1 explicit level (may be empty). Returns: 0 and prints the level; 1 when the current
@@ -212,7 +209,7 @@ tst_cherry_pick() {
 			return 2
 		fi
 	else
-		git show-ref --verify -q "refs/heads/$br" || git branch -q --no-track "$br" "origin/$br"
+		qs_ref_exists "refs/heads/$br" || git branch -q --no-track "$br" "origin/$br"
 		tmp="$(mktemp -d)"
 		git worktree add -q "$tmp" "$br" </dev/null >/dev/null 2>&1 || {
 			rm -rf "$tmp"

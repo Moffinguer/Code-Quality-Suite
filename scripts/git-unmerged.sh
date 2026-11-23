@@ -31,15 +31,6 @@ die() {
 # say MESSAGE...: print a tagged message to stdout.
 say() { echo "[unmerged] $*"; }
 
-# is_release_file FILE: succeed when the file only carries release bookkeeping (VERSION,
-# changelog, CITATION.cff), so that any change to it is ignored.
-is_release_file() {
-	case "$1" in
-	"$QS_BR_VERSION_FILE" | "$QS_BR_CHANGELOG" | CITATION.cff) return 0 ;;
-	esac
-	return 1
-}
-
 # strip_release_lines FILE REF: filter stdin removing the release lines of FILE as found in REF:
 # the README version badge, the project's own <version> in pom.xml (and the <parent> version when
 # the parent lives in this repository) and the top-level "version" of package.json. Dependency,
@@ -59,7 +50,7 @@ real_changes() {
 	local st f
 	while IFS=$'\t' read -r st f; do
 		[ -n "$f" ] || continue
-		is_release_file "$f" && continue
+		release_owned_file "$f" && continue
 		case "$f" in
 		"$QS_BR_README" | *pom.xml | *package.json)
 			if [ "$st" = M ] && cmp -s <(git show "$1:$f" 2>/dev/null | strip_release_lines "$f" "$1") \
@@ -195,7 +186,7 @@ main() {
 	done
 	git rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository"
 	qs_policy_load
-	git rev-parse -q --verify "refs/heads/$QS_BR_MAINLINE" >/dev/null || die "no local branch $QS_BR_MAINLINE"
+	qs_ref_exists "refs/heads/$QS_BR_MAINLINE" || die "no local branch $QS_BR_MAINLINE"
 	git remote | grep -qx origin && has_origin=1
 	if [ "$has_origin" = 1 ] && [ "$DRY" = 0 ]; then
 		git fetch -q --prune origin || die "fetch from origin failed"
@@ -206,7 +197,7 @@ main() {
 		fi
 	fi
 	MAIN_REF="$QS_BR_MAINLINE"
-	if [ "$has_origin" = 1 ] && git rev-parse -q --verify "refs/remotes/origin/$QS_BR_MAINLINE" >/dev/null; then
+	if [ "$has_origin" = 1 ] && qs_ref_exists "refs/remotes/origin/$QS_BR_MAINLINE"; then
 		git merge-base --is-ancestor "$QS_BR_MAINLINE" "origin/$QS_BR_MAINLINE" ||
 			die "local $QS_BR_MAINLINE is not contained in origin/$QS_BR_MAINLINE (push or sync it first): a local-only merge does not prove integration"
 		MAIN_REF="origin/$QS_BR_MAINLINE"

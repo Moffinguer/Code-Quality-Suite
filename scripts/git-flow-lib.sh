@@ -16,7 +16,25 @@
 # shellcheck source=scripts/special-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
 
-mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
+# mainline_prod: print the production branch name. Returns: 0; prints main when it exists, else master.
+mainline_prod() { qs_ref_exists refs/heads/main && echo main || echo master; }
+# release_owned_file PATH [--content]: whether PATH is a file the release commits write.
+# Without --content: only pure bookkeeping files (version file, changelog, CITATION.cff), whose
+# every change is ignorable. With --content: also the files that carry release lines among other
+# content (README, pom.xml, package.json). Arguments: $1 path from the top of the work tree.
+# Returns: 0 when owned, 1 otherwise (also for an empty path).
+release_owned_file() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+	"${QS_BR_VERSION_FILE:-VERSION}" | "${QS_BR_CHANGELOG:-CHANGELOG.md}" | CITATION.cff) return 0 ;;
+	esac
+	[ "${2:-}" = --content ] || return 1
+	case "$1" in
+	"${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json | */package.json) return 0 ;;
+	esac
+	return 1
+}
+# current_branch: print the short name of the current branch. Returns: 0, or 1 on a detached HEAD (prints nothing).
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
 # Set the built-in commit/branch policy defaults (overridden by .quality-rules.json).
@@ -262,14 +280,17 @@ qs_policy_load() {
 	QS_POLICY_LOADED=1
 }
 
+# _br_level_re LEVEL: print the regex of a branch level (QS_BR_LEVEL_<n>, else QS_BR_SEGMENT). Returns: 0.
 _br_level_re() {
 	local v="QS_BR_LEVEL_$1"
 	printf '%s' "${!v:-$QS_BR_SEGMENT}"
 }
+# is_mainline BRANCH: whether BRANCH is protected or the mainline. Returns: 0 yes, 1 no.
 is_mainline() {
 	case " $QS_BR_PROTECTED $QS_BR_MAINLINE " in *" $1 "*) return 0 ;; esac
 	return 1
 }
+# is_parent_branch BRANCH: whether BRANCH is a folder ORIGINAL (not the bare leaf). Returns: 0 yes, 1 no.
 is_parent_branch() { [ "${1##*/}" = "$QS_BR_LEAF" ] && [ "$1" != "$QS_BR_LEAF" ]; }
 # '<version>/RELEASE': the version ORIGINAL during 'git release' (tagged, merged into develop, deleted)
 is_release_branch() {
@@ -332,12 +353,15 @@ is_archived_branch() {
 }
 # node path: '<F>' for '<F>/ORIGINAL', the branch itself for a final branch
 branch_node() { if is_parent_branch "$1"; then printf '%s' "${1%/*}"; else printf '%s' "$1"; fi; }
+# branch_depth BRANCH: print the number of path segments of the node of BRANCH. Returns: 0.
 branch_depth() {
 	local n
 	n="$(branch_node "$1")"
 	awk -F/ '{print NF}' <<<"$n"
 }
+# branch_version BRANCH: print the first segment (the version). Returns: 0.
 branch_version() { printf '%s' "${1%%/*}"; }
+# branch_ot BRANCH: print the second segment (the OT), empty when absent. Returns: 0.
 branch_ot() {
 	local r="${1#*/}"
 	r="${r%%/*}"
@@ -457,14 +481,14 @@ branch_children() {
 # branch ref to use as a base: origin/<b> when it exists and is ahead of (or equal to) the local one
 best_ref() {
 	local b="$1"
-	if git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1; then
-		if ! git rev-parse -q --verify "refs/heads/$b" >/dev/null 2>&1 ||
+	if qs_ref_exists "refs/remotes/origin/$b"; then
+		if ! qs_ref_exists "refs/heads/$b" ||
 			git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b"; then
 			echo "origin/$b"
 			return 0
 		fi
 	fi
-	git rev-parse -q --verify "refs/heads/$b" >/dev/null 2>&1 && echo "$b"
+	qs_ref_exists "refs/heads/$b" && echo "$b"
 }
 
 # Render the release tag of a branch from the tag template (QS_BR_TAG).
@@ -568,7 +592,7 @@ configure_repo() {
 # Arguments: $1 ref of the child copy, $2 child, $3 ORIGINAL name, $4 ref of the ORIGINAL copy.
 # Returns: 0 in; 1 not in, or <pref> does not exist.
 copy_in() {
-	git rev-parse -q --verify "$4" >/dev/null 2>&1 || return 1
+	qs_ref_exists "$4" || return 1
 	git merge-base --is-ancestor "$1" "$4" 2>/dev/null && return 0
 	squash_in "$1" "$2" "$3" "$4" || squashed_in_chain "$1" "$4"
 }
@@ -600,7 +624,7 @@ copy_integrated() {
 branch_integrated() {
 	local c="$1" p="$2" ref
 	for ref in "refs/heads/$c" "refs/remotes/origin/$c"; do
-		git rev-parse -q --verify "$ref" >/dev/null 2>&1 || continue
+		qs_ref_exists "$ref" || continue
 		copy_in "$ref" "$c" "$p" "refs/heads/$p" || copy_in "$ref" "$c" "$p" "refs/remotes/origin/$p" || return 1
 	done
 	return 0
