@@ -115,6 +115,12 @@ SPEC = [
     ),
     ("FAQ.md", "informal; questions grouped by topic", "", "frequent questions"),
     (
+        "KNOWN_BUGS.md",
+        "informal; a table of the known defects (date, where, symptom, status)",
+        "",
+        "the bugs found and not yet fixed, shared by every branch",
+    ),
+    (
         "INSTALL.md",
         "GNU Coding Standards",
         "https://www.gnu.org/prep/standards/",
@@ -1276,6 +1282,36 @@ def t_faq(f):
     return "\n".join(out)
 
 
+def t_known_bugs(f):
+    """Render the KNOWN_BUGS.md skeleton: purpose, legend and an empty table.
+
+    Args:
+        f: the facts of gather (unused; the skeleton does not depend on the project).
+
+    Returns:
+        str: the file text. Rows are added by `git bug-conocido` or by hand and are never
+        rewritten by the generator (it only creates a missing file).
+    """
+    del f
+    return "\n".join(
+        [
+            "# Known bugs",
+            "",
+            _md_head("KNOWN_BUGS.md").strip(),
+            "",
+            "Bugs found and not yet fixed. A bug found in a released version is added here first "
+            "(`git bug-conocido`) and the row reaches every open branch; the fix then updates or "
+            "removes the row.",
+            "",
+            "Status: `open`; `fixing: <branch>`; `deferred: <version>`.",
+            "",
+            "| Date | Where | Symptom | Status |",
+            "| --- | --- | --- | --- |",
+            "",
+        ]
+    )
+
+
 def t_install(f):
     cmds = _build_cmds(f)
     out = [
@@ -1514,6 +1550,7 @@ TEMPLATES = {
     "MAINTAINERS.md": t_maintainers,
     "ROADMAP.md": t_roadmap,
     "FAQ.md": t_faq,
+    "KNOWN_BUGS.md": t_known_bugs,
     "INSTALL.md": t_install,
     "ARCHITECTURE.md": t_architecture,
     "API.md": t_api,

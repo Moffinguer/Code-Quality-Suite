@@ -771,12 +771,12 @@ QS_REPO_FILES=1 "$SUITE/install.sh" "$T/repo-files" >inst.out 2>&1 || {
 }
 missing=""
 for f in README.md CHANGELOG.md VERSION CONTRIBUTING.md CODE_OF_CONDUCT.md LICENSE AUTHORS CONTRIBUTORS.md \
-	CITATION.cff SECURITY.md SUPPORT.md CODEOWNERS MAINTAINERS.md ROADMAP.md FAQ.md INSTALL.md ARCHITECTURE.md API.md DEVELOPMENT.md; do
+	CITATION.cff SECURITY.md SUPPORT.md CODEOWNERS MAINTAINERS.md ROADMAP.md FAQ.md KNOWN_BUGS.md INSTALL.md ARCHITECTURE.md API.md DEVELOPMENT.md; do
 	[ -f "$f" ] || missing="$missing $f"
 done
 [ -z "$missing" ] && [ "$(cat VERSION)" = 1.1.0 ] && grep -q '^## \[\{0,1\}1.0.0\]\{0,1\} - ' CHANGELOG.md &&
 	grep -q '^# Demo App' README.md && grep -q 'version 1.0.0' README.md && grep -q 'Ana Example <ana@example.org>' AUTHORS &&
-	ok "install creates the 19 standard files from git history and pom.xml" || {
+	ok "install creates the 20 standard files from git history and pom.xml" || {
 	cat inst.out
 	echo "missing:$missing"
 	fail "repository files"

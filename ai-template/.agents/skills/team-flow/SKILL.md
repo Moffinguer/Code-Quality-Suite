@@ -66,6 +66,8 @@ CHECKPOINT, plus TESTING. The creating aliases push by themselves (`publish_on_c
 - Commits: Conventional, ASCII, subject <= 50 characters; never an AI co-author, never
   `--no-verify`. Regulated data only to local models or paid no-training endpoints.
 - Developers never merge into an ORIGINAL; only the lead and the systems-analyst integrate.
+- A bug found in a released version: first `git bug-conocido "<where>" "<symptom>"` (the row in
+  `KNOWN_BUGS.md` reaches every open branch), then the fix commits; the fix updates the row.
 
 ## Parallel development
 
@@ -74,7 +76,5 @@ CHECKPOINT, plus TESTING. The creating aliases push by themselves (`publish_on_c
   on a branch whose dependencies are not integrated.
 - If the agent tools confine an agent to its own worktree, it commits there based on
   `origin/<final>` and pushes `HEAD:<final>`; it never creates or renames branches.
-- Every branch anyone creates follows the naming model, even local-only ones. Delete temporary
-  or helper branches right after integration.
-- Before a release, audit every branch of the tree: integrated -> delete; needed -> integrate
-  or rename under `unmerged/`.
+- Every branch follows the naming model, even local-only ones; delete helper branches after use.
+- Before a release, audit every branch: integrated -> delete; needed -> integrate or `unmerged/`.

@@ -68,6 +68,7 @@ REPO_FILES_GLOBS = (
     "MAINTAINERS.md",
     "ROADMAP.md",
     "FAQ.md",
+    "KNOWN_BUGS.md",
     "INSTALL.md",
     "ARCHITECTURE.md",
     "API.md",

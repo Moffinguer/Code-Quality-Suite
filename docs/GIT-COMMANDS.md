@@ -38,6 +38,7 @@ again after moving the suite; `git actualizar-suite` runs it for you after an up
 | see where everything stands | `git arbol`, `git testing estado` |
 | delete archived branches already in develop | `git limpiar-unmerged -n`, then without `-n` |
 | check / repair the encoding of my changes | `git encoding` / `git encoding --fix` |
+| document a bug found in a released version | `git bug-conocido "<where>" "<symptom>"` |
 | a test copy of a version (SNAPSHOT, rc) | `git nv <version> --from <branch>` |
 | see what a release will contain | `git changelog` |
 | close a version (prepare the release for review) | `git release` on `<version>/ORIGINAL` |
@@ -301,6 +302,9 @@ origin) nothing else can be created in it. The commands below are described when
   The message is generated (subject, body, `Commits:`, `Files:`, `Norms:`, `Refs:`, `Squashed:`);
   the subject becomes a line of `CHANGELOG.md`, so write it for the reader. Agents pass `-m`.
   (flow merge: the 4.x behaviour, `--no-ff` merge.)
+  Refused before any change when `branches.flow` differs from the target's history, or when a
+  linked worktree has a missing or generated rules file; pre-push refuses merge commits that
+  integrate a child into an `ORIGINAL` under `flow: squash`. Each refusal prints the recovery.
 - **Warning:** run it only from the main checkout, where the real `.quality-rules.json` is (a
   worktree may use the default `flow: merge` and create a merge commit). Check `"flow":` first and
   `git log -1 --format=%P <ORIGINAL>` (one parent) before pushing.
@@ -482,6 +486,22 @@ git testing repartir --map 3f2a1c9=6.22.7/188858/login
   DEVELOPMENT) from the git history and `pom.xml`; never overwrites; `--force NAME` regenerates one.
 - **Use it when:** a repository without them; to refresh `CONTRIBUTORS.md` or `API.md`.
 - **Who:** `-n` anyone; writing: lead.
+
+### git bug-conocido
+
+- **Syntax:** `git bug-conocido [-n] "<where>" "<symptom>"`
+- **Rule:** a bug found in a released version is documented **first** in `KNOWN_BUGS.md`, and that
+  row reaches every open branch (develop, every `ORIGINAL`, every final) **before** the fix
+  commits; the fix then updates or removes the row.
+- **Does:** on the current branch (clean tree) commits one file: the new row in `KNOWN_BUGS.md`
+  (`docs(bugs): <where>`, trailer `Known-bug: <date> <where>`); then copies that commit (as
+  `cherry-pick -x`, with plumbing: no branch is checked out) to every other branch in scope and
+  pushes each with a plain push. A branch checked out in another work tree, with diverged or
+  unpushed commits, or with a conflict is skipped and reported (never forced). Prints one line per
+  branch (ok / conflict / skipped) and the `git subir` each final still needs. `-n` only shows the
+  plan. `main` and `RELEASE`, archived, TESTING and special branches are out of scope.
+- **Use it when:** the first step of the fix of a bug found in a released version.
+- **Who:** lead.
 
 ## 9. Plain git that is fine, and what never to do
 
