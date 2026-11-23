@@ -55,6 +55,31 @@ PY
 	git push -q origin develop 2>/dev/null || fail "push develop in $CASE_REPO"
 }
 
+# case_set_flow FLOW: write FLOW (squash or merge) to branches.flow of the sandbox rules file.
+# Errors: exits 1 through fail when the file cannot be edited.
+case_set_flow() {
+	python3 - "$1" <<'PY' || fail "case_set_flow: cannot set flow $1"
+import json, sys
+p = ".quality-rules.json"
+d = json.load(open(p))
+d.setdefault("branches", {})["flow"] = sys.argv[1]
+json.dump(d, open(p, "w"), indent=2)
+PY
+}
+
+# case_push_merge_flow PUSH_ARGS...: run "git push -q PUSH_ARGS" with branches.flow = merge in the
+# sandbox rules file, then put flow = squash back. A case needs it to push a merge commit that
+# integrates a child into an ORIGINAL (the historical RC1 shape): pre-push refuses it under squash.
+# why: the guard has no one-shot bypass variable, and the rules file is the sandbox's own copy
+# Returns: the status of git push.
+case_push_merge_flow() {
+	local rc=0
+	case_set_flow merge
+	git push -q "$@" 2>/dev/null || rc=$?
+	case_set_flow squash
+	return "$rc"
+}
+
 # plumb_commit WHERE BRANCH FILE TEXT SUBJECT: one commit that writes TEXT (plus a newline) into
 # FILE on top of BRANCH, made with plumbing in the current case repo: no hook runs (the fixture
 # stands for a commit someone else made). WHERE is local (only refs/heads/BRANCH moves), origin

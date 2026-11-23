@@ -82,10 +82,10 @@ build_shape() {
 	git checkout -q "$GF/ORIGINAL" && add_commit g2.py 'G2 = 1' "fix: gatefix change" || fail "gatefix 2"
 	bugtip="$(git rev-parse "$GF/bugfix")"
 	merge_into "$GF/ORIGINAL" "$GF/bugfix" "fix(gate): bugfix integrated by merge" "$GF/bugfix -> $GF/ORIGINAL"
-	git push -q origin "$GF/ORIGINAL" 2>/dev/null || fail "push gatefix"
+	case_push_merge_flow origin "$GF/ORIGINAL" || fail "push gatefix"
 	gftip="$(git rev-parse "$GF/ORIGINAL")"
 	merge_into "$V/$OT/ORIGINAL" "$GF/ORIGINAL" "fix(gate): gatefix integrated by merge" "$GF/ORIGINAL -> $V/$OT/ORIGINAL"
-	git push -q origin "$V/$OT/ORIGINAL" 2>/dev/null || fail "push OT merge"
+	case_push_merge_flow origin "$V/$OT/ORIGINAL" || fail "push OT merge"
 	ottip="$(git rev-parse "$V/$OT/ORIGINAL")"
 	git checkout -q develop
 }

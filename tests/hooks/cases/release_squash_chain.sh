@@ -37,7 +37,7 @@ ot_with_merge() {
 	mc="$(git commit-tree "$(tree_with "$tip" "$side" "side of $o")" -p "$tip" -p "$sc" -m "merge side of $o")"
 	git update-ref "refs/heads/$V/$o/ORIGINAL" "$mc" "$tip"
 	git checkout -q "$V/$o/ORIGINAL" && git reset -q --hard HEAD
-	QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$V/$o/ORIGINAL" 2>/dev/null || fail "push $o"
+	QUALITY_SKIP_PARENT_CHECK=1 case_push_merge_flow origin "$V/$o/ORIGINAL" || fail "push $o"
 	out="$(git release --yes 2>&1)" || fail "OT release $o: $out"
 }
 

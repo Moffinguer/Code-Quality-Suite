@@ -226,7 +226,8 @@ mc="$(git commit-tree "$tree" -p "$orig_tip" -p "$plain_tip" -m "Merge branch '$
 out="$(git update-ref "refs/heads/$ORIG" "$mc" "$orig_tip" 2>&1)" || fail "L2: update-ref: $out"
 git reset -q --hard "$mc" || fail "L2: work tree of the merge"
 grep -q "TESTING commit" <<<"$out" && fail "L2: false positive on a merge: $out"
-out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push after a normal merge refused: $out"
+# why: pre-push refuses a merge into an ORIGINAL under squash (FG4); this check is about TESTING, so push it under flow merge
+case_push_merge_flow origin "$ORIG" || fail "L2: push after a normal merge refused"
 ok "L2 a normal merge and its push are not affected"
 git checkout -q "$F/a"
 
