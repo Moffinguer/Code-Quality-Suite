@@ -6,17 +6,11 @@
 # are set aside during the run and restored afterwards.
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+# why: --export so child scripts (ensure-langs, run-tests) see the settings
+qs_hook_env --export
 ENV_FILE="${HOOK_DIR}/quality-suite.env"
-# why: set -a exports the settings so child scripts (ensure-langs, run-tests) see them
-if [ -f "$ENV_FILE" ]; then
-	set -a
-	# why: the sourced path is only known at run time
-	# shellcheck disable=SC1090,SC1091
-	. "$ENV_FILE"
-	set +a
-fi
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	# why: the sourced path is only known at run time
 	# shellcheck disable=SC1091
@@ -57,9 +51,9 @@ grep -qx '/.quality-rules.json' "$EXCL" 2>/dev/null || {
 # Special branch rules (branches.special, 6.0.0): paths of the type, changelog and badge only on
 # DOCS (refused here, before any tool runs), and the gate level of the type (QS_GATE_LEVEL).
 SP_LEVEL=""
-if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
-	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
-	qs_policy_load
+# why: qs_policy_load sets QS_BR_ENFORCE in this shell; the earlier subshell only checks the stamp
+# shellcheck disable=SC2031
+if qs_hook_flow_lib; then
 	SP_BRANCH="$(git branch --show-current 2>/dev/null || true)"
 	if [ -n "$SP_BRANCH" ] && [ "${QS_BR_ENFORCE:-block}" != off ]; then
 		SP_LEVEL="$(special_gate_level "$SP_BRANCH")"

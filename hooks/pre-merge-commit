@@ -12,15 +12,10 @@
 # 'git integra' merges with --no-commit (this hook does not fire; it applies the same rules).
 # Policy: .quality-rules.json -> branches.enforce (block | warn | off).
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
-LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
-# shellcheck disable=SC1090
-[ -f "$LIB" ] && . "$LIB" || exit 0
-qs_suite_stamp_check
-qs_policy_load
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env
+qs_hook_flow_lib || exit 0
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 
 target="$(current_branch)" || exit 0

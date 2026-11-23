@@ -25,16 +25,16 @@ init_repository() {
 	git symbolic-ref HEAD refs/heads/develop
 }
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-die() {
-	echo "[iniciar] $*" >&2
-	exit 1
-}
+# shellcheck disable=SC2034
+QS_TAG=iniciar
+# shellcheck disable=SC1091
+. "$SUITE/scripts/qs-common.sh"
 dest="" ai=1 remote=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 	--sin-ia | --no-ai) ai=0 ;;
 	--remoto | --remote)
-		[ "$#" -ge 2 ] || die "$1 needs a URL"
+		[ "$#" -ge 2 ] || qs_die "$1 needs a URL"
 		remote="$2"
 		shift
 		;;
@@ -42,9 +42,9 @@ while [ "$#" -gt 0 ]; do
 		bash "$SUITE/scripts/qs-help.sh" iniciar
 		exit 0
 		;;
-	-*) die "unknown option '$1' (--sin-ia, --remoto <url>)" ;;
+	-*) qs_die "unknown option '$1' (--sin-ia, --remoto <url>)" ;;
 	*)
-		[ -z "$dest" ] || die "one folder only"
+		[ -z "$dest" ] || qs_die "one folder only"
 		dest="$1"
 		;;
 	esac
@@ -58,7 +58,7 @@ if [ -n "$dest" ]; then
 fi
 if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 	# why ask for the prefix: on Windows the toplevel is C:/x while the shell says /c/x
-	[ -z "$(git rev-parse --show-prefix)" ] || die "this folder is inside the repository '$(git rev-parse --show-toplevel)'; choose a folder outside it"
+	[ -z "$(git rev-parse --show-prefix)" ] || qs_die "this folder is inside the repository '$(git rev-parse --show-toplevel)'; choose a folder outside it"
 	echo "[iniciar] already a git repository: setting it up"
 else
 	init_repository

@@ -2,6 +2,10 @@
 # hook-lib.sh - the preamble shared by the git hooks. Source it from a hook once
 # QUALITY_SUITE_DIR is known (the hook reads quality-suite.env inline to learn it).
 
+# why: the hooks share the common helpers (qs_ref_exists...) without sourcing them one by one
+# shellcheck disable=SC1091
+. "$(dirname "${BASH_SOURCE[0]}")/qs-common.sh"
+
 # qs_hook_env [--export]: locate the hook folder and load its settings file.
 # Arguments: --export loads quality-suite.env with "set -a", so child scripts see the settings.
 # Sets HOOK_DIR (QS_HOOK_DIR from the repo wrapper, else the folder of the running hook) and

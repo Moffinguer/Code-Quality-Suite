@@ -6,10 +6,11 @@
 # git passes: $1 prev HEAD, $2 new HEAD, $3 = 1 when it was a branch checkout
 set -euo pipefail
 [ "${3:-0}" = "1" ] || exit 0
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env
+# why: configure_repo runs between loading the library and the policy, so the library is
+# sourced here and qs_hook_flow_lib is not used
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 [ -f "$LIB" ] || exit 0
 # shellcheck disable=SC1090

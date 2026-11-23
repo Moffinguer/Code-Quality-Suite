@@ -6,14 +6,9 @@
 # git feeds lines on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
-if [ -f "${HOOK_DIR}/quality-suite.env" ]; then
-	set -a
-	# shellcheck disable=SC1091
-	. "${HOOK_DIR}/quality-suite.env"
-	set +a
-fi
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env --export
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
@@ -92,11 +87,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do REFS+=("$local_ref $
 # Branch model (git-flow-lib.sh, policy: .quality-rules.json -> branches). Names follow
 # <version>/<ot>/.../ORIGINAL; a final branch must contain its ORIGINAL (rebased: git subir);
 # shared branches (ORIGINAL, develop, main) are never rewritten (no force-push).
-if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
-	# shellcheck disable=SC1091
-	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
-	qs_suite_stamp_check
-	qs_policy_load
+if qs_hook_flow_lib; then
 	# --- TESTING sandbox guard (pushed only to its own name) ---
 	for ref in ${REFS[@]+"${REFS[@]}"}; do
 		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
@@ -218,7 +209,7 @@ for ref in ${REFS[@]+"${REFS[@]}"}; do
 		oldest="$(git rev-list "$local_sha" --not --remotes | tail -n 1)"
 		if [ -n "$oldest" ]; then base="${oldest}^"; else base="$local_sha"; fi
 		# why: a root commit has no parent; diff against the empty tree instead
-		git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || base="$EMPTY_TREE"
+		qs_ref_exists "$base^{commit}" || base="$EMPTY_TREE"
 	else
 		base="$remote_sha"
 	fi

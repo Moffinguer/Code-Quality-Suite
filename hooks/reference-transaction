@@ -24,16 +24,11 @@ while read -r old new ref; do
 done
 [ "$heads" = 1 ] || exit 0
 [ -n "$(git for-each-ref --count=1 --format=x 'refs/heads/**/TESTING' 2>/dev/null)" ] || exit 0
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
-LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env
 # why: a hook must never break a ref update because of its own problem: any doubt -> allow
-# shellcheck disable=SC1090
-[ -f "$LIB" ] && . "$LIB" || exit 0
-qs_suite_stamp_check
-qs_policy_load 2>/dev/null || exit 0
+qs_hook_flow_lib 2>/dev/null || exit 0
 [ "$QS_BR_ENFORCE" = off ] && exit 0
 
 Z40="0000000000000000000000000000000000000000"
@@ -48,7 +43,7 @@ for upd in "${UPDATES[@]}"; do
 		how=""
 		case "${GIT_REFLOG_ACTION:-}" in merge* | pull*) how="${GIT_REFLOG_ACTION%% *}" ;; esac
 		if [ -z "$how" ] && [ "$old" != "$Z40" ] &&
-			git rev-parse -q --verify "${new}^2" >/dev/null 2>&1 &&
+			qs_ref_exists "${new}^2" &&
 			[ "$(git rev-parse -q --verify "${new}^1" 2>/dev/null)" = "$old" ]; then
 			how="merge"
 		fi
