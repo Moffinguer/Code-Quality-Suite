@@ -10,6 +10,7 @@ Status: `open`; `fixing: <branch>`; `deferred: <version>`.
 
 | Date | Where | Symptom | Status |
 | --- | --- | --- | --- |
+| 2026-11-23 | `ai-init.sh`, `qs-run.sh` | python3 missing on Windows (only `python`): settings.json silently never generated | fixing: 7.1.1/cleanup/python_cmd |
 | 2026-11-15 | gate, other temp-copy tools | juliaformatter, mh-style, bicep-format, ktlint, rubocop, sqlfluff... may lose project config in check mode | deferred: documented in TROUBLESHOOTING |
 | 2026-11-14 | first push to GitHub | pre-push found 328 pre-existing gate findings in 268 files | deferred: baseline cleanup 6.1.x |
 | 2026-11-16 | `children_pending` (git-flow-lib.sh) | counts SPIKE, REVIEW and CHECKPOINT children as pending, so they block their node ORIGINAL from integrating | open: filter them when the creator branches land |

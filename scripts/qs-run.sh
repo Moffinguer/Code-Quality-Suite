@@ -34,7 +34,9 @@ files=()
 if [ "$HOOK" = 1 ]; then
 	# why python: Git Bash has no jq; python3 is optional, so fall back to a regex on the JSON
 	json="$(cat)"
-	f="$(printf '%s' "$json" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("tool_input") or {}).get("file_path",""))' 2>/dev/null ||
+	# shellcheck source=scripts/qs-common.sh
+	. "$(dirname "${BASH_SOURCE[0]}")/qs-common.sh"
+	f="$(printf '%s' "$json" | "$(qs_python || echo python3)" -c 'import json,sys; d=json.load(sys.stdin); print((d.get("tool_input") or {}).get("file_path",""))' 2>/dev/null ||
 		printf '%s' "$json" | sed -n 's/.*"file_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 | sed 's/\\\\/\\/g')"
 	[ -n "$f" ] || exit 0
 	# why: on Windows the agent passes C:\dir\file; Git Bash tools need /c/dir/file

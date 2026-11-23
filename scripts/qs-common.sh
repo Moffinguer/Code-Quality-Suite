@@ -16,6 +16,21 @@ qs_say() {
 	echo "[${QS_TAG:-quality-suite}] $*"
 }
 
+# qs_python: print the name of the first of python3, python, py that runs AND is Python 3 (the
+# Windows Store python3 stub exists on Git Bash but fails; Windows often has only `python`).
+# Arguments: none. Return value: 0 and the command name on stdout, 1 (nothing printed) if none.
+qs_python() {
+	local py
+	for py in python3 python py; do
+		if command -v "$py" >/dev/null 2>&1 &&
+			"$py" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+			printf '%s' "$py"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # qs_ref_exists REF: tell whether REF names an existing object in the current repository.
 # Arguments: $1 a ref or revision (branch, tag, sha, refs/heads/x).
 # Return value: 0 when it resolves, 1 otherwise. Never prints.
