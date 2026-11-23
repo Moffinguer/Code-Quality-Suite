@@ -1,0 +1,30 @@
+{
+  "mode": "report",
+  "window": 6,
+  "areas": {
+    "scripts": ["scripts"],
+    "hooks": ["hooks"],
+    "engine": ["engine"],
+    "registry/src": ["registry/src"],
+    "tools": ["tools"],
+    "tests/hooks": ["tests/hooks"]
+  },
+  "thresholds": {
+    "dup_share_max": {
+      "scripts": 1.75,
+      "hooks": 7.96,
+      "engine": 0.71,
+      "registry/src": 2.18,
+      "tools": 0.0,
+      "tests/hooks": 1.75
+    },
+    "missing_docs_max": {
+      "scripts": 49,
+      "hooks": 6,
+      "engine": 125,
+      "registry/src": 15,
+      "tools": 17,
+      "tests/hooks": 16
+    }
+  }
+}
