@@ -4,6 +4,194 @@ One editable file at the repository root decides what every tool checks. It is g
 (`.git/info/exclude`), so each clone can tune it; commit it on purpose if the team should
 share it (CI then applies exactly the same rules).
 
+## How to configure
+
+Edit the file with any editor. An editor that loads the JSON Schema
+(`schema/quality-rules.schema.json`) completes keys and flags wrong values. Every key you
+leave out keeps its default, so a short file is enough. Keys marked
+*(5.0.0-RC1 or 6.0.0)* are the ones added by those versions.
+
+### Start from a minimal file
+
+```json
+{
+  "level": "standard"
+}
+```
+
+The first commit completes it with the skeleton (excludes, repository checks, tests). The
+first commit of each language adds its section with the base rules of the image. Your values
+are kept; only `detected_version` is maintained by the suite.
+
+### Change the level
+
+Use `strict` for a new project, `syntax` for legacy code you must not touch yet. A single
+language can have its own level; `off` skips it completely. The table of levels is in
+[Levels](#levels).
+
+```json
+{
+  "level": "strict",
+  "languages": {
+    "perl": { "level": "syntax" }
+  }
+}
+```
+
+### Turn one tool off, or on
+
+Every tool block has `enabled`. Set it to `false` to stop one tool from running. Tools that
+are off by default (opt-in) run once you set `enabled` to `true`.
+
+```json
+{
+  "languages": {
+    "java": {
+      "analysis": { "pmd": { "enabled": false } }
+    },
+    "dockerfile": {
+      "formatting": { "dockerfmt": { "enabled": true } }
+    }
+  }
+}
+```
+
+### Exclude paths
+
+`exclude` takes glob patterns for the paths the suite leaves out. To keep a generated file
+checked for syntax but never rewritten, use the generated mark described in
+[Large files and generated files](#large-files-and-generated-files-qs-large-file) instead.
+
+```json
+{
+  "exclude": ["generated/**", "*.pb.go", "vendor/**"]
+}
+```
+
+### Set a language version
+
+`"auto"` detects the version from the project (pom.xml, pyproject.toml, ...). A fixed value
+pins it. The value drives the parser and the tools listed in [Versions](#versions).
+
+```json
+{
+  "languages": {
+    "java": { "version": "17" },
+    "sql": { "version": "postgres" }
+  }
+}
+```
+
+### Read a file in another charset
+
+Use `by_glob` for the files that are not UTF-8. The first matching glob wins. Files in another
+charset are never reformatted, so the bytes stay as they are.
+
+```json
+{
+  "encoding": {
+    "by_glob": {
+      "src/main/resources/**/*.properties": "iso-8859-1"
+    }
+  }
+}
+```
+
+### Commit types and subject length
+
+The commit message check reads `commit`. Keep `charset` as `ascii` unless the team agrees
+otherwise. Raising `subject_max` is a team decision: the default 50 is the team norm.
+
+```json
+{
+  "commit": {
+    "types": ["feat", "fix", "docs", "chore", "test"],
+    "subject_max": 50,
+    "charset": "ascii"
+  }
+}
+```
+
+### Commit files block *(5.0.0-RC1 or 6.0.0)*
+
+`commit.files` sets how the `Files:` block of every commit message is checked: `block`
+(default), `warn` or `off`.
+
+```json
+{
+  "commit": {
+    "files": "block"
+  }
+}
+```
+
+### Branch flow and pom version
+
+`branches.flow` *(5.0.0-RC1 or 6.0.0)* is `squash` (default, 5.x model) or `merge` (deprecated).
+Check it before you integrate: the flow of the file must match the flow of the target
+ORIGINAL. `branches.pom_version` says how `pom.xml` follows the version tree (`update`,
+`snapshot`, `check` or `off`).
+
+```json
+{
+  "branches": {
+    "flow": "squash",
+    "pom_version": "update"
+  }
+}
+```
+
+### Branch keys added in 5.0.0-RC1 or 6.0.0
+
+These keys shape the names and the special branches. The defaults are right for most teams.
+
+- `branches.testing_leaf` *(5.0.0-RC1 or 6.0.0)*: reserved leaf of the TESTING sandbox,
+  default `TESTING`.
+- `branches.ot_tag` *(5.0.0-RC1 or 6.0.0)*: annotated tag on the OT ORIGINAL at the OT
+  release; it must contain `{ot}`. An empty string turns it off.
+- `branches.special` *(5.0.0-RC1 or 6.0.0)*: one object per special branch (MIGRATION, DOCS,
+  ...). Set a special branch to `false` to disable it.
+
+```json
+{
+  "branches": {
+    "testing_leaf": "TESTING",
+    "ot_tag": "ot/{version}/{ot}",
+    "special": {
+      "MIGRATION": false
+    }
+  }
+}
+```
+
+### Test command on push
+
+`tests.commands` lists the test commands the push runs (exported to
+`.git/quality-suite/tests.txt`). Set `autodetect` to `true` only when the project has no
+commands of its own.
+
+```json
+{
+  "tests": {
+    "commands": ["mvn -B -q test"],
+    "autodetect": false
+  }
+}
+```
+
+### Check your change
+
+- A file that is not valid (bad JSON, wrong type, unknown level) blocks the commit and shows
+  the line and column. Unknown languages and tools only warn.
+- `bash scripts/qs-run.sh --check <file>` reports findings without changing anything.
+- Each applied change is logged in `.git/quality-suite/quality-suite.log`.
+
+### Where the complete list is
+
+The JSON Schema `schema/quality-rules.schema.json` (generated) holds every key, its allowed
+values and its default. Language and tool ids are in `docs/LANGUAGES.md`; the branch keys
+are described in `docs/GIT-WORKFLOW.md`.
+
 ## Lifecycle
 
 1. The first commit creates it as a skeleton: level, excludes, repository-wide checks, tests.
@@ -32,6 +220,7 @@ column; unknown languages/tools only warn.
   "$schema": "file:///…/schema/quality-rules.schema.json",
   "version": 1,
   "level": "standard",
+  "data_class": "internal",
   "exclude": ["generated/**", "*.pb.go"],
   "encoding": { "charset": "utf-8", "bom": "forbid", "by_language": {}, "by_glob": {}, "mojibake": "block" },
   "commit":   { "charset": "ascii", "types": ["feat", "fix", "…"], "subject_max": 50 },
@@ -59,6 +248,19 @@ Tool block: `enabled`, `level` (minimum level for this tool), `args` (extra CLI 
 Categories: `syntax` (parsers), `formatting` (identifying mark + the formatter), `analysis`
 (linters and deep analysers). Language ids and tool ids are listed in `docs/LANGUAGES.md`;
 the JSON Schema gives editors completion and the default rules of each tool.
+
+## Data class (`data_class`)
+
+Top-level key (not a section). The data class of the repository:
+
+| Value | Meaning |
+| --- | --- |
+| `public` | public data and code: any model or endpoint may see it |
+| `internal` | default: the team's own code and data |
+| `regulated` | regulated data: `git cuarentena` (QUARANTINE) refuses the repository, and its data never goes to free model tiers or third-party endpoints that train on prompts |
+
+Invalid values block the commit. The hooks read it from the policy environment as
+`QS_DATA_CLASS`, like the other keys.
 
 ## Encoding (`encoding`)
 
@@ -143,7 +345,62 @@ A rejected message prints the offending lines and an ASCII suggestion
 
 The branch model and its keys are described in `docs/GIT-WORKFLOW.md` (including the release
 keys `release_leaf`, `archive_prefix`, `version_file`, `changelog_file`, `readme_file`,
-`pom_version`, `tag_url`, `commit_url`).
+`pom_version`, `tag_url`, `commit_url`, and `build_cmd`, the full build a MIGRATION push runs)
+and `publish_on_create` (default `true`: every branch a suite
+command creates is pushed to origin with `-u`; `false`, or `QS_PUBLISH=0` for one command, leaves
+it to `git subir`).
+
+### Special branches (`branches.special`)
+
+One table says which reserved branch types exist and what rules each one has. The defaults
+(6.0.0) are in `engine/policy.py`; the JSON schema lists every property. A project overrides
+one property (`"TESTS": {"paths": ["qa/**"]}`: the other properties keep their defaults) or
+disables a whole type (`"FORMAT": false`): a disabled type is not reserved, a branch with that
+name is an ordinary branch. TESTING (`branches.testing_leaf`) is not in the table.
+
+| Type | Where (`at`) | Integrates | Order | Notes |
+| --- | --- | --- | --- | --- |
+| `MIGRATION` | version | squash | first, locks the version | build commits, no `feat`; full build on push |
+| `DOCS` | version, no children | squash | last | docs and chore commits, paths `@docs`; the only place for CHANGELOG.md and the badge |
+| `REFACTOR` | node | squash | last | refactor commits, gate level `strict` |
+| `FORMAT` | node, no children | squash, never rebased | alone | `style` commits |
+| `TESTS` | node | squash | any | test and chore commits, paths `@tests` |
+| `SPIKE` | node | `apply` (commits are taken out) | any | deleted at the release |
+| `ATTEMPT-<n>` | task | `choose` (only the attempt choice) | any | counts in the task changelog |
+| `REVIEW-<task>` | task | `apply` | any | deleted at the release |
+| `QUARANTINE-<task>` | task | `apply` | any | `Generated-by` trailer, gate level `strict` |
+| `CHECKPOINT-<task>` | task, no children | never | any | never pushed, gate level `format` |
+
+Properties of an entry:
+
+| Property | Values | Meaning |
+| --- | --- | --- |
+| `at` | `version`, `node`, `task` | where the branch may live |
+| `children` | bool | may become `<X>/ORIGINAL` with children |
+| `suffix` | `none`, `n`, `task` | `ATTEMPT-<n>`, `REVIEW-<task>` |
+| `integrates` | `squash`, `never`, `choose`, `apply` | how the integration treats the branch |
+| `order` | `any`, `first`, `last`, `alone` | when it integrates among its siblings |
+| `rebase` | bool | `false` for FORMAT: regenerated, never rebased |
+| `types` | list of Conventional Commits types, `["*"]` = all, `[]` = no own commits | allowed commit types |
+| `paths` | list of globs and `@repo-files`, `@docs`, `@tests`; `[]` = any | allowed paths |
+| `level` | `off`, `syntax`, `format`, `standard`, `strict` or `null` | gate level for the branch |
+| `push` | `normal`, `never` | CHECKPOINT never pushes |
+| `push_checks` | `default`, `full` | `full`: full build and tests on push |
+| `trailers` | list | trailers every own commit must carry |
+| `locks` | bool | while it exists no other branch of the version may be created |
+| `on_release` | `required`, `optional`, `delete`, `set_aside` | what the version release does with it |
+| `changelog` | `none`, `changed`, `task` | how it appears in the changelog |
+
+Not configurable (the validation refuses another value): `FORMAT.rebase` (`false`),
+`ATTEMPT.integrates` (`choose`), `CHECKPOINT.push` (`never`). Also refused: an unknown type
+(`HOTFIX`), an unknown property, a bad value and a type named like `parent_leaf`,
+`release_leaf` or `testing_leaf` (ignoring case).
+
+`DOCS.on_release` is `required` in new files (DOCS writes the changelog). A file written by
+5.x gets `optional` when the suite migrates it (`branches.model` 6), so the 5.x changelog
+writer keeps working until the project sets `required` (see `docs/UPDATING.md`). The hooks and
+scripts read the table as `QS_SP_NAMES` (enabled types) and `QS_SP_<TYPE>_<PROP>` from
+`policy.env` (booleans `1`/`0`, lists joined with `|`).
 
 ## Repository files (`qs-repo-files`)
 

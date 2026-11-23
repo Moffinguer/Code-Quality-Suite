@@ -3,5 +3,5 @@
 # The generated registry and schema list the clang-tidy option "cert-dcl16-c.NewSuffixes" as
 # a JSON "key"; the generic-api-key rule takes that name for a secret. It is a plain option
 # name, not a credential. The line moves when tools/gen.py regenerates the files: update it.
-registry/registry.json:generic-api-key:3638
+registry/registry.json:generic-api-key:3671
 schema/quality-rules.schema.json:generic-api-key:4027

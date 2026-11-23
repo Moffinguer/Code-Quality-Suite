@@ -1,5 +1,8 @@
 # Free demo: the whole agent team on free API keys
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 Try the AI layer without paying anything: every role of the gateway runs on free tiers, the agents
 run in **OpenCode** (open source, free) or in **Claude Code** if your Claude plan is Pro, Max or
 Team (it is included in those plans: you log in, no API key). When the demo convinces you, switch
@@ -17,7 +20,7 @@ Groq · Cerebras · Gemini · NVIDIA NIM · SambaNova · OpenRouter · Mistral �
 ```
 
 > **Public or invented code only.** Free tiers may log prompts or train on them. Never run the demo
-> on Junta code: that goes to `role-local` or to the paid configuration.
+> on regulated code: that goes to `role-local` or to the paid configuration.
 
 ## 1. Get the keys
 

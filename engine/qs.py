@@ -13,19 +13,24 @@
   qs.py version-get        versions declared in VERSION / pom.xml / package.json (JSON)
   qs.py version-align WINNER FILE...   give FILEs the version of WINNER
                            (pom.xml / package.json merge driver)
-  qs.py release-notes --version V --tip REV --base REV [--date D] [--previous V] [--write]
+  qs.py release-notes --version V --tip REV --base REV [--date D] [--previous V] [--ot OT]
+                      [--write]
+  qs.py release-notes --version V --union FILE... [--date D] [--write]
                            Common Changelog entry of a release (stdout);
                            --write merges it into CHANGELOG.md
   qs.py release-docs --version V [--date D]   README version badge and CITATION.cff
+  qs.py rules-upgrade <repo>   upgrade the repository's rules file to this suite, write the stamp
   qs.py repo-files [--force] [--dry-run] [NAME...]   create the missing standard repository files
 
-Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
+Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_GATE_LEVEL (level of a special branch, wins over
+     every other level), QS_ROOT, QS_STATE, QS_RULES, QS_PERSIST=1,
      QS_EXEC_FILES (file listing executable paths), QUALITY_LOG_LEVEL/FORMAT/FILE.
 """
 
 import argparse
 import concurrent.futures as cf
 import datetime
+import importlib
 import json
 import os
 import shutil
@@ -50,10 +55,57 @@ import semver  # noqa: E402
 import versions  # noqa: E402
 import writers  # noqa: E402
 
-import registry  # noqa: E402
+# why: an import statement is classified differently inside the repository (first-party, the
+# `registry/` folder) and in the temporary copy of the format check; the call is immune to it
+registry = importlib.import_module("registry")
 
 SUITE = os.path.dirname(HERE)
 SKIP_REASONS = ("excluded", "not a regular file")
+
+
+def gate_override():
+    """The gate level a special branch imposes (`QS_GATE_LEVEL`, set by the hooks).
+
+    Returns:
+        str: the level when the variable holds a known one, '' otherwise (no override).
+    """
+    lv = os.environ.get("QS_GATE_LEVEL", "")
+    return lv if lv in registry.LEVELS else ""
+
+
+class GateRules:
+    """The rules module seen through the special-branch level override.
+
+    Every attribute is the one of the `rules` module except `lang_level`, which returns the
+    override (when set) for every enabled language, over the language's own level.
+    """
+
+    def __getattr__(self, name):
+        """Delegate any other attribute to the rules module.
+
+        Args:
+            name: the attribute name.
+
+        Returns:
+            the attribute of the rules module.
+        """
+        return getattr(rules, name)
+
+    @staticmethod
+    def lang_level(data, lang_id, env_level=None):
+        """Level of a language: the override, else the one of the rules module.
+
+        Args:
+            data: the parsed rules file.
+            lang_id: the language id.
+            env_level: the level of QUALITY_LEVEL, or None.
+
+        Returns:
+            str: 'off' for a disabled language, the override when set, else the usual level.
+        """
+        if (data.get("languages") or {}).get(lang_id, {}).get("enabled") is False:
+            return "off"
+        return gate_override() or rules.lang_level(data, lang_id, env_level)
 
 
 def env(name, default):
@@ -255,7 +307,10 @@ class App:
             list[str]: what the suite changed (policy, global, language ids, detected versions).
         """
         changed_by_suite = []
+        migrated = self._migrate()
         added = policy.populate(self.data)
+        if migrated:
+            changed_by_suite.append("policy")
         if added and not getattr(self, "_created", False):
             changed_by_suite.append("policy")
             qslog.log(
@@ -306,6 +361,20 @@ class App:
                 )
                 self._created = False
         return changed_by_suite
+
+    def _migrate(self):
+        """Run the one-time policy migration (policy.migrate) on the loaded rules, logging it.
+
+        Returns:
+            list[str]: the migration messages (empty when nothing changed).
+        """
+        msgs = policy.migrate(self.data)
+        for m in msgs:
+            qslog.log("INFO", "rules", m, os.path.basename(self.rules_path), "migrate", "SUCCESS")
+        for notice in (policy.FLOW_NOTICE, policy.DOCS_NOTICE):
+            if any(notice in m for m in msgs):
+                print(f"[quality-suite] {notice}", file=sys.stderr)
+        return msgs
 
     def export_tests(self):
         """Plain list of test commands for the host hook (it has no JSON parser on Git Bash)."""
@@ -476,6 +545,7 @@ class App:
         """
         if not self.load_rules():
             return 2
+        self._migrate()
         policy.populate(self.data)
         cls = self.classify(files)
         self.encoding_gate(cls)
@@ -769,7 +839,13 @@ class App:
         plans, pairs = {}, set()
         for lid, lfiles in sorted(by_lang.items()):
             steps, lvl = runner.plan(
-                self.reg, self.data, lid, lfiles, subtypes, os.environ.get("QUALITY_LEVEL"), rules
+                self.reg,
+                self.data,
+                lid,
+                lfiles,
+                subtypes,
+                os.environ.get("QUALITY_LEVEL"),
+                GateRules(),
             )
             plans[lid] = (steps, lvl)
             pairs |= {(lid, t["id"]) for t, _, _ in steps}
@@ -951,7 +1027,9 @@ class App:
         Returns:
             None. self.exit becomes 1 on any ERROR.
         """
-        glevel = os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        glevel = (
+            gate_override() or os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        )
         order = [lid for lid in sorted(plans) if lid in done]
         if "_global" in done:
             order.append("_global")
@@ -974,7 +1052,9 @@ class App:
             list[tuple]: (tool, settings, files) per step.
         """
         steps = []
-        lvl = os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        lvl = (
+            gate_override() or os.environ.get("QUALITY_LEVEL") or self.data.get("level", "standard")
+        )
         for tid in self.reg.global_tools:
             tool = self.reg.tools.get(tid)
             if not tool:
@@ -1070,7 +1150,7 @@ class App:
                 [c.path],
                 {c.path: c.subtypes},
                 os.environ.get("QUALITY_LEVEL"),
-                rules,
+                GateRules(),
                 quiet=True,
             )
             v = versions.resolve(
@@ -1332,29 +1412,44 @@ def _tool_release_notes(ap, argv, where):
         where: namespace with root, data, br and git.
 
     Returns:
-        int: 0. With --write the entry is merged into the changelog file.
+        int: 0. With --write the entry is merged into the changelog file. --ot gives the OT
+        of every change; --union FILE... builds the entry from the sections of those files
+        instead of from git (no --tip needed).
 
     Raises:
         RuntimeError: git failed.
     """
     br, git = where.br, where.git
     for opt in ("--version", "--tip", "--base"):
-        ap.add_argument(opt, required=opt != "--base", default="")
+        ap.add_argument(opt, required=opt == "--version", default="")
+    ap.add_argument("--ot", default="")
+    ap.add_argument("--union", nargs="+", default=[])
     ap.add_argument("--date", default=datetime.date.today().isoformat())
     ap.add_argument("--previous", default="")
     ap.add_argument("--tag", default="")
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args(argv)
+    if not a.union and not a.tip:
+        ap.error("--tip is required unless --union is given")
     origin = repofiles._git(git, "config", "--get", "remote.origin.url").strip()
     tag_t, commit_t = repofiles.link_templates(
         origin, br.get("tag_url", ""), br.get("commit_url", "")
     )
     levels = br.get("levels") or []
     ot_rx = levels[1] if len(levels) > 1 else policy.OT_RX
-    items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx)
     link = tag_t.replace("{tag}", a.tag or a.version) if tag_t else ""
-    block = changelog.render(a.version, a.date, items, link)
+    if a.union:
+        block = changelog.union(a.version, a.date, [read_text(f) for f in a.union], link)
+        items, omitted = [], []
+    else:
+        items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx, ot=a.ot)
+        block = changelog.render(a.version, a.date, items, link)
     sys.stdout.write(block)
+    for c in changelog.without_ot(items):
+        print(
+            f"[quality-suite] WARN: change without OT: {c['hash'][:7]} {c['subject']}",
+            file=sys.stderr,
+        )
     if omitted:
         print(
             f"[quality-suite] left out of the notes ({len(omitted)}: "
@@ -1548,6 +1643,11 @@ def main(argv):
     """
     if argv and argv[0] in TOOL_COMMANDS:
         return tool_main(argv[0], argv[1:])
+    if argv and argv[0] == "rules-upgrade":
+        # why: no App and no rules loading; the upgrade must work on a file the engine rejects
+        return policy.rules_upgrade(
+            os.path.abspath(argv[1] if len(argv) > 1 else env("QS_ROOT", "."))
+        )
     cmd = (
         argv[0]
         if argv and argv[0] in ("run", "explain", "langs", "sync", "ask", "policy", "encoding")

@@ -138,7 +138,7 @@ bulk work on `public` code:
 **Local models.** Ollama, LM Studio, llama.cpp or vLLM on the homelab: interns,
 embeddings, and anything `regulated`.
 
-**Rule:** `regulated` code (Junta de Andalucía work) never goes to free tiers or to
+**Rule:** `regulated` code (for example public-sector work) never goes to free tiers or to
 providers that train on prompts. It goes only to local models or to paid endpoints with
 no-training terms.
 
@@ -254,7 +254,7 @@ Status at 2.5.0 (October 2026): steps 1-3 are built; step 4 is next.
    exit 2 feeds the findings back); Codex and Gemini run the same script from `AGENTS.md`.
 2. **Built.** `scripts/ai-init.sh` generates `AGENTS.md` (+ `CLAUDE.md`, `GEMINI.md`), shared
    skills (`.agents/skills`, synced to `.claude/skills`), subagents by role and the `knowledge/`
-   map with the Junta norms (ingest from an inbox). Basic Memory over `knowledge/` is optional.
+   map with the organisation's norms (ingest from an inbox). Basic Memory over `knowledge/` is optional.
 3. **Built.** `ai-stack/`: LiteLLM + Postgres catalog with role aliases, fallbacks, virtual keys
    and budgets; FreeLLMAPI as the free pool; Ollama for regulated code. The free-model scout
    that feeds the catalog automatically is still to do (manual today, `docs/PROVIDERS.md`).

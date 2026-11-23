@@ -190,7 +190,7 @@ From a repository:
 
 ```bash
 cd /path/to/repo
-for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout; do rm -f .git/hooks/$h; done
+for h in pre-commit pre-push prepare-commit-msg commit-msg pre-rebase pre-merge-commit post-checkout post-commit reference-transaction; do rm -f .git/hooks/$h; done
 rm -f .git/hooks/quality-suite.env
 sed -i '/merge=qs-version/d' .git/info/attributes
 sed -i "\|^$(pwd)\$|d" ~/.config/code-quality-suite/repos.list

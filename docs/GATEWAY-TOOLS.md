@@ -1,5 +1,8 @@
 # Other quality-gate tools
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 What else exists to guarantee quality before code lands, how it relates to this suite, and
 what is deliberately left out. Rule of thumb: **the commit hook stays fast, local and
 offline; anything that needs a database download, a server or the whole project build

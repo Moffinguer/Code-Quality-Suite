@@ -1,36 +1,55 @@
 #!/usr/bin/env bash
 # code-quality-suite hook
-# prepare-commit-msg - preload a Conventional Commits template with the commit
-# file manifest (A/M/D...), uncommented and editable.
+# prepare-commit-msg - put the "Files:" block (status + path of every modified file, see
+# scripts/commit-files-lib.sh) into every commit message: a template for editor commits, the
+# message itself for -m/-F, merge, squash and amend. commit.files = off disables it.
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"; unset QS_HOOK_DIR   # set by the repo wrapper; not inherited further
+HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
+unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
 [ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
 
 MSG_FILE="$1"
 SOURCE="${2:-}"
-
-# Editor commits only (skip -m, merge, squash, commit -c...).
-case "$SOURCE" in
-  ""|template) : ;;
-  *) exit 0 ;;
-esac
+ARG3="${3:-}"
 
 LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 # shellcheck disable=SC1090
-if [ -f "$LIB" ]; then . "$LIB"; QS_POLICY_NO_DOCKER=1 qs_policy_load; fi
-TYPES="${QS_COMMIT_TYPES:-feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert}"; TYPES="${TYPES//|/, }"
-# why: quotePath keeps accented file names as ASCII escapes (the message must stay ASCII)
-manifest="$(git -c core.quotePath=true diff --cached --name-status --diff-filter=ACMRD 2>/dev/null \
-  | sed -E 's/^([A-Z])[0-9]*\t([^\t]*\t)?/\1 /')"
+if [ -f "$LIB" ]; then
+	. "$LIB"
+	qs_suite_stamp_check
+	QS_POLICY_NO_DOCKER=1 qs_policy_load
+fi
+
+files_block=""
+FILES_LIB="${QUALITY_SUITE_DIR:-}/scripts/commit-files-lib.sh"
+if [ "${QS_COMMIT_FILES:-block}" != off ] && [ -f "$FILES_LIB" ]; then
+	# shellcheck disable=SC1090
+	. "$FILES_LIB"
+	rm -f "$(git rev-parse --git-path quality-suite)/FILES_BLOCK"
+	# why: quotePath (inside the lib) keeps accented file names as ASCII escapes
+	files_block="$(qs_commit_files_block "$SOURCE" "$ARG3")"
+	qs_files_store "$files_block"
+fi
+
+# Not an editor commit (-m, -F, merge, squash, amend...): the block goes into the message itself.
+case "$SOURCE" in
+"" | template) : ;;
+*)
+	[ -z "$files_block" ] || qs_message_set_files "$MSG_FILE" "$files_block"
+	exit 0
+	;;
+esac
+
+TYPES="${QS_COMMIT_TYPES:-feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert}"
+TYPES="${TYPES//|/, }"
 
 tmp="$(mktemp)"
 {
-  echo "<type>(scope): short description (<=${QS_COMMIT_SUBJECT_MAX:-50} chars, ASCII only)"
-  echo ""
-  echo "# Commit files (become part of the body; edit or delete):"
-  [ -n "$manifest" ] && printf '%s\n' "$manifest"
-  echo ""
-  cat <<TPL
+	echo "<type>(scope): short description (<=${QS_COMMIT_SUBJECT_MAX:-50} chars, ASCII only)"
+	echo ""
+	if [ -n "$files_block" ]; then printf '%s\n\n' "$files_block"; fi
+	cat <<TPL
 # -- Conventional Commits -------------------------------------
 # Subject (1st line):  <type>[(scope)][!]: <description>
 #   imperative, <=${QS_COMMIT_SUBJECT_MAX:-50} chars, no trailing period, ASCII only
@@ -38,6 +57,8 @@ tmp="$(mktemp)"
 # Types: ${TYPES}
 #
 # Body (optional, after a blank line): the what and the why (<=72/line).
+# The Files: block above is kept by commit-msg (commit.files); put trailers
+# (Norms:, Refs:) in the last paragraph, below it.
 # Footer (optional): "Refs: #123", "Reviewed-by: ...".
 # Breaking change: "feat!: ..."  or footer  "BREAKING CHANGE: ...".
 #
@@ -49,7 +70,7 @@ tmp="$(mktemp)"
 #   BREAKING CHANGE: parse() no longer accepts null.
 # -------------------------------------------------------------
 TPL
-  cat "$MSG_FILE"
-} > "$tmp"
+	cat "$MSG_FILE"
+} >"$tmp"
 mv "$tmp" "$MSG_FILE"
 exit 0

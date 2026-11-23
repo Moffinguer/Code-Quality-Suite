@@ -27,5 +27,4 @@ Remove passwords, keys and personal data from logs before sending them.
 
 ## Where to ask
 
-Write to the maintainer listed in [MAINTAINERS.md](MAINTAINERS.md), or
-<!-- qs:fill: team channel or queue -->. Security problems: [SECURITY.md](SECURITY.md) only.
+Write to the maintainer listed in [MAINTAINERS.md](MAINTAINERS.md), or open an issue in the [GitHub Issues](https://github.com/Moffinguer/Code-Quality-Suite/issues) of the repository. Security problems: [SECURITY.md](SECURITY.md) only.
