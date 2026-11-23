@@ -10,13 +10,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit it with SUBJECT.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
-}
-
 # sed_commit FILE LINE TEXT SUBJECT: replace line LINE of FILE with TEXT and commit it.
 sed_commit() {
 	local tmp
@@ -100,7 +93,7 @@ released_ot() { # VERSION OT FILE TEXT: tree, OT with one file, OT release, vers
 	git checkout -q develop
 	git np "$1" >/dev/null && git push -q origin "$1/ORIGINAL" 2>/dev/null || fail "tree $1"
 	git np "$2" >/dev/null && git nr work >/dev/null || fail "OT $1/$2"
-	add_commit "$3" "$4" "feat: add $3"
+	case_commit "$3" "$4" "feat: add $3"
 	git integra --yes -m "feat($2): add $3" >/dev/null 2>&1 || fail "integra $1/$2"
 	git push -q origin "$1/$2/ORIGINAL" 2>/dev/null || true
 	git release --yes >/dev/null 2>&1 || fail "OT release $1/$2"
@@ -137,14 +130,14 @@ case_sandbox squash
 . "$SUITE/scripts/git-flow-lib.sh"
 base="$(git rev-parse HEAD)"
 git checkout -q -b origsrc "$base"
-add_commit p.txt 'P' "feat: p"
+case_commit p.txt 'P' "feat: p"
 src="$(git rev-parse HEAD)"
 git checkout -q -b same "$base"
-add_commit p.txt 'P' "feat: p again"
+case_commit p.txt 'P' "feat: p again"
 git checkout -q -b other "$base"
-add_commit p.txt 'DIFFERENT' "feat: p other"
+case_commit p.txt 'DIFFERENT' "feat: p other"
 git checkout -q -b more "$base"
-add_commit z.txt 'Z' "feat: z"
+case_commit z.txt 'Z' "feat: z"
 git checkout -q -b target "$base"
 printf 'P\n' >p.txt
 git add p.txt
@@ -164,7 +157,7 @@ git push -q origin "$OT/ORIGINAL" 2>/dev/null || fail "push OT"
 git np pub >/dev/null || fail "pub"
 for s in s1 s2 s3; do
 	git checkout -q "$OT/pub/ORIGINAL" && git np "$s" >/dev/null && git nr w >/dev/null || fail "tree $s"
-	add_commit "$s.py" "S = '$s'" "feat: work in $s"
+	case_commit "$s.py" "S = '$s'" "feat: work in $s"
 	git integra --yes -m "feat($s): add $s" >/dev/null 2>&1 || fail "integra $s"
 done
 git checkout -q "$OT/pub/ORIGINAL"
@@ -188,7 +181,7 @@ out="$(git arbol --limpiar --yes "$V" 2>&1 </dev/null)" || true
 git push -q origin "$OT/ORIGINAL" 2>/dev/null || fail "push OT squash"
 # s2: extra local work; s3: local and origin diverged
 git checkout -q "$OT/pub/s2/ORIGINAL"
-add_commit s2_more.py 'M = 1' "feat: more in s2"
+case_commit s2_more.py 'M = 1' "feat: more in s2"
 git checkout -q "$OT/ORIGINAL"
 # s3: the local copy is rewritten (same tree, other parent: patch-equal, not an ancestor of origin's)
 cp3="$(git rev-parse "$OT/pub/s3/ORIGINAL")"

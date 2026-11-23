@@ -12,35 +12,19 @@ ORIG=$F/ORIGINAL
 TST=$F/TESTING
 MSG="TESTING is a sandbox"
 
-# mk FILE CONTENT SUBJECT: write FILE, commit it on the current branch.
-# Arguments: $1 file, $2 content, $3 commit subject. Returns: 0; exits 1 through fail on error.
-mk() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit '$3' on $(git branch --show-current)"
-}
-
-# refused CMD...: the command must fail with the sandbox message and print it.
-# Arguments: the command. Returns: 0 when refused with the message; fails the case otherwise.
-refused() {
-	local out
-	if out="$("$@" 2>&1)"; then fail "not refused: $*"; fi
-	grep -q "$MSG" <<<"$out" || fail "refused without the sandbox message: $* -> $out"
-}
-
 # --- fixture: an ORIGINAL with a shared file, three sources and an unrelated branch
 git checkout -q -b "$ORIG" develop
-mk shared.txt base "chore: shared file"
+case_commit shared.txt base "chore: shared file"
 git checkout -q -b "$F/a" "$ORIG"
-mk a.txt a "feat: a"
+case_commit a.txt a "feat: a"
 git checkout -q -b "$F/b" "$ORIG"
-mk b.txt b "feat: b"
+case_commit b.txt b "feat: b"
 git checkout -q -b 1.0.0/ot2/o develop
-mk o.txt o "feat: o"
+case_commit o.txt o "feat: o"
 git checkout -q -b "$F/c1" "$ORIG"
-mk shared.txt c1 "feat: c1"
+case_commit shared.txt c1 "feat: c1"
 git checkout -q -b "$F/c2" "$ORIG"
-mk shared.txt c2 "feat: c2"
+case_commit shared.txt c2 "feat: c2"
 git checkout -q "$F/a"
 
 # --- T2: the leaf is reserved, ignoring case
@@ -84,25 +68,25 @@ git clone -q "$CASE_REPO.git" "$clone" 2>/dev/null
 [ "$(cd "$clone" && bash "$SUITE/scripts/git-testing.sh" estado "$F" | grep -c -E "$F/[ab]|ot2/o")" -ge 3 ] && ok "T5 fresh clone" || fail "T5: fresh clone"
 rm -rf "$clone"
 
-refused git merge "$TST"
+case_refused "$MSG" git merge "$TST"
 [ -z "$(git status --porcelain)" ] && ok "T6 refused merge leaves a clean tree" || fail "T6: tree not clean after the refusal"
 git checkout -q "$ORIG"
-refused git merge "$TST"
+case_refused "$MSG" git merge "$TST"
 git checkout -q "$TST"
-refused git merge "$F/c1"
-refused git rebase "$ORIG"
-refused git integra
-refused git subir
+case_refused "$MSG" git merge "$F/c1"
+case_refused "$MSG" git rebase "$ORIG"
+case_refused "$MSG" git integra
+case_refused "$MSG" git subir
 git checkout -q "$F/a"
-refused git rebase "$TST"
-refused git push origin "$TST:refs/heads/$ORIG"
-refused git push origin "$TST:refs/heads/1.0.0/RELEASE"
+case_refused "$MSG" git rebase "$TST"
+case_refused "$MSG" git push origin "$TST:refs/heads/$ORIG"
+case_refused "$MSG" git push origin "$TST:refs/heads/1.0.0/RELEASE"
 git checkout -q "$ORIG"
 [ "$(git rev-parse "$ORIG")" = "$orig_sha" ] && ok "T6 nothing changed" || fail "T6: ORIGINAL moved"
 git checkout -q "$TST"
 
 # --- T7: two commits on TESTING
-mk t1.txt t1 "feat: t1"
+case_commit t1.txt t1 "feat: t1"
 printf 'b2\n' >b.txt
 git commit -q -am "fix: b again"
 list="$(git testing estado)"
@@ -145,7 +129,7 @@ git checkout -q "$TST"
 printf 'tt\n' >shared.txt
 git commit -q -am "fix: shared tt"
 c4="$(git rev-parse HEAD)"
-mk t2.txt t2 "feat: t2"
+case_commit t2.txt t2 "feat: t2"
 c5="$(git rev-parse HEAD)"
 git checkout -q "$F/a"
 git checkout -q "$F/c2"
@@ -159,7 +143,7 @@ grep -q "failed in $F/c2" <<<"$out" && grep -q "applied to $F/c2" <<<"$out" && o
 
 # --- T11: interactive menu (piped input)
 git checkout -q "$TST"
-mk t3.txt t3 "feat: t3"
+case_commit t3.txt t3 "feat: t3"
 git checkout -q "$F/a"
 mk_before="$(git rev-parse "$F/b")"
 out="$(printf 's\nq\n' | git testing repartir 2>&1)" || true
@@ -173,7 +157,7 @@ grep -q "unknown branch 'nope'" <<<"$out" && ok "T11 unknown branch re-asked" ||
 
 # --- T12: --recrear
 git checkout -q "$TST"
-mk t4.txt t4 "feat: t4"
+case_commit t4.txt t4 "feat: t4"
 git checkout -q "$F/a"
 out="$(git testing crear --recrear 2>&1)" && fail "T12: recrear worked with undistributed commits"
 grep -q "feat: t4" <<<"$out" && ok "T12 refused and lists them" || fail "T12: $out"
@@ -185,7 +169,7 @@ grep -q "old tip $t4_tip" <<<"$out" && grep -q "feat: t4" <<<"$out" && grep -q "
 [ "$(git rev-parse "$TST^{tree}")" != "" ] && ! git testing estado | sed -n '/Commits on TESTING/,$p' | grep -c 'feat:' >/dev/null && ok "T12 --force re-created" || fail "T12: force"
 [ "$(git log -n1 --format=%B "$TST" | grep -c "^Testing-Create: $ORIG $mv_orig")" = 1 ] && ok "T12 from the current ORIGINAL" || fail "T12: orig"
 git checkout -q "$TST"
-mk t5.txt t5 "feat: t5"
+case_commit t5.txt t5 "feat: t5"
 c6="$(git rev-parse HEAD)"
 git checkout -q "$F/a"
 git testing repartir --map "$c6=$F/a" >/dev/null || fail "T12: distribute"
@@ -198,7 +182,7 @@ git checkout -q "$F/a"
 qs_policy_load
 testing_release_ok "$TST" && ok "O7 clean TESTING is deleted with the tree" || fail "O7: clean"
 git checkout -q "$TST"
-mk t6.txt t6 "feat: t6"
+case_commit t6.txt t6 "feat: t6"
 git checkout -q "$F/a"
 if testing_release_ok "$TST" 2>"$CASE_REPO.err"; then fail "O7: pending commits not detected"; fi
 grep -q "feat: t6" "$CASE_REPO.err" && ok "O7 warning names the commits" || fail "O7: warning"
@@ -229,9 +213,9 @@ grep -q "TESTING" <<<"$out" && fail "L2: false positive on ff (cherry-picks with
 out="$(git push origin "$ORIG" 2>&1)" || fail "L2: push of non-TESTING work refused: $out"
 ok "L2 ff and push of repartir cherry-picks (-x) are not affected"
 git checkout -q -b "$F/plain" "$ORIG"
-mk plain.txt plain "feat: plain"
+case_commit plain.txt plain "feat: plain"
 git checkout -q "$ORIG"
-mk o2.txt o2 "feat: o2"
+case_commit o2.txt o2 "feat: o2"
 # why: a merge of the child into its ORIGINAL built by plumbing (merge-tree + commit-tree, then
 # update-ref), so no hook runs; under squash such a merge is refused by hand only, and the check is
 # that the reference-transaction and pre-push checks do not take a normal merge for a TESTING merge

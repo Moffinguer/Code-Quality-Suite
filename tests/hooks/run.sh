@@ -474,6 +474,13 @@ git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s 
 }
 rm -f rel.out
 
+# refs_snapshot: every local ref with its object, then the refs of origin, to compare before and
+# after a command that must change nothing. Output: lines.
+refs_snapshot() {
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+}
+
 # git combinar when develop moved after the trees were prepared: one squash per version on develop
 # combine_tree <version> <ot> <source|-> <file> <subject> [<file> <subject>]...: a version tree
 # (copied from <source> with git nv, or new from develop) with one integrated final branch per
@@ -613,16 +620,10 @@ combine_tree 11.0.1 700002 - z11.py "feat(z11): add z11" || fail "tree 11.0.1"
 combine_tree 11.0.2 700003 - z11.py "feat(z11): other z11" || fail "tree 11.0.2"
 git checkout -q develop && printf 'C = 2\n' >c11.py && git commit -q -am "fix(c11): c11 on develop" &&
 	git push -q origin develop 2>/dev/null || fail "c11 moves"
-refs="$(
-	git for-each-ref --format='%(refname) %(objectname)'
-	git ls-remote origin
-)"
+refs="$(refs_snapshot)"
 if git combinar --incluir 11.0.0,11.0.1 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict with develop"; fi
 grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep -q 'git checkout 11.0.0/RELEASE && git merge develop' rel.out &&
-	[ "$(
-		git for-each-ref --format='%(refname) %(objectname)'
-		git ls-remote origin
-	)" = "$refs" ] &&
+	[ "$(refs_snapshot)" = "$refs" ] &&
 	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
 	ok "git combinar: a conflict with develop changes nothing and prints the steps" || {
 	cat rel.out
@@ -630,10 +631,7 @@ grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep 
 }
 if git combinar --incluir 11.0.1,11.0.2 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict between trees"; fi
 grep -q 'nothing was changed' rel.out && grep -q '^    z11.py$' rel.out &&
-	[ "$(
-		git for-each-ref --format='%(refname) %(objectname)'
-		git ls-remote origin
-	)" = "$refs" ] &&
+	[ "$(refs_snapshot)" = "$refs" ] &&
 	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
 	ok "git combinar: a conflict between RELEASE branches changes nothing" || {
 	cat rel.out

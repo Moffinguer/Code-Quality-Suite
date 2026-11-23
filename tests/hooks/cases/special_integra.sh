@@ -40,21 +40,13 @@ gone() {
 		[ -z "$(git ls-remote --heads origin "refs/heads/$1")" ]
 }
 
-# state: the tips of every local branch, the current branch and the work tree status (a refused
-# command must leave all of it as it was).
-state() {
-	git for-each-ref --format='%(refname) %(objectname)' refs/heads
-	git branch --show-current
-	git status --porcelain
-}
-
 # refused BRANCH PATTERN: git integra on BRANCH must fail, print PATTERN and change nothing.
 refused() {
 	local b="$1" out before
 	git checkout -q "$b"
-	before="$(state)"
+	before="$(case_state)"
 	out="$(git integra --yes -m "feat: x" 2>&1)" && fail "git integra on $b was accepted"
-	grep -q -- "$2" <<<"$out" && [ "$(state)" = "$before" ] || fail "git integra on $b: $out"
+	grep -q -- "$2" <<<"$out" && [ "$(case_state)" = "$before" ] || fail "git integra on $b: $out"
 }
 
 V=6.0.0 N="$V/ot1" M="$V/ot2"

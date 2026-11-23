@@ -12,14 +12,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit it with SUBJECT.
-# Exits through fail when the commit is refused.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
-}
-
 # refs_state: print every branch, tag and remote-tracking ref with its object, and the refs of
 # origin (to prove that a stopped or refused command moved nothing).
 refs_state() {
@@ -37,7 +29,7 @@ released_version() {
 	git np "$v" >/dev/null && git push -q origin "$v/ORIGINAL" 2>/dev/null || fail "tree $v"
 	git np "$o" >/dev/null && git push -q origin "$v/$o/ORIGINAL" 2>/dev/null || fail "OT $o of $v"
 	git nr work >/dev/null || fail "nr work in $v/$o"
-	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" add_commit "$f" "$text" "feat: work of $o"
+	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" case_commit "$f" "$text" "feat: work of $o"
 	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" git integra --yes -m "$subject" >/dev/null 2>&1 ||
 		fail "integra in $v/$o"
 	git push -q origin "$v/$o/ORIGINAL" 2>/dev/null || fail "push $v/$o"
@@ -215,7 +207,7 @@ landed_one 8.3.0 "$start" && grep -q '^Squashes: 8\.1\.0/RELEASE [0-9a-f]\{40\}$
 # --- sandbox 3: flow = merge keeps the 4.x git publicar (merge commit, tag on RELEASE) --------
 case_sandbox merge
 V=7.9.0
-git np "$V" >/dev/null && git np 900 >/dev/null && git nr work >/dev/null && add_commit w.py 'W = 1' "feat: work" &&
+git np "$V" >/dev/null && git np 900 >/dev/null && git nr work >/dev/null && case_commit w.py 'W = 1' "feat: work" &&
 	git integra --yes -m "feat(w): add w" >/dev/null 2>&1 || fail "merge tree"
 git checkout -q "$V/900/ORIGINAL" && git integra --yes -m "feat(900): ot 900" >/dev/null 2>&1 || fail "integra OT 900"
 git push -q origin "$V/ORIGINAL" 2>/dev/null || true
