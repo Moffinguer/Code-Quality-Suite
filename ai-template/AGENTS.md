@@ -55,7 +55,7 @@ skills and in `knowledge/`.
 
 | Role | Model | Does | Never |
 | --- | --- | --- | --- |
-| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | writes large code itself |
+| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates (one developer per final branch, a phase's branches in parallel, only once their dependencies are integrated), creates and integrates branches, escalates to the human | writes large code itself |
 | systems-analyst | opus | spec, plan, branch tree (`git es`, `git np`, `git nr`), one task per final branch, `git integra` after the human's OK, merge-conflict suggestions | edits source code |
 | developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
 | reviewer | opus | reviews diffs against norms and quality rules; commits only on REVIEW-<task> | edits code of the reviewed branch |
