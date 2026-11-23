@@ -799,27 +799,6 @@ checked_out_anywhere() {
 	git worktree list --porcelain | grep -qxF "branch refs/heads/$1"
 }
 
-# copy_integrated <ref> <branch> <original> <pref>: print how the copy <ref> of a branch is in
-# <pref> (a copy of its ORIGINAL): "integrated as <sha>" (squash trailer) or "an ancestor of
-# <original>". A copy whose tip is the tip of <pref> is not integrated (an empty new branch).
-# Arguments: $1 branch copy ref, $2 branch, $3 ORIGINAL name, $4 ORIGINAL copy ref. Returns: 0 in
-# (prints the text), 1 not in or <pref> missing.
-copy_integrated() {
-	local sha
-	exists_ref "$4" || return 1
-	[ "$(git rev-parse "$1^{commit}")" != "$(git rev-parse "$4^{commit}")" ] || return 1
-	if git merge-base --is-ancestor "$1" "$4" 2>/dev/null; then
-		echo "an ancestor of $3"
-		return 0
-	fi
-	if squash_in "$1" "$2" "$3" "$4" && sha="$(squash_commit "$2" "$3" "$4")"; then
-		echo "integrated as $sha"
-		return 0
-	fi
-	squashed_in_chain "$1" "$4" || return 1
-	echo "in a branch squashed into $3"
-}
-
 # limpiar_verdict <branch> <original>: decide whether git arbol --limpiar may delete a branch.
 # EVERY existing copy must be integrated in the copy of the ORIGINAL on the same side: the local
 # copy in the local ORIGINAL, the origin copy in origin/<original>. Diverged copies are kept.
@@ -864,8 +843,8 @@ limpiar_verdict() {
 # branch, anything checked out in a worktree. Arguments: $1 version prefix (may be empty).
 # Returns: 0; 1 when a deletion failed; exits through die with flow = merge.
 arbol_limpiar() {
-	local prefix="$1" b p pending where n failed=0
-	local -a gone=() descs=() delete_args=()
+	local prefix="$1" b p pending where n failed=0 changed
+	local -a gone=() descs=() delete_args=() lim_held=() lim_hdesc=() lim_rest=() lim_rdesc=()
 	[ "${QS_BR_FLOW:-merge}" = squash ] || die "--limpiar needs branches.flow = squash (with merge the branches are ancestors: git branch -d)"
 	fetch_origin
 	while IFS= read -r b; do
@@ -892,11 +871,10 @@ arbol_limpiar() {
 			continue
 		fi
 		if is_parent_branch "$b"; then
-			pending="$(children_pending "$b")"
-			if [ -n "$pending" ]; then
-				say "kept '$b': $LV_DESC, but children not integrated: $pending"
-				continue
-			fi
+			# why: its children may be in this run's delete set, which is not complete yet
+			lim_held+=("$b")
+			lim_hdesc+=("$LV_DESC")
+			continue
 		fi
 		gone+=("$b")
 		descs+=("$LV_DESC")
@@ -906,6 +884,29 @@ arbol_limpiar() {
 			git for-each-ref --format='%(refname:lstrip=3)' refs/remotes/origin/ | { grep -v '^HEAD$' || true; }
 		} | sort -u
 	)
+	# parent ORIGINALs: deletable when each child is integrated or in the delete set (repeat: a
+	# parent that goes may free the parent above it)
+	changed=1
+	while [ "$changed" = 1 ] && [ "${#lim_held[@]}" -gt 0 ]; do
+		changed=0
+		lim_rest=() lim_rdesc=()
+		for n in "${!lim_held[@]}"; do
+			pending="$(children_pending "${lim_held[$n]}" ${gone[@]+"${gone[@]}"})"
+			if [ -z "$pending" ]; then
+				gone+=("${lim_held[$n]}")
+				descs+=("${lim_hdesc[$n]}")
+				changed=1
+			else
+				lim_rest+=("${lim_held[$n]}")
+				lim_rdesc+=("${lim_hdesc[$n]}")
+			fi
+		done
+		lim_held=(${lim_rest[@]+"${lim_rest[@]}"}) lim_hdesc=(${lim_rdesc[@]+"${lim_rdesc[@]}"})
+	done
+	for n in "${!lim_held[@]}"; do
+		pending="$(children_pending "${lim_held[$n]}" ${gone[@]+"${gone[@]}"})"
+		say "kept '${lim_held[$n]}': ${lim_hdesc[$n]}, but children not integrated: $pending"
+	done
 	if [ "${#gone[@]}" = 0 ]; then
 		say "nothing to clean: no integrated branch to delete"
 		return 0

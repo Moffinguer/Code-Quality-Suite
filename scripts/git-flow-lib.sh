@@ -561,17 +561,49 @@ configure_repo() {
 # why: a squash commit has one parent, so ancestry no longer proves a child is in; git integra
 # records 'Refs: <child> -> <ORIGINAL>' and 'Squashed: <child> <full sha>' in the squash commit.
 
-# branch_integrated <child> <original>: succeed when <child> is in <original>: its tip is an
-# ancestor of <original>, or a commit of <original> has the line 'Refs: <child> -> <original>'
-# and (when that commit also has 'Squashed: <child> <sha>') the child tip is contained in <sha>,
-# i.e. the child did not move after its squash. A child that does not exist counts as in.
-# Arguments: $1 child branch, $2 ORIGINAL branch name. Returns: 0 in, 1 pending.
+# copy_in <ref> <child> <original> <pref>: THE rule "this copy of a child is in <pref>" (a copy of
+# its ORIGINAL: local or origin/...). It is in when its tip is an ancestor of <pref> (equal tip
+# included), or a commit of <pref> records it ('Refs:'/'Squashed:', see squash_in), or it was
+# squashed inside another branch that went into <pref> (squashed_in_chain).
+# Arguments: $1 ref of the child copy, $2 child, $3 ORIGINAL name, $4 ref of the ORIGINAL copy.
+# Returns: 0 in; 1 not in, or <pref> does not exist.
+copy_in() {
+	git rev-parse -q --verify "$4" >/dev/null 2>&1 || return 1
+	git merge-base --is-ancestor "$1" "$4" 2>/dev/null && return 0
+	squash_in "$1" "$2" "$3" "$4" || squashed_in_chain "$1" "$4"
+}
+
+# copy_integrated <ref> <branch> <original> <pref>: print how the copy <ref> of a branch is in
+# <pref> (a copy of its ORIGINAL): "integrated as <sha>" (squash trailer), "an ancestor of
+# <original>" or "in a branch squashed into <original>". A copy whose tip is the tip of <pref> is
+# not integrated (an empty new branch). The same rule as copy_in, for git arbol --limpiar.
+# Arguments: $1 branch copy ref, $2 branch, $3 ORIGINAL name, $4 ORIGINAL copy ref. Returns: 0 in
+# (prints the text), 1 not in or <pref> missing.
+copy_integrated() {
+	local sha
+	copy_in "$1" "$2" "$3" "$4" || return 1
+	[ "$(git rev-parse "$1^{commit}")" != "$(git rev-parse "$4^{commit}")" ] || return 1
+	if git merge-base --is-ancestor "$1" "$4" 2>/dev/null; then
+		echo "an ancestor of $3"
+	elif squash_in "$1" "$2" "$3" "$4" && sha="$(squash_commit "$2" "$3" "$4")"; then
+		echo "integrated as $sha"
+	else
+		echo "in a branch squashed into $3"
+	fi
+}
+
+# branch_integrated <child> <original>: succeed when <child> is in <original>: EVERY existing copy
+# of the child (local, origin) is in a copy of the ORIGINAL (copy_in): the copy on its own side
+# first, then the other one (the local ORIGINAL may be ahead of origin, or behind it). A child
+# with no copy counts as in. Arguments: $1 child branch, $2 ORIGINAL branch name.
+# Returns: 0 in, 1 pending.
 branch_integrated() {
-	local c="$1" p="$2" cref
-	cref="$(best_ref "$c" || true)"
-	[ -n "$cref" ] || return 0
-	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 0
-	squash_in "$cref" "$c" "$p" "$p"
+	local c="$1" p="$2" ref
+	for ref in "refs/heads/$c" "refs/remotes/origin/$c"; do
+		git rev-parse -q --verify "$ref" >/dev/null 2>&1 || continue
+		copy_in "$ref" "$c" "$p" "refs/heads/$p" || copy_in "$ref" "$c" "$p" "refs/remotes/origin/$p" || return 1
+	done
+	return 0
 }
 
 # squash_in <tipref> <child> <original> <pref>: succeed when a commit of <pref> (a copy of the
@@ -624,14 +656,19 @@ squash_commit() {
 	return 1
 }
 
-# children_pending <original>: print, space separated, the direct children of <original> that
-# are not integrated into it (branch_integrated). Arguments: $1 the '<F>/ORIGINAL' branch.
-# Returns: 0; prints nothing when every child is in.
+# children_pending <original> [<deleted>...]: print, space separated, the direct children of
+# <original> that are not integrated into it (branch_integrated) and are not in the list of
+# branches that the caller deletes in this very run (git arbol --limpiar).
+# Arguments: $1 the '<F>/ORIGINAL' branch, then the branches being deleted. Returns: 0; prints
+# nothing when every child is in.
 children_pending() {
-	local p="$1" c out=""
+	local p="$1" c out="" d skip
+	shift
 	while IFS= read -r c; do
 		[ -n "$c" ] || continue
-		branch_integrated "$c" "$p" || out="$out $c"
+		skip=0
+		for d in "$@"; do [ "$d" != "$c" ] || skip=1; done
+		[ "$skip" = 1 ] || branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
 }
