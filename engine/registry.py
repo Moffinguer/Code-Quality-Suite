@@ -5,37 +5,70 @@ Classification order (first decisive signal wins):
   (+content probes when ambiguous) -> shebang -> file(1) magic.
 file(1) is also the binary guard: binary files are never handed to text tools.
 """
+
 import fnmatch
 import json
 import os
 import re
 import subprocess
 
-ROLE_CATEGORY = {"marker": "formatting", "syntax": "syntax", "format": "formatting",
-                 "lint": "analysis", "deep": "analysis"}
+ROLE_CATEGORY = {
+    "marker": "formatting",
+    "syntax": "syntax",
+    "format": "formatting",
+    "lint": "analysis",
+    "deep": "analysis",
+}
 LEVELS = ["off", "syntax", "format", "standard", "strict"]
-ROLE_LEVEL = {"syntax": "syntax", "marker": "format", "format": "format",
-              "lint": "standard", "deep": "strict"}
-MODELINE = re.compile(r"-\*-.*?\bmode:\s*([\w+#.-]+).*?-\*-|-\*-\s*([\w+#.-]+)\s*-\*-|"
-                      r"\bvim?:\s*(?:set\s+)?(?:ft|filetype)=([\w+#.-]+)", re.I)
+ROLE_LEVEL = {
+    "syntax": "syntax",
+    "marker": "format",
+    "format": "format",
+    "lint": "standard",
+    "deep": "strict",
+}
+MODELINE = re.compile(
+    r"-\*-.*?\bmode:\s*([\w+#.-]+).*?-\*-|-\*-\s*([\w+#.-]+)\s*-\*-|"
+    r"\bvim?:\s*(?:set\s+)?(?:ft|filetype)=([\w+#.-]+)",
+    re.I,
+)
 
 
 def level_rank(name):
+    """Position of a level in LEVELS.
+
+    Args:
+        name: the level name.
+
+    Returns:
+        int: the index; an unknown name ranks as `standard`.
+    """
     return LEVELS.index(name) if name in LEVELS else LEVELS.index("standard")
 
 
 class Registry:
     def __init__(self, path):
+        """Load the registry file and build the lookup indexes.
+
+        Args:
+            path: the registry JSON file.
+
+        Raises:
+            OSError: the file cannot be read.
+            ValueError: the file is not valid JSON.
+            KeyError: `tools` or `languages` is missing.
+        """
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         self.version = data.get("version", "")
         self.tools = data["tools"]
-        self.languages = {l["id"]: l for l in data["languages"]}
+        self.languages = {l["id"]: l for l in data["languages"]}  # noqa: E741 - legacy code, kept as is in the 7.1.1 cleanup
         self.global_tools = data.get("global_tools", [])
         self.default_excludes = data.get("default_excludes", [])
         self._index()
 
     def _index(self):
+        """Build the extension, name, glob, modeline, shebang and magic lookups."""
         self.by_ext, self.by_name, self.globs, self.modelines = {}, {}, [], {}
         self.shebangs, self.magic = [], []
         for lang in self.languages.values():
@@ -67,7 +100,11 @@ class Registry:
             if st["id"] in subtypes:
                 excl_roles = set(st.get("exclude_roles", []))
                 excl = set(st.get("exclude_tools", []))
-                tids = [t for t in tids if t not in excl and self.tools.get(t, {}).get("role") not in excl_roles]
+                tids = [
+                    t
+                    for t in tids
+                    if t not in excl and self.tools.get(t, {}).get("role") not in excl_roles
+                ]
                 tids += [t for t in st.get("tools", []) if t not in tids]
         return tids
 
@@ -78,8 +115,11 @@ class Registry:
         for st in lang.get("subtypes", []):
             tids += [t for t in st.get("tools", []) if t not in tids]
         # why: an opt-in tool (off by default) leaves the gap to the built-in fallback
-        roles = {self.tools[t]["role"] for t in tids if t in self.tools
-                 and self.tools[t].get("default_enabled", True)}
+        roles = {
+            self.tools[t]["role"]
+            for t in tids
+            if t in self.tools and self.tools[t].get("default_enabled", True)
+        }
         if "syntax" not in roles:
             tids.append("qs-basic-syntax")
         if "format" not in roles and not lang.get("basic", {}).get("no_format"):
@@ -93,10 +133,15 @@ def file_magic(paths):
     if not paths:
         return out
     try:
-        res = subprocess.run(["file", "-N", "-0", "--mime-type", "--mime-encoding", "--", *paths],
-                             capture_output=True, text=True, timeout=120)
-        res2 = subprocess.run(["file", "-N", "-0", "--", *paths],
-                              capture_output=True, text=True, timeout=120)
+        res = subprocess.run(  # noqa: PLW1510 - legacy code, kept as is in the 7.1.1 cleanup
+            ["file", "-N", "-0", "--mime-type", "--mime-encoding", "--", *paths],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        res2 = subprocess.run(  # noqa: PLW1510 - legacy code, kept as is in the 7.1.1 cleanup
+            ["file", "-N", "-0", "--", *paths], capture_output=True, text=True, timeout=120
+        )
     except (OSError, subprocess.SubprocessError):
         return out
     desc = {}
@@ -116,6 +161,15 @@ def file_magic(paths):
 
 
 def _head(path, size=8192):
+    """Read the first bytes of a file.
+
+    Args:
+        path: the file path.
+        size: the number of bytes.
+
+    Returns:
+        str: the decoded head (undecodable bytes replaced); '' when unreadable.
+    """
     try:
         with open(path, "rb") as fh:
             return fh.read(size).decode("utf-8", "replace")
@@ -129,14 +183,22 @@ def _match_glob(rel, pattern):
     if "/" not in pattern:
         return fnmatch.fnmatch(os.path.basename(rel), pattern) or fnmatch.fnmatch(rel, pattern)
     pat = pattern.replace("**/", "*/") if pattern.startswith("**/") else pattern
-    return (fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch("/" + rel, pat)
-            or (not pat.startswith(("/", "*")) and fnmatch.fnmatch(rel, "*/" + pat)))
+    return (
+        fnmatch.fnmatch(rel, pat)
+        or fnmatch.fnmatch("/" + rel, pat)
+        or (not pat.startswith(("/", "*")) and fnmatch.fnmatch(rel, "*/" + pat))
+    )
 
 
 class Classification:
     __slots__ = ("path", "lang", "subtypes", "skip", "reason", "confident", "charset", "binary")
 
     def __init__(self, path):
+        """Start with an unclassified, not skipped file.
+
+        Args:
+            path: the file path.
+        """
         self.path, self.lang, self.subtypes = path, None, []
         self.skip, self.reason, self.confident = False, "", True
         self.charset, self.binary = "", False
@@ -150,20 +212,24 @@ def _probe(reg, candidates, head):
             if re.search(pr["re"], head, re.M):
                 scores[lid] = scores.get(lid, 0) + pr.get("weight", 1)
     if not scores:
-        default = [l for l in candidates if reg.languages[l].get("match", {}).get("default_for_ambiguous")]
+        default = [
+            lid
+            for lid in candidates
+            if reg.languages[lid].get("match", {}).get("default_for_ambiguous")
+        ]
         return (default[0] if default else candidates[0]), False
     ranked = sorted(scores.items(), key=lambda kv: -kv[1])
     confident = len(ranked) == 1 or ranked[0][1] > ranked[1][1]
     return ranked[0][0], confident
 
 
-def classify(reg, root, rels, excludes, extra_ext=None):
+def classify(reg, root, rels, excludes, extra_ext=None):  # noqa: C901, PLR0912, PLR0915 - legacy code, kept as is in the 7.1.1 cleanup
     """Classify repo-relative paths. Returns list[Classification]."""
     abspaths = [os.path.join(root, r) for r in rels]
     magic = file_magic([p for p in abspaths if os.path.isfile(p)])
     extra_ext = extra_ext or {}
     results = []
-    for rel, ap in zip(rels, abspaths):
+    for rel, ap in zip(rels, abspaths):  # noqa: B905 - legacy code, kept as is in the 7.1.1 cleanup
         c = Classification(rel)
         results.append(c)
         if not os.path.isfile(ap):
@@ -171,10 +237,21 @@ def classify(reg, root, rels, excludes, extra_ext=None):
             continue
         mime, charset, desc = magic.get(ap, ("", "", ""))
         c.charset = charset
-        if charset == "binary" or (mime and not mime.startswith(("text/", "application/json", "application/xml",
-                                                                    "application/javascript", "image/svg",
-                                                                    "application/x-", "inode/x-empty",
-                                                                    "application/octet-stream"))):
+        if charset == "binary" or (  # noqa: SIM102 - legacy code, kept as is in the 7.1.1 cleanup
+            mime
+            and not mime.startswith(
+                (
+                    "text/",
+                    "application/json",
+                    "application/xml",
+                    "application/javascript",
+                    "image/svg",
+                    "application/x-",
+                    "inode/x-empty",
+                    "application/octet-stream",
+                )
+            )
+        ):
             if charset == "binary":
                 c.skip, c.binary, c.reason = True, True, f"binary ({mime})"
                 continue

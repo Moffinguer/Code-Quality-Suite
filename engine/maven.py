@@ -7,13 +7,31 @@ else changes (formatting, comments and attribute order stay as they are).
                                that shares it (own <version> and <parent><version>) + package.json
   read_versions(root)          {"VERSION": ..., "pom.xml": ..., "package.json": ...}
 """
+
+import contextlib
 import json
 import os
 import re
 
-SKIP_DIRS = {".git", "target", "node_modules", "build", "out", "dist", ".idea", ".settings", ".vscode", ".mvn"}
-TOKEN = re.compile(r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<!DOCTYPE[^>]*>|"
-                   r"<(/?)([A-Za-z_][\w.:-]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>", re.S)
+import textio
+
+SKIP_DIRS = {
+    ".git",
+    "target",
+    "node_modules",
+    "build",
+    "out",
+    "dist",
+    ".idea",
+    ".settings",
+    ".vscode",
+    ".mvn",
+}
+TOKEN = re.compile(
+    r"<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|<!DOCTYPE[^>]*>|"
+    r"<(/?)([A-Za-z_][\w.:-]*)((?:[^>\"']|\"[^\"]*\"|'[^']*')*?)(/?)>",
+    re.S,
+)
 
 
 def scan(text):
@@ -22,7 +40,7 @@ def scan(text):
     stack, out = [], {}
     for m in TOKEN.finditer(text):
         if m.group(2) is None:
-            continue                                   # comment, CDATA, declaration
+            continue  # comment, CDATA, declaration
         close, name, selfclose = m.group(1), m.group(2).split(":")[-1], m.group(4)
         if close:
             if stack and stack[-1][0] == name:
@@ -34,30 +52,72 @@ def scan(text):
 
 
 def pom_info(text):
+    """Read the identity of a pom.
+
+    Args:
+        text: the pom.xml text.
+
+    Returns:
+        dict: group, artifact, version, pgroup, partifact, pversion and revision (None when absent).
+    """
     spans = scan(text)
 
     def val(path):
+        """Text of the element at an XML path.
+
+        Args:
+            path: the element path, e.g. project/version.
+
+        Returns:
+            str: the stripped text, or None when the element is absent.
+        """
         sp = spans.get(path)
-        return text[sp[0]:sp[1]].strip() if sp else None
-    info = {k: val(p) for k, p in (("group", "project/groupId"), ("artifact", "project/artifactId"),
-                                   ("version", "project/version"), ("pgroup", "project/parent/groupId"),
-                                   ("partifact", "project/parent/artifactId"),
-                                   ("pversion", "project/parent/version"),
-                                   ("revision", "project/properties/revision"))}
+        return text[sp[0] : sp[1]].strip() if sp else None
+
+    info = {
+        k: val(p)
+        for k, p in (
+            ("group", "project/groupId"),
+            ("artifact", "project/artifactId"),
+            ("version", "project/version"),
+            ("pgroup", "project/parent/groupId"),
+            ("partifact", "project/parent/artifactId"),
+            ("pversion", "project/parent/version"),
+            ("revision", "project/properties/revision"),
+        )
+    }
     info["group"] = info["group"] or info["pgroup"]
     info["spans"] = spans
     return info
 
 
 def _replace(text, span, value):
+    """Replace the text of a span keeping its surrounding whitespace.
+
+    Args:
+        text: the whole text.
+        span: (start, end) offsets of the value.
+        value: the new value.
+
+    Returns:
+        str: the edited text.
+    """
     a, b = span
     inner = text[a:b]
-    lead = inner[:len(inner) - len(inner.lstrip())]
-    trail = inner[len(inner.rstrip()):]
+    lead = inner[: len(inner) - len(inner.lstrip())]
+    trail = inner[len(inner.rstrip()) :]
     return text[:a] + lead + value + trail + text[b:]
 
 
 def find_poms(root):
+    """List the pom.xml files of a tree, skipping build and hidden folders.
+
+    Args:
+        root: the repository root.
+
+    Returns:
+        list: paths relative to the root, with forward slashes.
+    """
     out = []
     for dp, dn, fn in os.walk(root):
         dn[:] = sorted(d for d in dn if d not in SKIP_DIRS and not d.startswith("."))
@@ -67,11 +127,20 @@ def find_poms(root):
 
 
 def _read(path):
-    with open(path, encoding="utf-8", newline="") as fh:
-        return fh.read()
+    """Read a pom or version file keeping its line ends; raises OSError when unreadable."""
+    return textio.read_text(path, newline="")
 
 
 def _write(path, text):
+    """Write a UTF-8 file keeping line ends untouched.
+
+    Args:
+        path: the file path.
+        text: the content.
+
+    Raises:
+        OSError: the file cannot be written.
+    """
     with open(path, "w", encoding="utf-8", newline="") as fh:
         fh.write(text)
 
@@ -105,7 +174,12 @@ def set_poms(root, version):
         elif v is not None and (p == "pom.xml" or v == rootv) and v != version:
             new = _replace(new, scan(new)["project/version"], version)
         pv = info["pversion"]
-        if pv and not pv.startswith("${") and (info["pgroup"], info["partifact"]) in ours and pv != version:
+        if (
+            pv
+            and not pv.startswith("${")
+            and (info["pgroup"], info["partifact"]) in ours
+            and pv != version
+        ):
             new = _replace(new, scan(new)["project/parent/version"], version)
         if new != text:
             _write(path, new)
@@ -138,14 +212,23 @@ def _json_version_span(text):
 
 
 def set_package_json(root, version):
+    """Set the top-level version of package.json.
+
+    Args:
+        root: the repository root.
+        version: the new version.
+
+    Returns:
+        list: the files changed (empty when absent or already equal).
+    """
     path = os.path.join(root, "package.json")
     if not os.path.isfile(path):
         return []
     text = _read(path)
     sp = _json_version_span(text)
-    if not sp or text[sp[0]:sp[1]] == version:
+    if not sp or text[sp[0] : sp[1]] == version:
         return []
-    _write(path, text[:sp[0]] + version + text[sp[1]:])
+    _write(path, text[: sp[0]] + version + text[sp[1] :])
     return ["package.json"]
 
 
@@ -168,6 +251,15 @@ def set_versions(root, version, version_file="VERSION", pom=True):
 
 
 def read_versions(root, version_file="VERSION"):
+    """Read the version declared in each version-bearing file.
+
+    Args:
+        root: the repository root.
+        version_file: the plain version file name (empty to skip it).
+
+    Returns:
+        dict: file name -> version for the version file, pom.xml and package.json when present.
+    """
     out = {}
     p = os.path.join(root, version_file) if version_file else None
     if p and os.path.isfile(p):
@@ -179,10 +271,10 @@ def read_versions(root, version_file="VERSION"):
             v = info["revision"]
         out["pom.xml"] = v
     if os.path.isfile(os.path.join(root, "package.json")):
-        try:
-            out["package.json"] = json.loads(_read(os.path.join(root, "package.json"))).get("version")
-        except (ValueError, AttributeError):
-            pass
+        with contextlib.suppress(ValueError, AttributeError):
+            out["package.json"] = json.loads(_read(os.path.join(root, "package.json"))).get(
+                "version"
+            )
     return out
 
 
@@ -192,19 +284,27 @@ def align(winner_text, texts, kind="pom"):
     out = []
     if kind == "json":
         sp = _json_version_span(winner_text)
-        want = winner_text[sp[0]:sp[1]] if sp else None
+        want = winner_text[sp[0] : sp[1]] if sp else None
         for t in texts:
             s2 = _json_version_span(t) if want is not None else None
-            out.append(t[:s2[0]] + want + t[s2[1]:] if s2 else t)
+            out.append(t[: s2[0]] + want + t[s2[1] :] if s2 else t)
         return out
     w = pom_info(winner_text)
     for t in texts:
         info = pom_info(t)
         new = t
-        if w["version"] is not None and info["version"] is not None and info["version"] != w["version"]:
+        if (
+            w["version"] is not None
+            and info["version"] is not None
+            and info["version"] != w["version"]
+        ):
             new = _replace(new, scan(new)["project/version"], w["version"])
-        if w["pversion"] is not None and info["pversion"] is not None and info["pversion"] != w["pversion"] \
-                and (info["pgroup"], info["partifact"]) == (w["pgroup"], w["partifact"]):
+        if (
+            w["pversion"] is not None
+            and info["pversion"] is not None
+            and info["pversion"] != w["pversion"]
+            and (info["pgroup"], info["partifact"]) == (w["pgroup"], w["partifact"])
+        ):
             new = _replace(new, scan(new)["project/parent/version"], w["pversion"])
         out.append(new)
     return out

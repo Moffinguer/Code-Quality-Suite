@@ -16,6 +16,8 @@ import json
 import re
 import sys
 
+import textio
+
 CONFLICT = re.compile(r"^(<{7}|={7}|>{7}|\|{7})( |$)", re.M)
 PRIVATE_KEY = re.compile(
     r"-----BEGIN ((RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED) )?PRIVATE KEY( BLOCK)?-----"
@@ -24,8 +26,8 @@ _PAIRS = {")": "(", "]": "[", "}": "{"}
 
 
 def slurp(path):
-    with open(path, "rb") as fh:
-        return fh.read()
+    """Read a file as bytes; raises OSError when unreadable."""
+    return textio.read_bytes(path)
 
 
 # abs path -> declared non-UTF-8 charset (set by the engine from the encoding policy)
@@ -33,6 +35,15 @@ CHARSET_OF: dict[str, str] = {}
 
 
 def read_text(path):
+    """Read a file for a built-in check.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        tuple: (text, error); text is None and error says why when the file is
+        binary or not valid in its charset.
+    """
     raw = slurp(path)
     if b"\x00" in raw:
         return None, "contains NUL bytes (binary?)"
@@ -124,6 +135,15 @@ def _lex(text, spec):  # noqa: C901, PLR0912, PLR0915
 
 
 def basic_syntax(path, spec):
+    """Check the bracket balance and the string and comment rules of a file.
+
+    Args:
+        path: the file path.
+        spec: the language's `basic` rules (comment and string delimiters, brackets).
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -249,6 +269,14 @@ def python_ast(path, version=None):
 
 
 def check_properties(path):
+    """Check the syntax of a .properties file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -273,6 +301,14 @@ def check_properties(path):
 
 
 def check_ini(path):
+    """Check the syntax of an INI file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -310,6 +346,14 @@ def check_ini_loose(path):
 
 
 def check_toml(path):
+    """Check the syntax of a TOML file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -326,6 +370,15 @@ def check_toml(path):
 
 
 def check_csv(path, delimiter=","):
+    """Check that a CSV file parses and has consistent rows.
+
+    Args:
+        path: the file path.
+        delimiter: the field delimiter.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -340,6 +393,14 @@ def check_csv(path, delimiter=","):
 
 
 def check_jsonl(path):
+    """Check the syntax of a JSON Lines file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -353,6 +414,14 @@ def check_jsonl(path):
 
 
 def strip_jsonc(text):
+    """Remove comments and trailing commas from JSON with comments.
+
+    Args:
+        text: the JSONC text.
+
+    Returns:
+        str: plain JSON text (string contents untouched).
+    """
     out, i, n, in_str = [], 0, len(text), False
     while i < n:
         c = text[i]
@@ -385,6 +454,15 @@ def strip_jsonc(text):
 
 
 def check_json(path, jsonc=False):
+    """Check the syntax of a JSON file.
+
+    Args:
+        path: the file path.
+        jsonc: accept comments and trailing commas.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -396,6 +474,14 @@ def check_json(path, jsonc=False):
 
 
 def check_yaml(path):
+    """Check the syntax of a YAML file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]
@@ -413,6 +499,14 @@ def check_yaml(path):
 
 
 def check_jsp(path):
+    """Check the syntax of a JSP file.
+
+    Args:
+        path: the file path.
+
+    Returns:
+        list: findings (line, message); empty when the file is valid.
+    """
     text, err = read_text(path)
     if text is None:
         return [err]

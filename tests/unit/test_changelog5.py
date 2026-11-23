@@ -15,6 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 sys.path.insert(0, os.path.join(ROOT, "engine"))
 
 import changelog  # noqa: E402
+import gitio  # noqa: E402
 import repofiles  # noqa: E402
 
 GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
@@ -317,7 +318,7 @@ class GateLevel(unittest.TestCase):
         self.assertFalse([w for w in self._check("5.0.0") if "4.x format" in w])
 
     def test_git_missing_silent(self):
-        with mock.patch.object(repofiles.subprocess, "run", side_effect=OSError):
+        with mock.patch.object(gitio.subprocess, "run", side_effect=OSError):
             self.assertFalse([w for w in self._check("5.0.0") if "4.x format" in w])
 
 

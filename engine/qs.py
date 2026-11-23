@@ -53,6 +53,7 @@ import repofiles  # noqa: E402
 import rules  # noqa: E402
 import runner  # noqa: E402
 import semver  # noqa: E402
+import textio  # noqa: E402
 import versions  # noqa: E402
 import writers  # noqa: E402
 
@@ -122,37 +123,8 @@ def env(name, default):
     return os.environ.get(name) or default
 
 
-def read_text(path):
-    """Content of a UTF-8 text file.
-
-    Args:
-        path: the file path.
-
-    Returns:
-        str: the decoded text.
-
-    Raises:
-        OSError: the file cannot be read.
-        UnicodeDecodeError: the file is not UTF-8.
-    """
-    with open(path, encoding="utf-8") as fh:
-        return fh.read()
-
-
-def read_bytes(path):
-    """Content of a file as bytes.
-
-    Args:
-        path: the file path.
-
-    Returns:
-        bytes: the raw content.
-
-    Raises:
-        OSError: the file cannot be read.
-    """
-    with open(path, "rb") as fh:
-        return fh.read()
+read_text = textio.read_text
+read_bytes = textio.read_bytes
 
 
 def write_if_changed(path, text):
