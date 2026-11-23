@@ -1,5 +1,8 @@
 # Model inventory by category (Aug 2026)
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+
 Classified as requested: **free only**, **free and paid (freemium)**, **paid
 only**, and **local**. Figures are indicative -- they change almost monthly.
 

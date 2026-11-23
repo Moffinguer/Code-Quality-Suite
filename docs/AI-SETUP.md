@@ -1,5 +1,8 @@
 # AI environment: from zero to a first project
 
+> Work in progress: AI-agent development is only tested and configured with Claude Code.
+> OpenCode and other models, the model gateway and the ai-stack database are not functional yet.
+>
 > No API credits yet? `docs/AI-DEMO.md` runs the same setup with every role on free API keys.
 
 Minimal steps to reproduce the AI working environment on **Windows 11 + Git Bash + Docker
@@ -209,7 +212,7 @@ Prompts for the session (one at a time; you approve at each stop):
 
 1. *"Use the systems-analyst subagent to write the spec of OT 100001: a login page `login.jsp` posting
    to a `LoginServlet` (Java 17), a `login.css`, client-side validation in `login.js`, and a
-   `README.md`. Apply the Junta norms that exist. Stop for my approval."*
+   `README.md`. Apply the norms that exist. Stop for my approval."*
 2. *"Plan it as tasks with one final branch each under 1.0.0/100001/ORIGINAL and stop."*
 3. *"Delegate each task to the developer subagent, then run qa and reviewer on each branch."*
    Each developer works in its own worktree, creates its branch with
@@ -233,13 +236,13 @@ git arbol                                              # what is merged / pendin
 Commit messages are ASCII Conventional Commits (`feat(login): anadir validacion`), and every
 file is UTF-8 unless the rules say otherwise; the hooks reject anything else.
 
-## 7. Feeding the Junta norms
+## 7. Feeding the norms
 
-Drop each new Junta notification (PDF, DOCX, mail export) into `knowledge/jda/inbox/` and ask:
-*"Ingest the inbox"*. The `jda-ingest` skill splits it into one note per norm under
-`knowledge/jda/norms/`, updates `knowledge/jda/INDEX.md`, and proposes rule changes for
-`.quality-rules.json` in `knowledge/jda/proposals/` for you to approve. From then on every task
-starts with the `jda-norms` checklist. Your own procedures become recipes: copy
+Drop each new norm document (PDF, DOCX, mail export) into `knowledge/norms/inbox/` and ask:
+*"Ingest the inbox"*. The `norms-ingest` skill splits it into one note per norm under
+`knowledge/norms/norms/`, updates `knowledge/norms/INDEX.md`, and proposes rule changes for
+`.quality-rules.json` in `knowledge/norms/proposals/` for you to approve. From then on every task
+starts with the `norms` checklist. Your own procedures become recipes: copy
 `.agents/skills/recipe-template/` (see `docs/SKILLS.md`), then `bash <suite>/scripts/ai-sync.sh`.
 
 ## 8. Data and cost rules
@@ -255,7 +258,7 @@ starts with the `jda-norms` checklist. Your own procedures become recipes: copy
   public data only. FreeLLMAPI is "for personal experimentation, not production".
 - Paid roles never fall back to the free pool (`litellm/config.yaml`), so a fallback cannot move
   a prompt to a lower data class.
-- Whether Junta code may leave your machine at all is decided by the contract, not by this setup.
+- Whether regulated code may leave your machine at all is decided by the contract, not by this setup.
 - Budgets: per key in the LiteLLM UI (`max_budget`), spend per role under **Usage**.
 
 ## 9. When something fails

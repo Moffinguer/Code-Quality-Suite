@@ -3,6 +3,7 @@ CITATION.cff version.
 
   entries(git, tip, base)        changes of a release from the git history (Conventional Commits)
   render(version, date, ...)     the CHANGELOG.md entry of one release
+  union(version, date, sections) one entry from several release sections
   merge(text, version, block)    CHANGELOG.md with that entry added or replaced, in semver order
   validate(text)                 (errors, warnings) against the Common Changelog rules
   set_badge / badge_version      the version badge between <!-- qs:version --> markers in README.md
@@ -15,6 +16,7 @@ references in parentheses; '**Breaking:**' first; link definitions at the end.
 """
 
 import datetime
+import html
 import re
 import subprocess
 
@@ -30,6 +32,7 @@ TYPE_GROUP = {
     "build": "Changed",
     "revert": "Changed",
 }
+MIGRATION_OT = "MIGRATION"  # the 'OT' shown for the squash of the version's MIGRATION branch
 OMIT_TYPES = {"docs", "test", "tests", "ci", "chore", "style"}
 CONVENTIONAL = re.compile(
     r"^(?P<type>[a-z][a-z0-9-]*)(?:\((?P<scope>[^)]*)\))?(?P<bang>!)?: (?P<desc>.+)$"
@@ -160,54 +163,33 @@ def _ot_of(src, ot_rx):
         ot_rx: regular expression an OT must match (re.match).
 
     Returns:
-        str | None: the second segment when the name has at least three segments and the
-        segment matches ot_rx, else None.
+        str | None: 'MIGRATION' for the special branch '<version>/MIGRATION' (or anything
+        below it: its change belongs to no OT and is shown as MIGRATION); otherwise the
+        second segment when the name has at least three segments and the segment matches
+        ot_rx, else None.
     """
     parts = (src or "").split("/")
+    if len(parts) > 1 and parts[1] == MIGRATION_OT:
+        return MIGRATION_OT
     return parts[1] if len(parts) > 2 and re.match(ot_rx, parts[1]) else None
 
 
-def _norms(body):
-    """Norm ids listed in the 'Norms:' lines of a commit body.
-
-    Args:
-        body: the commit message.
-
-    Returns:
-        list[str]: the ids in order, 'none' and empty items left out.
-    """
-    return [
-        n.strip()
-        for m in re.finditer(r"^Norms: (.+)$", body, re.M)
-        for n in m.group(1).split(",")
-        if n.strip() and n.strip().lower() != "none"
-    ]
-
-
-def _entry_refs(c, src, inner, commit_url, ot_rx):
-    """References of a changelog entry: commit, OT and norms, without repeats.
+def _entry_ot(c, src, ot, ot_rx):
+    """OT (work order) of one change.
 
     Args:
         c: the commit (dict from _log).
         src: the integrated branch name, or None to read it from the 'Refs:' line of c.
-        inner: the commits the merge c brought (their norms are added too).
-        commit_url: URL template with '{commit}', or ''.
+        ot: the OT forced by the caller, or '' to derive it from the branch name.
         ot_rx: regular expression an OT must match.
 
     Returns:
-        list[str]: the commit reference first, then 'OT <ot>' when found, then norm ids.
+        str | None: the OT, or None when the change has none.
     """
-    refs = [_commit_ref(c["hash"], commit_url)]
-    ot = _ot_of(src or _refs_src(c["body"]), ot_rx)
-    if ot:
-        refs.append(f"OT {ot}")
-    for n in _norms(c["body"]) + [n for i in inner for n in _norms(i["body"])]:
-        if n not in refs:
-            refs.append(n)
-    return refs
+    return ot or _ot_of(src or _refs_src(c["body"]), ot_rx)
 
 
-def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
+def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX, *, ot=""):  # noqa: PLR0913
     """Changes between base and tip, one per integrated final branch (the 'git integra' merge
     subject) and one per direct commit.
 
@@ -218,27 +200,27 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
         commit_url: URL template with '{commit}' for the commit references, or ''.
         ot_rx: regular expression of the OT, the second segment of the integrated branch;
             by default the policy default of branches.levels[1] (letters and digits).
+        ot: OT given to every change (the tip is the ORIGINAL of that OT, so no 'Refs:'
+            line is needed); '' derives it from the 'Refs:' line of each change.
 
     Returns:
-        tuple: (entries, omitted subjects). An entry is
-        {group, breaking, text, refs [str], authors [str], order}.
+        tuple: (entries, omitted subjects). An entry is {group, breaking, text, ref, ot,
+        hash, subject, order}; ot is None when unknown. Authors and norm ids are not kept.
 
     Raises:
         RuntimeError: git failed.
     """
     out, omitted, seq = [], [], [0]
 
-    def add(c, authors, src=None, inner=()):
+    def add(c, src=None):
         """Record one change in out, or in omitted when its subject is not classified.
 
         Skips release commits and duplicates of an entry already in out. Updates the
         closure lists out, omitted and seq; returns nothing.
 
         Args:
-            c: the commit (dict with subject, body, author, parents).
-            authors: author names of the change (a list of str).
+            c: the commit (dict with subject, body, parents).
             src: source branch of the change, or None.
-            inner: commits brought by the merge, used for the references.
         """
         if RELEASE_SUBJECT.match(c["subject"]):
             return
@@ -246,19 +228,21 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
         if group is None:
             omitted.append(c["subject"])
             return
-        refs = _entry_refs(c, src, inner, commit_url, ot_rx)
+        found = _entry_ot(c, src, ot, ot_rx)
         seq[0] += 1
         # why: trees combined by 'git combinar' may bring the same integration twice
         for e in out:
-            if (e["group"], e["text"], e["refs"][1:]) == (group, text, refs[1:]):
+            if (e["group"], e["text"], e["ot"]) == (group, text, found):
                 return
         out.append(
             {
                 "group": group,
                 "breaking": breaking,
                 "text": text,
-                "refs": refs,
-                "authors": sorted(set(authors)),
+                "ref": _commit_ref(c["hash"], commit_url),
+                "ot": found,
+                "hash": c["hash"],
+                "subject": c["subject"],
                 "order": seq[0],
             }
         )
@@ -279,7 +263,7 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
         """
         for c in _log(gitcmd, tip_, excludes):
             if len(c["parents"]) < 2:
-                add(c, [c["author"]])
+                add(c)
                 continue
             p1, p2 = c["parents"][0], c["parents"][1]
             ex = excludes + [p1]
@@ -290,22 +274,40 @@ def entries(gitcmd, tip, base, commit_url="", ot_rx=policy.OT_RX):
             if container or not CONVENTIONAL.match(c["subject"]):
                 walk(p2, ex)  # the parts are the changes
             else:
-                add(
-                    c,
-                    [i["author"] for i in inner if len(i["parents"]) < 2] or [c["author"]],
-                    _refs_src(c["body"]),
-                    inner,
-                )
+                add(c, _refs_src(c["body"]))
 
     walk(tip, [base] if base else [])
     return out, omitted
+
+
+def without_ot(items):
+    """The entries that have no OT, for the 'change without OT' warning.
+
+    Args:
+        items: entries from entries().
+
+    Returns:
+        list[dict]: the entries whose ot is empty (each has hash and subject).
+    """
+    return [e for e in items if not e.get("ot")]
 
 
 # ---------------------------------------------------------------- render / merge
 
 
 def render(version, date, items, tag_url="", notice=""):
-    """The CHANGELOG.md block of one release (ends with a blank line)."""
+    """The CHANGELOG.md block of one release (ends with a blank line).
+
+    Args:
+        version: the release version.
+        date: the release date, YYYY-MM-DD.
+        items: entries from entries(): {group, breaking, text, ref, ot, ...}.
+        tag_url: URL of the release tag; when set the heading links the version.
+        notice: optional one-sentence notice under the heading.
+
+    Returns:
+        str: the block; each change is '- Text (ref; OT)', or '- Text (ref)' without OT.
+    """
     head = f"## [{version}] - {date}" if tag_url else f"## {version} - {date}"
     lines = [head, ""]
     if not items and not notice:
@@ -319,11 +321,110 @@ def render(version, date, items, tag_url="", notice=""):
         its.sort(key=lambda e: (not e["breaking"], -e["order"]))
         lines += [f"### {g}", ""]
         for e in its:
-            refs = ", ".join(e["refs"])
-            who = "; " + ", ".join(e["authors"]) if e.get("authors") else ""
-            lines.append(f"- {'**Breaking:** ' if e['breaking'] else ''}{e['text']} ({refs}{who})")
+            ref = e["ref"] + (f"; {e['ot']}" if e.get("ot") else "")
+            lines.append(f"- {'**Breaking:** ' if e['breaking'] else ''}{e['text']} ({ref})")
         lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# One commit reference: a bare hash or a linked '[hash](url)'.
+_REF = r"(?:[0-9a-f]{4,40}|\[[0-9a-f]{4,40}\]\([^()\s]+\))"
+_REFS = re.compile(
+    r"^(?P<subj>- .*?) \((?P<hashes>" + _REF + r"(?:, " + _REF + r")*)(?P<ot>; [^;()]+)?\)$"
+)
+
+
+def _add_line(items, item):
+    """Add one '- Subject (hash; OT)' line to items, merging same subject and OT.
+
+    Args:
+        items: the lines of one group so far; modified in place.
+        item: the new line.
+
+    Returns:
+        None. An identical line is skipped; a line with the same subject (the breaking mark
+        is part of it) and OT but other hashes extends the hash list of the existing line.
+    """
+    if item in items:
+        return
+    new = _REFS.match(item)
+    if new:
+        for i, old in enumerate(items):
+            m = _REFS.match(old)
+            if m and m["subj"] == new["subj"] and m["ot"] == new["ot"]:
+                hs = m["hashes"].split(", ")
+                hs += [h for h in new["hashes"].split(", ") if h not in hs]
+                items[i] = f"{m['subj']} ({', '.join(hs)}{m['ot'] or ''})"
+                return
+    items.append(item)
+
+
+def _seen_hashes(item, seen):
+    """Tell whether every commit hash of a line was already listed, and record its hashes.
+
+    Args:
+        item: one '- Subject (hash; OT)' line.
+        seen: set of the short hashes listed so far; modified in place.
+
+    Returns:
+        bool: True when the line has hashes and all of them are in seen (the same commit
+        reached the union twice, so the line is dropped); False otherwise.
+    """
+    m = _REFS.match(item)
+    if not m:
+        return False
+    hs = {h.strip("[]").split("]")[0][:7] for h in m["hashes"].split(", ")}
+    if hs <= seen:
+        return True
+    seen |= hs
+    return False
+
+
+def union(version, date, sections, tag_url=""):
+    """One release block from several release sections.
+
+    Args:
+        version: the version of the new block.
+        date: its date, YYYY-MM-DD.
+        sections: section texts (with or without their '## ' heading), in order.
+        tag_url: URL of the release tag; when set the heading links the version.
+
+    Returns:
+        str: the block like render(); groups in Common Changelog order, items in section
+        order, '**Breaking:**' items first, identical lines once,
+        a line whose hashes were all listed before dropped.
+        Lines of one group with
+        the same subject and the same OT but different hashes become one line listing every
+        hash in first-seen order, '- Fix x (aaa1111, ccc3333; git)' (linked hashes '[aaa1111](url)'
+        merge the same way); a different OT, or a
+        breaking against a non-breaking line, stays separate. With no change at all the
+        maintenance notice is written.
+    """
+    found = {g: [] for g in GROUPS}
+    seen = set()
+    for sec in sections:
+        group = None
+        for ln in (sec or "").splitlines():
+            if ln.startswith("### "):
+                group = ln[4:].strip()
+            elif group in found and re.match(r"^[-*] \S", ln):
+                item = "- " + ln[2:].rstrip()
+                if _seen_hashes(item, seen):
+                    continue
+                _add_line(found[group], item)
+    head = f"## [{version}] - {date}" if tag_url else f"## {version} - {date}"
+    lines = [head, ""]
+    if not any(found.values()):
+        lines += ["_Maintenance release: no user-facing changes._", ""]
+    for g in GROUPS:
+        if found[g]:
+            its = sorted(found[g], key=lambda ln: not ln.startswith("- **Breaking:**"))
+            lines += [f"### {g}", ""] + its + [""]
+    return "\n".join(lines) + "\n"
+
+
+# 4.x line tail: '(hash, OT 100; Author)' or '(hash; Two Word Author)'.
+OLD_LINE = re.compile(r"\([^()]*(?:, OT \w+|; [^;()]*\s[^;()]*|; [^;()]*;[^()]*)\)\s*$")
 
 
 def _split(text):
@@ -403,8 +504,19 @@ def section(text, version):
 # ---------------------------------------------------------------- validation
 
 
-def validate(text):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machine
-    """(errors, warnings): Common Changelog rules, with line numbers."""
+def validate(text, new=None):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machine
+    """(errors, warnings): Common Changelog rules, with line numbers.
+
+    Args:
+        text: the CHANGELOG.md content.
+        new: version of the entry being written (the topmost section, or the one a release
+            writes); its lines get a warning when they use the 4.x format (an author after
+            ';' or an 'OT <n>' prefix). None checks no section, so released history stays
+            silent.
+
+    Returns:
+        tuple[list[str], list[str]]: the errors and the warnings.
+    """
     errors, warnings = [], []
     lines = (text or "").splitlines()
     first = next(((i, ln) for i, ln in enumerate(lines, 1) if ln.strip()), (1, ""))
@@ -522,7 +634,13 @@ def validate(text):  # noqa: C901, PLR0912, PLR0915 - one-pass line state machin
                 group_items += 1
                 if not re.search(r" \(.+\)\s*$", s):
                     warnings.append(
-                        f"line {n}: change without references; add the commit, e.g. (abc1234)"
+                        f"line {n}: change without references; add the commit and the OT, "
+                        "e.g. (abc1234; git)"
+                    )
+                elif rel["version"] == new and OLD_LINE.search(s):
+                    warnings.append(
+                        f"line {n}: 4.x format (author or 'OT <n>'); use the new form "
+                        "'- Subject (abc1234; OT)'"
                     )
             elif re.match(r"^\s+\S", ln):
                 errors.append(f"line {n}: a change must fit on one line")
@@ -559,17 +677,23 @@ def _shields(v):
 
 
 def badge(version, link="CHANGELOG.md"):
-    """Markdown of the version badge.
+    """HTML of the version badge, on one line.
+
+    HTML (not Markdown) so GitHub renders it next to the qs:version markers: Markdown inside a
+    line that starts with an HTML comment is shown as literal text.
 
     Args:
         version: the version shown.
         link: where the badge points to.
 
     Returns:
-        str: the badge image link.
+        str: the badge as an anchor holding an image.
     """
     img = f"https://img.shields.io/badge/version-{_shields(version)}-blue"
-    return f"[![version {version}]({img})]({link})"
+    return (
+        f'<a href="{html.escape(link)}"><img alt="version {html.escape(version)}" '
+        f'src="{html.escape(img)}"></a>'
+    )
 
 
 def badge_version(text):
@@ -585,10 +709,12 @@ def badge_version(text):
     m = BADGE_RX.search(text or "")
     if not m:
         return None
-    v = re.search(r"!\[version ([^\]]+)\]", m.group(1)) or re.search(
-        r"version[ :]+(\S+)", m.group(1)
+    v = (
+        re.search(r'alt="version ([^"]+)"', m.group(1))
+        or re.search(r"!\[version ([^\]]+)\]", m.group(1))
+        or re.search(r"version[ :]+(\S+)", m.group(1))
     )
-    return v.group(1) if v else ""
+    return html.unescape(v.group(1)) if v else ""
 
 
 def set_badge(text, version):
