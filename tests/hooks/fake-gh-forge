@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# fake-gh-forge - fake GitHub CLI for the forge layer cases (never the real API, no token).
+# Setup: FAKE_GH is a folder with resp/ (stored answers). `gh auth status` succeeds unless
+# $FAKE_GH/loggedout exists. `gh api [-X M] PATH [-f k=v] [-F k=@file]` appends "M PATH" and one
+# "  k=v" line per field to $FAKE_GH/calls.log, then prints the stored answer
+# $FAKE_GH/resp/<M>_<key> where key is PATH with / ? & = : replaced by _ (GET answers use the
+# same name). A missing GET answer fails with "HTTP 404"; a missing write answer prints {}.
+# The marker file $FAKE_GH/apierror makes every `api` call fail.
+if [ "$1" = auth ]; then
+	[ ! -f "$FAKE_GH/loggedout" ]
+	exit
+fi
+[ "$1" = api ] || {
+	echo "fake gh: unsupported: $*" >&2
+	exit 2
+}
+shift
+method=GET path="" fields=""
+while [ $# -gt 0 ]; do
+	case "$1" in
+	-X)
+		method="$2"
+		shift
+		;;
+	-f | -F)
+		v="$2"
+		case "$v" in
+		*=@*) v="${v%%=@*}=$(tr '\n' '|' <"${v#*=@}")" ;;
+		esac
+		fields="$fields  $v"$'\n'
+		shift
+		;;
+	*) path="$1" ;;
+	esac
+	shift
+done
+{
+	echo "$method $path"
+	printf '%s' "$fields"
+} >>"$FAKE_GH/calls.log"
+[ ! -f "$FAKE_GH/apierror" ] || {
+	echo "HTTP 500" >&2
+	exit 1
+}
+key="$(printf '%s' "$path" | tr '/?&=:' '_____')"
+f="$FAKE_GH/resp/${method}_$key"
+if [ -f "$f" ]; then
+	cat "$f"
+elif [ "$method" = GET ]; then
+	echo "HTTP 404" >&2
+	exit 1
+else
+	echo '{}'
+fi
