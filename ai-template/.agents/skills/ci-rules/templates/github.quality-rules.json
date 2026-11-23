@@ -1,0 +1,7 @@
+{
+  "branches": {
+    "flow": "squash",
+    "model": 6,
+    "allow": ["^dependabot/"]
+  }
+}
