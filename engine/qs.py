@@ -1442,7 +1442,9 @@ def _tool_release_notes(ap, argv, where):
         block = changelog.union(a.version, a.date, [read_text(f) for f in a.union], link)
         items, omitted = [], []
     else:
-        items, omitted = changelog.entries(git, a.tip, a.base, commit_t, ot_rx, ot=a.ot)
+        items, omitted = changelog.entries(
+            git, a.tip, a.base, commit_t, ot_rx, ot=a.ot, special=br.get("special")
+        )
         block = changelog.render(a.version, a.date, items, link)
     sys.stdout.write(block)
     for c in changelog.without_ot(items):
