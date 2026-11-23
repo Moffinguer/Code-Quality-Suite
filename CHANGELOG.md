@@ -1,119 +1,178 @@
 # Changelog
 
+Two versions were created but never released: **5.0.0** (only its release candidate
+5.0.0-RC1 shipped, and 6.0.0 took it in) and **7.0.0** (postponed; 7.1.0 was published first).
+Both have a tag for traceability. 5.0.0-RC1 and 6.0.0 were published together as 6.1.0.
+
 ## [7.1.0] - 2026-11-22
 
 ### Added
 
-- Render repository files ([1dfca8a](https://github.com/Moffinguer/Code-Quality-Suite/commit/1dfca8a59721aa53d05336ebd75715d1dde24966); identity)
-- Configurable main branch ([9a908c2](https://github.com/Moffinguer/Code-Quality-Suite/commit/9a908c25ae5679b0907e5b85063c6a9626b3649f); identity)
+- Render the repository files from the git history: write the README version badge as HTML and fill `SUPPORT.md` on one line (1dfca8a)
+- Choose the main branch: `git iniciar` starts new repositories on `main`, and the bootstrap warns when only `master` exists (9a908c2)
 
 ### Fixed
 
-- License comment, manual link ([1ceafb6](https://github.com/Moffinguer/Code-Quality-Suite/commit/1ceafb658df2452e55a3ff784788872b87eb7f99); identity)
+- Fix the license comment in `README.md` that was glued to the text, and an anchor of the user manual that did not resolve (1ceafb6)
+
+## [7.0.0] - 2026-11-15
+
+_Never released: created for the GitHub project and Actions work, then postponed. 7.1.0
+was published first, so it can no longer ship as 7.0.0. Its work continues in 8.0.0. Tagged
+for traceability._
 
 ## [6.1.0] - 2026-11-22
 
-### Added
+_Combines 5.0.0-RC1 and 6.0.0 into one release on develop and adds no change of its own: see those two sections._
 
-- Squash-aware tree and cleanup ([29b0e81](https://github.com/Moffinguer/Code-Quality-Suite/commit/29b0e815abce8bf3265b166ae9a4a758c0533ad8); git)
-- OT, version and mainline release ([69232d5](https://github.com/Moffinguer/Code-Quality-Suite/commit/69232d5491ec3f97d301be73a4006eac5d67a94e); git)
-- TESTING sandbox per level ([7ab4d17](https://github.com/Moffinguer/Code-Quality-Suite/commit/7ab4d171080ad25f7a8fb1ff452d64d9984271c2); git)
-- Merged hashes, old-format warning ([4cb7db3](https://github.com/Moffinguer/Code-Quality-Suite/commit/4cb7db352a8f67d586dbd9184b08d404ec9c303e); git)
-- Hash and OT lines, no authors ([87dcf7d](https://github.com/Moffinguer/Code-Quality-Suite/commit/87dcf7d1537338b0b9beabd10121b2d8f0fd1ec4); git)
-- Add limpiar-unmerged ([bee98bf](https://github.com/Moffinguer/Code-Quality-Suite/commit/bee98bf01488c76a92394d99a9e6240e5e669b62); git)
-- Squash per level with files ([b2cfb8c](https://github.com/Moffinguer/Code-Quality-Suite/commit/b2cfb8cf73f7c57317f95649b09ed2be06a6a96e); git)
-- Add Files block to commit messages ([d93e657](https://github.com/Moffinguer/Code-Quality-Suite/commit/d93e65752381b4cfd545d8b9413a30f109254e79); git)
-- Migrate rules file to model 5 ([df5f884](https://github.com/Moffinguer/Code-Quality-Suite/commit/df5f8840900cc19d99c75375f4b05c7c1df1bdc3); git)
-- Add flow, ot_tag, files, testing ([47e4a5c](https://github.com/Moffinguer/Code-Quality-Suite/commit/47e4a5ccdf995cdfde26c75ec19221b0ab4239fb); git)
-- Agent special branches ([05abc05](https://github.com/Moffinguer/Code-Quality-Suite/commit/05abc05458d31145f77dfc5fd1ef66a24b5697de); special)
-- OT ref instead of OT tag ([18634ea](https://github.com/Moffinguer/Code-Quality-Suite/commit/18634eac495093babc0c92fae00135db7d3aa767); special)
-- Git spike and --llevar ([a15340e](https://github.com/Moffinguer/Code-Quality-Suite/commit/a15340e8c23a5600493b7b44972e20719c8b8b2e); special)
-- MIGRATION branch ([fe66154](https://github.com/Moffinguer/Code-Quality-Suite/commit/fe66154d4fe8dbc4ae6be751613c7a5a47a88f3c); special)
-- Branch flow in agent context ([3d644f8](https://github.com/Moffinguer/Code-Quality-Suite/commit/3d644f8f32a6e4ac0fd63ec66f204a25ba3cc0c3); special)
-- Upgrade rules files on update ([06ebcd3](https://github.com/Moffinguer/Code-Quality-Suite/commit/06ebcd30f040278a8c810a5dadd1d7121b4d8192); special)
-- Publish created branches ([0f89e4b](https://github.com/Moffinguer/Code-Quality-Suite/commit/0f89e4b0b646a9d9134286ace1bf22a911f77017); special)
-- Table-driven special branch checks ([6dffb63](https://github.com/Moffinguer/Code-Quality-Suite/commit/6dffb63d70f40afb06f8d8da7be6a9d9c79502a4); special)
-- Agent permission rows ([7ff43ea](https://github.com/Moffinguer/Code-Quality-Suite/commit/7ff43eaed8d647898a42e21bc534622679c9c846); special)
-- Special branch order and refusals ([fbbedb4](https://github.com/Moffinguer/Code-Quality-Suite/commit/fbbedb4161f6576f6643248f6df21258fa8db102); special)
-- Special branch names and lock ([74d10a4](https://github.com/Moffinguer/Code-Quality-Suite/commit/74d10a463d06b34b66191584aa5f9af6b7a02eb1); special)
-- Special branch table ([d0484e4](https://github.com/Moffinguer/Code-Quality-Suite/commit/d0484e49335f04fe1234c8956f013192ed35ccf3); special)
+## [6.0.0] - 2026-11-22
 
-### Fixed
-
-- One squash per OT in version release ([24c80b9](https://github.com/Moffinguer/Code-Quality-Suite/commit/24c80b9434b6c95738f1208aa5d523a85c23b59a); git)
-- Format check pipes real file ([11413d7](https://github.com/Moffinguer/Code-Quality-Suite/commit/11413d74e05afac84ae3a5627751cbab1070ba29); git)
-- Same isort src in format check and fix ([5aef7f7](https://github.com/Moffinguer/Code-Quality-Suite/commit/5aef7f71fb0f2afdf1a854ba30d6d64cbc619fdf); git)
-- Own versions, origin, hooks ([75cffba](https://github.com/Moffinguer/Code-Quality-Suite/commit/75cffba0ff2a9391cd36b33ac47bb21b08c54c59); git)
-- Detect amend on Windows, check files ([2815c0a](https://github.com/Moffinguer/Code-Quality-Suite/commit/2815c0a986ba7b0f6b926f6fc24f2e6a47b51b67); git)
-- No double run, safe sandbox ([7f69a67](https://github.com/Moffinguer/Code-Quality-Suite/commit/7f69a674b014402fef770f3e43c9cd55e2f47391); git)
-- Set flow after the first commit ([f096534](https://github.com/Moffinguer/Code-Quality-Suite/commit/f096534a7f6b40db9ada5609c50b95e7b36014d7); git)
-- Safe migration, flow merge kept ([e67c003](https://github.com/Moffinguer/Code-Quality-Suite/commit/e67c00362a932e8fb1a7e1c43d70606b08c39b9c); git)
-- Held RELEASEs and union dedupe ([671f71c](https://github.com/Moffinguer/Code-Quality-Suite/commit/671f71c175edbdecffefc9e0bae35870b97d5e77); special)
-- Drop special leftovers at release ([7616a31](https://github.com/Moffinguer/Code-Quality-Suite/commit/7616a3119b56e5be74a2493696905969f41a1362); special)
-- Batch QA fixes ([8039f9c](https://github.com/Moffinguer/Code-Quality-Suite/commit/8039f9c3a4269a343db919a25f45b88406b0a90a); special)
-
-## 4.2.1 - 2026-11-02
+_Also carries every change of 5.0.0-RC1 (listed there). It was combined into 6.1.0 and never published alone._
 
 ### Changed
 
-- Fix lint baseline (38b35cb; Fernando Mateos)
-- Fix runner lint baseline (d3a0497; Fernando Mateos)
+- Write a `refs/ot/<version>/<ot>` ref at the OT release instead of an OT tag, so tags are version numbers only and changelog hashes stay reachable; the key `branches.ot_tag` becomes `branches.ot_ref` (18634ea)
 
 ### Added
 
-- Clean old images on install (ff00729; Fernando Mateos)
-- Add qs_clean_old_images (b90ede6; Fernando Mateos)
-- One squash per version on develop (c88c0bf; Fernando Mateos)
-- Allow alphanumeric OT (c1ee8c0; Fernando Mateos)
-- Allow alphanumeric OT in scripts (3b6f5f0, OT 100; Fernando Mateos)
-- Skip style tools on generated files (1494ee0; Fernando Mateos)
-- Skip size check for generated (47d76c6; Fernando Mateos)
-- Document generated-file exemption (25a116f; Fernando Mateos)
+- Add the special branch types, with one table (`branches.special`) for their placement, order, allowed paths and level: reserved names, a lock on the version of an open MIGRATION, refusals and ordering in `git integra`, and hook checks (d0484e4, 74d10a4, fbbedb4, 6dffb63)
+- Add branches for agent work: ATTEMPT (`git intentos`, `git elegir`), REVIEW (`git revision`), QUARANTINE (`git cuarentena`, `git aceptar`) and CHECKPOINT (`git checkpoint`) (05abc05)
+- Add `git spike`, a SPIKE branch that never goes up; `--llevar` replays its commits on a new task branch (a15340e)
+- Add `git migracion` and `git np --migracion`: a MIGRATION branch that locks its version and is squashed into ORIGINAL with its own changelog line (fe66154)
+- Give each agent role a Branches section and the list of human-only commands (3d644f8)
+- Give Claude Code and OpenCode allow/ask/deny rows per role; `git ia --actualizar` merges `settings.json` and keeps your rows (7ff43ea)
+- Upgrade each repository's `.quality-rules.json` when the suite is updated, and clean old images (06ebcd3)
+- Push every branch created by the suite's commands to origin (0f89e4b)
 
 ### Fixed
 
-- Match the suite repo exactly (0f29e54, OT 100; Fernando Mateos)
-- Refuse invalid OT everywhere (4fea1e5, OT 100; Fernando Mateos)
-- All or nothing, atomic origin push (4acc3ea, OT 100; Fernando Mateos)
-- OT from the Refs line in squashes (609533e; Fernando Mateos)
-- Restore gen.py output layout (831f838, OT 100; Fernando Mateos)
-- Tighten generated-file matching (421994d, OT 100; Fernando Mateos)
-- Read generated mark without git (dd50c18; Fernando Mateos)
-- Keep gen.py import order (0837be7; Fernando Mateos)
+- Skip a RELEASE that a later one already holds when combining (`git combinar --contenida`), and list each commit once in the union changelog (671f71c)
+- Delete SPIKE, ATTEMPT, REVIEW, QUARANTINE and CHECKPOINT leftovers at the OT release (7616a31)
+- Print the restore hint of `git integra` only after it really deleted a REVIEW, QUARANTINE or CHECKPOINT branch (8039f9c)
 
-## 4.0.0 - 2026-11-01
+## [5.0.0] - 2026-11-21
+
+_Never released as a final version: its release candidate 5.0.0-RC1 is its last state (the
+tag is on the same commit). 6.0.0 took it in. Tagged for traceability._
+
+## [5.0.0-RC1] - 2026-11-21
+
+_Release candidate. It was combined into 6.1.0 and never published alone._
 
 ### Added
 
-- Add dev-documents skill (58feea0; Fernando Mateos)
-- Keep filled dev_documents (f9628bf; Fernando Mateos)
-- Add dev_documents templates (c1b5803; Fernando Mateos)
+- Add `git testing`, a TESTING sandbox per level that refuses merges and copies of TESTING commits (7ab4d17)
+- Add the OT release, the version release and the mainline release; `git publicar` puts a version on develop as one commit (69232d5)
+- Make `git arbol` understand squash integrations; `--limpiar` deletes a branch only when every copy is integrated (29b0e81)
+- Make `git integra` squash per level, listing the files of the change (b2cfb8c)
+- Add a Files block to every commit message, set with `commit.files` (block, warn or off) (d93e657)
+- Write one changelog line per change with its hash and OT, without authors; merge hashes and warn about lines in the old 4.x format (87dcf7d, 4cb7db3)
+- Add `git limpiar-unmerged` to delete archived branches that are integrated or superseded (bee98bf)
+- Add the keys `flow`, `ot_tag`, `files` and `testing` to the rules file, and migrate old rules files to model 5 (47e4a5c, df5f884)
 
 ### Fixed
 
-- Mark requirement fields optional (f623dbf, OT 100; Fernando Mateos)
-- Cover AC5-AC6 and AC9 (b8582db, OT 100; Fernando Mateos)
+- Land one squash per OT in the version release instead of rebasing each OT RELEASE, which conflicted (24c80b9)
+- Let the format check read the real file, and use the same isort source in check and fix (11413d7, 5aef7f7)
+- Make `git limpiar-unmerged` judge only its own version and origin, and accept stamped archive branches (75cffba)
+- Detect `git commit --amend` on Windows and check the Files block (2815c0a)
+- Stop the test runner from running cases twice and run it in a safe sandbox (7f69a67)
+- Set the flow after the first commit, and keep `flow: merge` when migrating a rules file (f096534, e67c003)
 
-## 3.0.0 - 2026-11-01
+## [4.2.1] - 2026-11-02
+
+_Combines 4.0.1, 4.0.2, 4.0.3, 4.1.0, 4.1.1 and 4.2.0 into one release on develop and adds no change of its own: see those sections. Their tags exist, but only 4.2.1 was published by `git release`._
+
+## [4.2.0] - 2026-11-02
+
+### Added
+
+- Clean old suite images and containers on install, with `qs_clean_old_images` (ff00729, b90ede6)
+
+### Fixed
+
+- Match the suite image repository name exactly when cleaning, so images of other repositories are left alone (0f29e54)
+
+## [4.1.1] - 2026-11-02
+
+_Near empty: it adds no change of its own. It carries the changes of 4.0.3 (listed there) on top of 4.1.0._
+
+## [4.1.0] - 2026-11-02
+
+_Near empty: it adds no change of its own. It carries the changes of 4.0.2 (listed there), joined by `git combinar`._
+
+## [4.0.3] - 2026-11-02
+
+_Also carries every change of 4.0.2 (listed there). It was combined into 4.2.1 and never published alone._
+
+### Added
+
+- Make `git combinar` land one commit per version on develop (c88c0bf)
+
+### Fixed
+
+- Refuse an invalid OT everywhere, not only in some commands (4fea1e5)
+- Make `git combinar` all or nothing, with one atomic push to origin (4acc3ea)
+- Read the OT of a squash from its Refs line (609533e)
+
+## [4.0.2] - 2026-11-01
+
+_Also carries the changes of 4.0.1 (listed there). It was combined into 4.2.1 and never published alone._
+
+### Added
+
+- Allow an OT with letters as well as digits in branch names, in the engine and in the scripts (c1ee8c0, 3b6f5f0)
+- Skip the style tools and the size check on generated files, and document the exemption (1494ee0, 47d76c6, 25a116f)
+
+### Fixed
+
+- Restore the output layout of `tools/gen.py` and keep its import order (831f838, 0837be7)
+- Tighten the matching of generated files, and read the generated mark without git (421994d, dd50c18)
+
+## [4.0.1] - 2026-11-01
+
+_Near empty: it repeats two changes already listed under 3.0.0. It was combined into 4.2.1 and never published alone._
+
+### Added
+
+- Make `git ia` ignore the agent docs and `dev_documents` (ce0e9f6)
+
+### Fixed
+
+- Quote the ignore globs and narrow the disables (e473287)
+
+## [4.0.0] - 2026-11-01
+
+### Added
+
+- Add the `dev_documents` templates `Requirements.md`, `Functional_Design.md`, `Technical_Design.md` and `Tests.md` (c1b5803)
+- Add the `dev-documents` skill: the format and ID rules of those files and who writes each (58feea0)
+- Keep a filled `dev_documents` folder when `git ia` updates the AI files (f9628bf)
+
+### Fixed
+
+- Mark the requirement fields as optional in the skill and templates (f623dbf)
+
+## [3.0.0] - 2026-11-01
 
 ### Changed
 
-- Rename analyst subagent (458ae0f; Fernando Mateos)
+- Rename the `analyst` subagent to `systems-analyst` (458ae0f)
 
 ### Added
 
-- Add team-flow skill (c226eb7; Fernando Mateos)
-- Add bugfix loop and gate to roles (71e2df8; Fernando Mateos)
-- Define the systems-analyst role (210e73b; Fernando Mateos)
-- Add requirement docs and rules (5201575, OT 100; Fernando Mateos)
-- Ignore agent docs and dev_documents (ce0e9f6; Fernando Mateos)
+- Add the `team-flow` skill, the flow the agents follow (c226eb7)
+- Define the systems-analyst role: it writes the spec and the plan and proposes the branch tree (210e73b)
+- Add the bugfix loop to the roles: `qa` writes findings to `bugfix.md`, and `developer` runs the gate and hooks before review (71e2df8)
+- Add the requirement documents and their rules to `AGENTS.md` and the agent settings (5201575)
+- Make `git ia` ignore the agent docs and `dev_documents` (ce0e9f6)
 
 ### Fixed
 
-- Limit convertir-padre, bugfix name (bdcfed1, OT 100; Fernando Mateos)
-- Quote ignore globs, narrow disables (e221b21, OT 100; Fernando Mateos)
+- Limit the `git convertir-padre` advice and the bugfix branch name in the skills (bdcfed1)
+- Quote the ignore globs of `git ia` and narrow its disables (e221b21)
 
-## 2.6.0 - 2026-10-27
+## [2.6.0] - 2026-10-31
 
 ### Changed
 
@@ -130,6 +189,8 @@
 - Set `QS_SUITE` to the suite folder for Git Bash and, on Windows, for PowerShell and cmd (git-integration/setup-global.sh)
 
 ## 2.5.0 - 2026-10-26
+
+_No tag: predates the repository history._
 
 ### Changed
 
@@ -158,6 +219,8 @@
 
 ## 2.4.0 - 2026-10-22
 
+_No tag: predates the repository history._
+
 ### Added
 
 - Add a free demo of the AI layer: `LITELLM_CONFIG=demo.yaml` puts every role on free tiers (docs/AI-DEMO.md)
@@ -166,6 +229,8 @@
 - Add `scripts/ai-skills.sh list|add|installed` for community skills pinned to a commit (scripts/ai-skills.sh)
 
 ## 2.3.0 - 2026-10-22
+
+_No tag: predates the repository history._
 
 ### Added
 
@@ -177,6 +242,8 @@
 - Allow plain `git merge` again: `pre-merge-commit` runs before git writes `MERGE_HEAD` (hooks/pre-merge-commit)
 
 ## 2.2.0 - 2026-10-13
+
+_No tag: predates the repository history._
 
 ### Changed
 
@@ -194,6 +261,8 @@
 
 ## 2.1.0 - 2026-10-13
 
+_No tag: predates the repository history._
+
 ### Added
 
 - Add the branch model as git aliases: `git np`, `git nr`, `git convertir-padre`, `git subir`, `git integra`, `git arbol` (docs/GIT-WORKFLOW.md)
@@ -205,7 +274,7 @@
 
 ## 2.0.0 - 2026-10-04
 
-_First release recorded in this changelog._
+_First release recorded in this changelog. No tag: predates the repository history._
 
 ### Changed
 
@@ -220,3 +289,17 @@ _First release recorded in this changelog._
 
 [7.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/7.1.0
 [6.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/6.1.0
+[6.0.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/6.0.0
+[5.0.0-RC1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/5.0.0-RC1
+[4.2.1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.2.1
+[4.2.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.2.0
+[4.1.1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.1.1
+[4.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.1.0
+[4.0.3]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.0.3
+[4.0.2]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.0.2
+[4.0.1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.0.1
+[4.0.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/4.0.0
+[3.0.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/3.0.0
+[2.6.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/2.6.0
+[5.0.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/5.0.0
+[7.0.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/7.0.0
