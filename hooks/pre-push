@@ -189,6 +189,12 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 				! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
 				br_err "'$b' is shared and the push rewrites its history (force-push). Merge instead: git subir"
 			fi
+			# why: under flow squash only git integra moves an ORIGINAL, with one single-parent commit; a
+			# merge that brings a child in is the defect (FG4). Commits already on origin are not checked.
+			if [ "${QS_BR_FLOW:-merge}" = squash ] && is_parent_branch "$b" && bad="$(flow_merge_into_original "$b" "$local_sha" "$remote_sha")"; then
+				br_err "'$b' gets a merge commit (${bad:0:10}) that integrates a branch: under flow squash it needs one single-parent commit from git integra"
+				flow_recovery "$b"
+			fi
 		elif is_ot_release_branch "$b"; then
 			: # why: an OT RELEASE is frozen at its OT release; the version release rebases it
 		elif [ "${QUALITY_SKIP_PARENT_CHECK:-0}" != 1 ]; then

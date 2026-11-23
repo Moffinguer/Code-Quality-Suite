@@ -710,6 +710,7 @@ cmd_integra() {
 	si_integra_refuse "$cur" "$parent" || exit 1 # SPIKE, ATTEMPT, REVIEW, QUARANTINE, CHECKPOINT never go up
 	require_clean
 	fetch_origin
+	flow_guard_integra "$cur" "$parent" || exit 1 # FG2/FG3: wrong flow or generated rules file
 	if ! exists_ref "refs/heads/$parent"; then
 		exists_ref "refs/remotes/origin/$parent" || die "parent '$parent' does not exist (create it with git np)"
 		git branch -q "$parent" "origin/$parent"

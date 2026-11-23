@@ -1097,3 +1097,113 @@ pom_artifacts() {
 	done < <(git ls-tree -r --name-only "$1" 2>/dev/null | grep -E '(^|/)pom\.xml$' || true)
 	printf '%s' "$out"
 }
+
+# --- commit-flow guards (7.1.1 flow_guard, FG1-FG5) ---------------------------------------------
+
+# flow_history ORIGINAL: print the flow (squash or merge) that the history of ORIGINAL shows. The
+# most recent integration on its first-parent line (a commit with a 'Refs: <x> -> ORIGINAL' line)
+# is squash with one parent and merge with two. With no integration yet the flow of its own parent
+# ORIGINAL is used; with none, nothing is printed (no evidence). Single-parent commits without
+# 'Refs:' (manual or known-bug commits) are not evidence.
+# Arguments: $1 branch name. Returns: 0; prints squash, merge or nothing.
+flow_history() {
+	local b="$1" ref h parents p
+	ref="$(best_ref "$b" || true)"
+	[ -n "$ref" ] || return 0
+	while read -r h parents; do
+		[ -n "$h" ] || continue
+		git log -n1 --format=%B "$h" | grep -qE -- "^Refs: .* -> $b\$" || continue
+		# shellcheck disable=SC2086 # why: parents is a list of object ids
+		set -- $parents
+		if [ "$#" -ge 2 ]; then echo merge; else echo squash; fi
+		return 0
+	done < <(git log --first-parent --format='%H %P' --grep="^Refs: .* -> $b\$" "$ref" 2>/dev/null || true)
+	p="$(parent_branch "$b")"
+	{ [ -n "$p" ] && ! is_mainline "$p"; } || return 0
+	flow_history "$p"
+}
+
+# rules_file_generated: succeed when the rules file of this work tree is missing or still has the
+# sha256 the engine recorded when it generated it (<git-dir>/quality-suite/rules.generated).
+# Arguments: none. Returns: 0 generated or missing, 1 it is a real file.
+rules_file_generated() {
+	local rf marker sha
+	rf="$(git rev-parse --show-toplevel)/.quality-rules.json"
+	[ -f "$rf" ] || return 0
+	marker="$(git rev-parse --absolute-git-dir)/quality-suite/rules.generated"
+	[ -f "$marker" ] || return 1
+	sha="$({ sha256sum "$rf" 2>/dev/null || shasum -a 256 "$rf"; } | awk '{print $1}')"
+	[ -n "$sha" ] && [ "$sha" = "$(tr -d '[:space:]' <"$marker")" ]
+}
+
+# in_linked_worktree: succeed when the current directory is in a linked worktree (its git dir is
+# not the common git dir). Arguments: none. Returns: 0 linked, 1 main checkout.
+in_linked_worktree() {
+	local a c
+	a="$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
+	c="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+	[ "$a" != "$c" ]
+}
+
+# flow_recovery BRANCH: print the safe recovery after a flow guard refusal (never a force-push).
+# Arguments: $1 the ORIGINAL that was or would be wrong. Returns: 0; the text goes to stderr.
+flow_recovery() {
+	{
+		echo "  Safe recovery (never force-push an ORIGINAL):"
+		echo "    1. git fetch origin"
+		echo "    2. if the local '$1' has a wrong commit that is not on origin, reset it to origin"
+		echo "       from another branch: git branch -f '$1' 'origin/$1'"
+		echo "    3. integrate again from the main checkout, whose .quality-rules.json is the project's."
+	} >&2
+}
+
+# flow_guard_integra BRANCH TARGET: refuse (return 1, message on stderr) an integration into
+# TARGET when this checkout is a linked worktree whose rules file is missing or generated (FG3), or
+# when the effective branches.flow differs from the flow the history of TARGET shows (FG2).
+# Arguments: $1 branch to integrate, $2 target ORIGINAL. Returns: 0 allowed, 1 refused.
+flow_guard_integra() {
+	local target="$2" hist have="${QS_BR_FLOW:-merge}"
+	if in_linked_worktree && rules_file_generated; then
+		echo "[quality-suite] integra refused: this worktree has no real .quality-rules.json (missing, or the" >&2
+		echo "  default the engine generated, which means flow: merge). Integrating here would make merge commits." >&2
+		echo "  Run git integra from the main checkout, or copy its .quality-rules.json into this worktree." >&2
+		flow_recovery "$target"
+		return 1
+	fi
+	hist="$(flow_history "$target")"
+	if [ -n "$hist" ] && [ "$hist" != "$have" ]; then
+		echo "[quality-suite] integra refused: branches.flow is '$have' here but the history of '$target' shows '$hist'." >&2
+		echo "  Run git integra from the main checkout, or copy its .quality-rules.json here." >&2
+		flow_recovery "$target"
+		return 1
+	fi
+	return 0
+}
+
+# flow_merge_into_original BRANCH NEW OLD: print the first merge commit (first-parent line of the
+# range OLD..NEW) that integrates a child into ORIGINAL BRANCH: its second parent is in neither
+# the parent branch nor the mainline (a 'git subir' sync of the parent is allowed). OLD empty or
+# all zeros means a new ref: the range is the commits not on any remote.
+# Arguments: $1 ORIGINAL branch name, $2 new tip, $3 old tip. Returns: 0 and prints the sha when
+# there is one; 1 when clean.
+flow_merge_into_original() {
+	local b="$1" new="$2" old="${3:-}" p pref mref m s range=()
+	if [ -n "$old" ] && ! [[ $old =~ ^0+$ ]] && git cat-file -e "${old}^{commit}" 2>/dev/null; then
+		range=("$old..$new")
+	else
+		range=("$new" --not --remotes)
+	fi
+	p="$(parent_branch "$b")"
+	pref=""
+	[ -z "$p" ] || pref="$(best_ref "$p" || true)"
+	mref="$(best_ref "$QS_BR_MAINLINE" || true)"
+	while read -r m; do
+		[ -n "$m" ] || continue
+		s="$(git rev-parse "$m^2")"
+		{ [ -n "$pref" ] && git merge-base --is-ancestor "$s" "$pref"; } && continue
+		{ [ -n "$mref" ] && git merge-base --is-ancestor "$s" "$mref"; } && continue
+		echo "$m"
+		return 0
+	done < <(git rev-list --first-parent --merges "${range[@]}" 2>/dev/null || true)
+	return 1
+}

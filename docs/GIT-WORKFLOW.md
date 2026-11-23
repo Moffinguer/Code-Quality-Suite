@@ -241,10 +241,30 @@ Squashed: 6.22.6/188858/RF001/login 0123456789abcdef...
 ### Running integra from a worktree
 
 `.quality-rules.json` may be git-ignored, so a worktree gets the generated default
-(`flow: merge`) and `git integra` there makes merge commits (two parents) in the ORIGINAL. Run it
-only from the main checkout, or copy the real file into the worktree first. Before integrating,
-check the `"flow":` line; before pushing, check that `git log -1 --format=%P <ORIGINAL>` prints
-one parent. A wrong integration that is already pushed is never rewritten: report it.
+(`flow: merge`) and `git integra` there would make merge commits (two parents) in the ORIGINAL.
+Run it only from the main checkout, or copy the real file into the worktree first. Before
+pushing, check that `git log -1 --format=%P <ORIGINAL>` prints one parent. A wrong integration
+that is already pushed is never rewritten: report it.
+
+### Commit-flow guards
+
+Three guards stop that mistake before it reaches origin. Each refusal prints the safe recovery:
+`git fetch origin`; if the local ORIGINAL holds a wrong commit that is not on origin, reset it
+from another branch (`git branch -f <ORIGINAL> origin/<ORIGINAL>`); integrate again from the
+main checkout. Never force-push an ORIGINAL.
+
+- **Generated rules file.** When the engine creates a default `.quality-rules.json` it records
+  the sha256 in `<git-dir>/quality-suite/rules.generated` (the git dir of that worktree). In a
+  linked worktree `git integra` refuses when the file is missing or still has that hash. The main
+  checkout may keep a generated file.
+- **Flow mismatch.** `git integra` compares `branches.flow` with the history of the target
+  ORIGINAL: the latest commit with a `Refs: <x> -> <target>` line is squash with one parent and
+  merge with two (without one, the parent ORIGINAL decides; commits without `Refs:` are no
+  evidence). A difference is refused before anything changes. There is no override: fix the
+  rules file.
+- **Merge into an ORIGINAL.** Under `flow: squash`, pre-push refuses an ORIGINAL whose new
+  commits (first parent) hold a merge that brings in a child. A merge of the parent ORIGINAL
+  (`git subir`) is fine, and commits already on origin are never checked again.
 
 ## Closing an OT: `git release` (OT release)
 

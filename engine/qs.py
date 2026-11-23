@@ -30,6 +30,7 @@ Env: QUALITY_MODE fix|check, QUALITY_LEVEL, QS_GATE_LEVEL (level of a special br
 import argparse
 import concurrent.futures as cf
 import datetime
+import hashlib
 import importlib
 import json
 import os
@@ -349,7 +350,10 @@ class App:
                     sec["detected_version"] = det
                     changed_by_suite.append(f"{lid}.detected_version")
         if self.persist and (self.data != self._loaded or getattr(self, "_created", False)):
+            was_generated = getattr(self, "_created", False) or self._is_generated()
             rules.save(self.rules_path, self.data)
+            if was_generated:
+                self._mark_generated()
             if getattr(self, "_created", False):
                 qslog.log(
                     "INFO",
@@ -361,6 +365,50 @@ class App:
                 )
                 self._created = False
         return changed_by_suite
+
+    def _rules_sha(self):
+        """The sha256 of the rules file as it is on disk.
+
+        Returns:
+            str: the hex digest, or "" when the file cannot be read.
+        """
+        try:
+            with open(self.rules_path, "rb") as fh:
+                return hashlib.sha256(fh.read()).hexdigest()
+        except OSError:
+            return ""
+
+    def _generated_marker(self):
+        """Path of the marker that records the sha256 of a generated rules file.
+
+        Returns:
+            str: `<state>/rules.generated`, or "" when there is no writable state folder.
+        """
+        if not self.state or not os.access(self.state, os.W_OK):
+            return ""
+        return os.path.join(self.state, "rules.generated")
+
+    def _is_generated(self):
+        """Tell whether the rules file on disk is still the one the engine generated.
+
+        Returns:
+            bool: True when the marker exists and holds the sha256 of the file.
+        """
+        marker = self._generated_marker()
+        if not marker or not os.path.isfile(marker):
+            return False
+        return read_text(marker).strip() == self._rules_sha() != ""
+
+    def _mark_generated(self):
+        """Record the sha256 of the rules file just saved in `<state>/rules.generated`.
+
+        `git integra` reads it in a linked worktree: a file that still has this hash is a generated
+        default (flow: merge), not the project's real rules file. Errors writing it are ignored.
+        """
+        marker = self._generated_marker()
+        if not marker:
+            return
+        write_if_changed(marker, self._rules_sha() + "\n")
 
     def _migrate(self):
         """Run the one-time policy migration (policy.migrate) on the loaded rules, logging it.
