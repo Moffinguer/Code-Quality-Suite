@@ -6,7 +6,7 @@ description: Use when creating, syncing, integrating or naming git branches, tag
 # Branch model and workflow
 
 The model and its rules. Syntax and `Who:` of every command: the `git-commands` skill
-(`git ayuda <cmd>`). Who may do what: `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
+(`git ayuda <cmd>`). Who may do what and parallel work (one developer per final branch): `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
 
 ## Commit and merge flow (mandatory, every project)
 
