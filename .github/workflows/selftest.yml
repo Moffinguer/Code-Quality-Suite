@@ -1,0 +1,79 @@
+name: selftest
+
+# Runs the suite's own tests on the PUSHED code on purpose (Q5 mitigation): a check turned into
+# "exit 0" breaks its own tests. No workflow-level "paths:" filter: the job always runs so the
+# required check never stays pending; the first step decides whether there is work (ST2).
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: python:3.12-slim
+    steps:
+      - name: Install base tools
+        run: |
+          apt-get -qq update
+          apt-get -qq install -y git file shellcheck curl xz-utils >/dev/null
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Decide whether code changed
+        id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          AFTER: ${{ github.sha }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          run=no
+          case "$EVENT" in
+            schedule | workflow_dispatch) run=yes ;;
+          esac
+          case "$REF_NAME" in
+            *MIGRATION*) run=yes ;;
+          esac
+          if [ "$run" = no ]; then
+            base="$BASE_SHA"
+            [ -n "$base" ] || base="$BEFORE"
+            if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] ||
+              ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+              run=yes
+            elif git diff --name-only "$base" "$AFTER" |
+              grep -qE '^(scripts|engine|hooks|tests|tools|registry|schema|\.github)/'; then
+              run=yes
+            fi
+          fi
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+          if [ "$run" = no ]; then
+            echo "skipped: no code change" >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Install pinned tools
+        if: steps.decide.outputs.run == 'yes'
+        run: |
+          pip -q install pyyaml ruff==0.17.0 mypy==2.4.0 sqlfluff==4.4.0 shfmt-py==4.2.0
+      - name: Prepare worktree
+        if: steps.decide.outputs.run == 'yes'
+        run: |
+          git config --global --add safe.directory "$PWD"
+          grep -rlI "^#!" . --exclude-dir=.git | xargs chmod +x
+      - name: Unit tests
+        if: steps.decide.outputs.run == 'yes'
+        run: python -m unittest discover -s tests/unit
+      - name: Generated files are current
+        if: steps.decide.outputs.run == 'yes'
+        run: python tools/gen.py --check
+      - name: Hooks suite
+        if: steps.decide.outputs.run == 'yes'
+        run: bash tests/hooks/run.sh
+      - name: Summary
+        if: steps.decide.outputs.run == 'yes'
+        run: echo "selftest passed (unit, gen.py --check, hooks suite)" >>"$GITHUB_STEP_SUMMARY"
