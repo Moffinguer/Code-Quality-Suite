@@ -294,7 +294,7 @@ def policy_schema():
             "encoding (or converted) blocks the commit",
             "additionalProperties": False,
             "properties": {
-                "enabled": {"type": "boolean", "default": True},
+                "enabled": {"type": "boolean", "default": d["encoding"]["enabled"]},
                 "charset": dict(cs, default=d["encoding"]["charset"]),
                 "bom": dict(bom, default=d["encoding"]["bom"]),
                 "by_language": {
@@ -309,7 +309,7 @@ def policy_schema():
                     "description": "path glob -> charset or {charset, bom}; first match wins",
                 },
                 "mojibake": {
-                    "enum": ["block", "warn", "off"],
+                    "enum": list(policy.MODES),
                     "default": d["encoding"]["mojibake"],
                     "description": "text damaged by a save in the wrong encoding "
                     "(double-encoded accents, "
@@ -318,7 +318,7 @@ def policy_schema():
                 "mojibake_ignore": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "default": [],
+                    "default": d["encoding"]["mojibake_ignore"],
                     "description": "path globs never checked for mojibake (encoding test fixtures)",
                 },
             },
@@ -342,9 +342,9 @@ def policy_schema():
                     "minimum": 10,
                     "default": d["commit"]["subject_max"],
                 },
-                "conventional": {"type": "boolean", "default": True},
+                "conventional": {"type": "boolean", "default": d["commit"]["conventional"]},
                 "files": {
-                    "enum": ["block", "warn", "off"],
+                    "enum": list(policy.MODES),
                     "default": d["commit"]["files"],
                     "description": "the 'Files:' block in every commit message",
                 },
@@ -354,13 +354,13 @@ def policy_schema():
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "enforce": {"enum": ["block", "warn", "off"], "default": "block"},
+                "enforce": {"enum": list(policy.MODES), "default": d["branches"]["enforce"]},
                 "parent_leaf": {
                     "type": "string",
                     "default": d["branches"]["parent_leaf"],
                     "description": "last segment of a branch that has children",
                 },
-                "mainline": {"type": "string", "default": "develop"},
+                "mainline": {"type": "string", "default": d["branches"]["mainline"]},
                 "protected": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -389,7 +389,7 @@ def policy_schema():
                     "description": "marker of the one-time migration to the 5.x branch model",
                 },
                 "flow": {
-                    "enum": ["squash", "merge"],
+                    "enum": list(policy.FLOWS),
                     "default": d["branches"]["flow"],
                     "description": "squash (5.x) or merge (4.x behaviour, deprecated)",
                 },
@@ -406,11 +406,14 @@ def policy_schema():
                     "description": "reserved leaf of the TESTING sandbox '<level>/<testing_leaf>'",
                 },
                 "leaf_merge": {
-                    "enum": ["merge", "squash"],
-                    "default": "merge",
+                    "enum": list(policy.LEAF_MERGES),
+                    "default": d["branches"]["leaf_merge"],
                     "description": "applies to flow = merge only",
                 },
-                "require_children_merged": {"type": "boolean", "default": True},
+                "require_children_merged": {
+                    "type": "boolean",
+                    "default": d["branches"]["require_children_merged"],
+                },
                 "publish_on_create": {
                     "type": "boolean",
                     "default": d["branches"]["publish_on_create"],
@@ -419,13 +422,13 @@ def policy_schema():
                 },
                 "tag": {
                     "type": "string",
-                    "default": "{version}",
+                    "default": d["branches"]["tag"],
                     "description": "{version} {ot} {date}",
                 },
                 "tag_level": {
                     "type": "integer",
                     "minimum": 0,
-                    "default": 1,
+                    "default": d["branches"]["tag_level"],
                     "description": "applies to flow = merge only",
                 },
                 "release_leaf": {
@@ -469,21 +472,21 @@ def policy_schema():
                 },
                 "tag_url": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["tag_url"],
                     "description": "changelog link of a release: '' = derived from origin, '-' "
                     "= none, "
                     "or a URL with {tag}",
                 },
                 "commit_url": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["commit_url"],
                     "description": "changelog reference of a commit: '' = derived from origin, "
                     "'-' = none, "
                     "or a URL with {commit}",
                 },
                 "build_cmd": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["build_cmd"],
                     "description": "command of the full build and tests that a push_checks: full "
                     "special type (MIGRATION) runs on push ('' = QUALITY_HEAVY_CMD)",
                 },
