@@ -19,12 +19,12 @@
       "tests/hooks": 0.67
     },
     "missing_docs_max": {
-      "scripts": 34,
-      "hooks": 6,
+      "scripts": 1,
+      "hooks": 0,
       "engine": 0,
-      "registry/src": 15,
-      "tools": 17,
-      "tests/hooks": 16
+      "registry/src": 0,
+      "tools": 0,
+      "tests/hooks": 0
     }
   }
 }
