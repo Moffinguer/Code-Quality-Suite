@@ -5,18 +5,13 @@
 # It never rewrites anything and never fails the commit; commit.files = off disables it.
 # Fix it with: git commit --amend --no-edit   (or: git amend --no-edit)
 set -uo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env
 
-LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
 FILES_LIB="${QUALITY_SUITE_DIR:-}/scripts/commit-files-lib.sh"
-{ [ -f "$LIB" ] && [ -f "$FILES_LIB" ]; } || exit 0
-# shellcheck disable=SC1090
-. "$LIB"
-qs_suite_stamp_check
-QS_POLICY_NO_DOCKER=1 qs_policy_load
+[ -f "$FILES_LIB" ] || exit 0
+qs_hook_flow_lib --no-docker || exit 0
 [ "${QS_COMMIT_FILES:-block}" != off ] || exit 0
 # shellcheck disable=SC1090
 . "$FILES_LIB"

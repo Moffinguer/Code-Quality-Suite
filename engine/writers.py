@@ -21,6 +21,15 @@ from builtin import strip_jsonc
 
 
 def deep_merge(base, over):
+    """Merge two dicts recursively.
+
+    Args:
+        base: the base dict.
+        over: values that win (may be None).
+
+    Returns:
+        dict: a new merged dict; the inputs are untouched.
+    """
     out = copy.deepcopy(base)
     for k, v in (over or {}).items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
@@ -33,15 +42,48 @@ def deep_merge(base, over):
 # ---------- renderers ----------
 
 
+def _scalar(v, true="true", false="false"):
+    """Render a boolean or a number.
+
+    Args:
+        v: the value.
+        true: the text for True.
+        false: the text for False.
+
+    Returns:
+        str: the text, or None when v is neither a bool nor a number.
+    """
+    if isinstance(v, bool):
+        return true if v else false
+    if isinstance(v, (int, float)):
+        return str(v)
+    return None
+
+
 def _toml_key(k):
+    """TOML key, quoted when it is not a bare key.
+
+    Args:
+        k: the key.
+
+    Returns:
+        str: the key text.
+    """
     return k if re.match(r"^[A-Za-z0-9_-]+$", k) else json.dumps(k)
 
 
 def _toml_val(v):
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, (int, float)):
-        return str(v)
+    """TOML value.
+
+    Args:
+        v: a bool, number, list, dict or text.
+
+    Returns:
+        str: the TOML text.
+    """
+    sc = _scalar(v)
+    if sc is not None:
+        return sc
     if isinstance(v, list):
         return "[" + ", ".join(_toml_val(x) for x in v) + "]"
     if isinstance(v, dict):
@@ -50,6 +92,15 @@ def _toml_val(v):
 
 
 def render_toml(data, prefix=""):
+    """Render data as TOML.
+
+    Args:
+        data: the settings dict.
+        prefix: the table path of this level.
+
+    Returns:
+        str: the file text.
+    """
     lines, tables, arrays = [], [], []
     for k, v in data.items():
         if isinstance(v, dict):
@@ -72,11 +123,28 @@ def render_toml(data, prefix=""):
 
 
 def render_yaml(data):
+    """Render data as YAML.
+
+    Args:
+        data: the settings dict.
+
+    Returns:
+        str: the file text.
+    """
     yaml = importlib.import_module("yaml")
     return yaml.safe_dump(data, sort_keys=False, default_flow_style=False, allow_unicode=True)
 
 
 def _ini_val(v, style):
+    """INI value.
+
+    Args:
+        v: the value.
+        style: lower, num or py (how booleans are written).
+
+    Returns:
+        str: the value text.
+    """
     if isinstance(v, bool):
         return {"num": "1" if v else "0", "py": "True" if v else "False"}.get(
             style, "true" if v else "false"
@@ -87,6 +155,15 @@ def _ini_val(v, style):
 
 
 def render_ini(data, style="lower"):
+    """Render data as INI.
+
+    Args:
+        data: the settings dict.
+        style: how booleans are written (see _ini_val).
+
+    Returns:
+        str: the file text.
+    """
     lines = [f"{k} = {_ini_val(v, style)}" for k, v in data.items() if not isinstance(v, dict)]
     for sec, body in data.items():
         if isinstance(body, dict):
@@ -96,6 +173,14 @@ def render_ini(data, style="lower"):
 
 
 def parse_ini(text):
+    """Parse INI text.
+
+    Args:
+        text: the INI text.
+
+    Returns:
+        dict: sections and keys.
+    """
     data = {}
     cur = data
     for raw in text.splitlines():
@@ -118,6 +203,15 @@ def parse_ini(text):
 
 
 def render_rc(data, sep="="):
+    """Render data as an rc file of key/value lines.
+
+    Args:
+        data: the settings dict.
+        sep: the key/value separator.
+
+    Returns:
+        str: the file text.
+    """
     out = []
     for k, v in data.items():
         if isinstance(v, list):
@@ -159,6 +253,15 @@ def parse_flags(text):
 
 
 def render_flags(data, joiner="="):
+    """Render data as command-line flags.
+
+    Args:
+        data: the settings dict.
+        joiner: the text between a flag and its value.
+
+    Returns:
+        str: the file text.
+    """
     out = []
     for k, v in data.items():
         name = k.lstrip("-")
@@ -173,6 +276,14 @@ def render_flags(data, joiner="="):
 
 
 def render_edn(v):
+    """Render a value as EDN.
+
+    Args:
+        v: the value.
+
+    Returns:
+        str: the EDN text.
+    """
     if isinstance(v, dict):
         return "{" + " ".join(f"{_edn_key(k)} {render_edn(x)}" for k, x in v.items()) + "}"
     if isinstance(v, list):
@@ -188,16 +299,40 @@ def render_edn(v):
 
 
 def _edn_key(k):
+    """EDN keyword for a key.
+
+    Args:
+        k: the key.
+
+    Returns:
+        str: the key, prefixed with ':' when it is not already a keyword.
+    """
     k = str(k)
     return k if k.startswith((":", "'")) or k[:1] in '{[("' else ":" + k
 
 
 def render_lua(data):
+    """Render data as a Lua assignment list.
+
+    Args:
+        data: the settings dict.
+
+    Returns:
+        str: the file text.
+    """
+
     def val(v):
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return str(v)
+        """Lua value.
+
+        Args:
+            v: the value.
+
+        Returns:
+            str: the Lua text.
+        """
+        sc = _scalar(v)
+        if sc is not None:
+            return sc
         if isinstance(v, list):
             return "{" + ", ".join(val(x) for x in v) + "}"
         if isinstance(v, dict):
@@ -208,6 +343,15 @@ def render_lua(data):
 
 
 def render_hocon(data, prefix=""):
+    """Render data as HOCON.
+
+    Args:
+        data: the settings dict.
+        prefix: the key path of this level.
+
+    Returns:
+        str: the file text.
+    """
     out = []
     for k, v in data.items():
         key = f"{prefix}.{k}" if prefix else k
@@ -229,6 +373,15 @@ def render_hocon(data, prefix=""):
 
 
 def render_editorconfig(data, default_section):
+    """Render data as EditorConfig.
+
+    Args:
+        data: the settings dict.
+        default_section: the section that receives the top-level keys.
+
+    Returns:
+        str: the file text.
+    """
     out = []
     flat = {k: v for k, v in data.items() if not isinstance(v, dict)}
     if flat:
@@ -244,6 +397,15 @@ def render_editorconfig(data, default_section):
 
 
 def render_psd1(v, indent=0):
+    """Render a value as PowerShell data (.psd1).
+
+    Args:
+        v: the value.
+        indent: the nesting level.
+
+    Returns:
+        str: the psd1 text.
+    """
     pad = "    " * indent
     if isinstance(v, dict):
         inner = "\n".join(
@@ -252,19 +414,34 @@ def render_psd1(v, indent=0):
         return "@{\n" + inner + f"\n{pad}}}"
     if isinstance(v, list):
         return "@(" + ", ".join(render_psd1(x, indent).strip() for x in v) + ")"
-    if isinstance(v, bool):
-        return "$true" if v else "$false"
-    if isinstance(v, (int, float)):
-        return str(v)
+    sc = _scalar(v, "$true", "$false")
+    if sc is not None:
+        return sc
     return "'" + str(v).replace("'", "''") + "'"
 
 
 def render_exs(data):
+    """Render data as an Elixir script (.exs).
+
+    Args:
+        data: the settings dict.
+
+    Returns:
+        str: the file text.
+    """
+
     def val(v):
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return str(v)
+        """Elixir value.
+
+        Args:
+            v: the value.
+
+        Returns:
+            str: the Elixir text.
+        """
+        sc = _scalar(v)
+        if sc is not None:
+            return sc
         if isinstance(v, list):
             return "[" + ", ".join(val(x) for x in v) + "]"
         if isinstance(v, dict):
@@ -276,11 +453,27 @@ def render_exs(data):
 
 
 def render_hcl(data):
+    """Render data as HCL.
+
+    Args:
+        data: the settings dict.
+
+    Returns:
+        str: the file text.
+    """
+
     def attr(v):
-        if isinstance(v, bool):
-            return "true" if v else "false"
-        if isinstance(v, (int, float)):
-            return str(v)
+        """HCL attribute value.
+
+        Args:
+            v: the value.
+
+        Returns:
+            str: the HCL text.
+        """
+        sc = _scalar(v)
+        if sc is not None:
+            return sc
         if isinstance(v, list):
             return "[" + ", ".join(attr(x) for x in v) + "]"
         return json.dumps(str(v))
@@ -302,6 +495,14 @@ def render_hcl(data):
 
 
 def render_verible(data):
+    """Render data as Verible rule flags.
+
+    Args:
+        data: the settings dict.
+
+    Returns:
+        str: the file text.
+    """
     out = []
     for k, v in data.items():
         if v is False:
@@ -438,6 +639,18 @@ def merge_pmd(base_text, rules):
 
 
 def parse(fmt, text):
+    """Parse settings text.
+
+    Args:
+        fmt: json, jsonc or another supported format.
+        text: the text.
+
+    Returns:
+        dict: the parsed data.
+
+    Raises:
+        ValueError: the text is not valid for the format.
+    """
     if fmt in ("json", "jsonc"):
         return json.loads(strip_jsonc(text)) if text.strip() else {}
     if fmt in ("yaml", "neon"):

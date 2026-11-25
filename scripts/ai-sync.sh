@@ -32,6 +32,8 @@ echo "[ai-sync] $(find "$src" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ') skill
 oc_bash_rules() {
 	local me="$1" lead=deny c
 	[ "$me" = systems-analyst ] && lead=allow
+	# rule PATTERN VERDICT: print one permission.bash entry of the OpenCode agent file.
+	# Arguments: $1 command pattern; $2 the verdict (allow or deny). Returns: 0. Errors: none.
 	rule() { printf '    "%s": %s\n' "$1" "$2"; }
 	rule "git checkpoint*" allow
 	rule "git spike*" allow

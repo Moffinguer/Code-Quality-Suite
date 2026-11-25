@@ -41,7 +41,10 @@ while [ "$#" -gt 0 ]; do
 	esac
 	shift
 done
-say() { echo "[update] $*"; }
+# shellcheck disable=SC2034
+QS_TAG=update
+# shellcheck disable=SC1091
+. "$QUALITY_SUITE_DIR/scripts/qs-common.sh"
 # Print stdin with a prefix on each line.
 #   indent <prefix>
 # Exit status: always 0.
@@ -56,10 +59,7 @@ indent() {
 # Exit status: always 0.
 rules_upgrade() {
 	local out py
-	for py in python3 python; do
-		command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1 && break
-		py=""
-	done
+	py="$(qs_python || true)"
 	[ -n "$py" ] || {
 		echo "[update] WARN: no working python3/python: rules file of $1 not upgraded (the next hook does it)" >&2
 		return 0
@@ -68,11 +68,11 @@ rules_upgrade() {
 	if ! out="$("$py" "$(qs_hostpath "$QUALITY_SUITE_DIR/engine/policy.py")" rules-upgrade "$(qs_hostpath "$1")" 2>&1)"; then
 		echo "[update] WARN: rules file of $1 not upgraded (the next hook retries): $out" >&2
 	elif [ -z "$out" ]; then
-		say "$1: rules: up to date"
+		qs_say "$1: rules: up to date"
 	elif [ "$out" = "no rules file (created on the first commit)" ]; then
-		say "$1: $out"
+		qs_say "$1: $out"
 	else
-		say "$1: rules: $(grep -cE '^(added|migrated) ' <<<"$out" || true) change(s)"
+		qs_say "$1: rules: $(grep -cE '^(added|migrated) ' <<<"$out" || true) change(s)"
 		indent '[update]   ' <<<"$out"
 	fi
 	return 0
@@ -111,18 +111,18 @@ if [ "$STATUS" = 1 ]; then
 	exit 0
 fi
 
-say "Clean update to version $QS_VERSION from $QUALITY_SUITE_DIR:"
-say "  - remove the stopped containers and the images of every other suite version, tools included:"
+qs_say "Clean update to version $QS_VERSION from $QUALITY_SUITE_DIR:"
+qs_say "  - remove the stopped containers and the images of every other suite version, tools included:"
 plan="$(qs_clean_old_images --all --dry-run 2>&1)"
 indent '[update]      ' <<<"${plan:-nothing to remove}"
-say "  - $([ "$LAZY" = 1 ] && echo "leave the base image to the first commit" || echo "build the base image $QS_BASE_IMAGE (needs network)")"
-say "  - re-point the installed repositories and the global git setup to this folder"
-say "Tools are downloaded again by the first commit that needs them."
+qs_say "  - $([ "$LAZY" = 1 ] && echo "leave the base image to the first commit" || echo "build the base image $QS_BASE_IMAGE (needs network)")"
+qs_say "  - re-point the installed repositories and the global git setup to this folder"
+qs_say "Tools are downloaded again by the first commit that needs them."
 if [ "$YES" != 1 ]; then
 	printf '[update] Continue? [y/N] '
 	read -r ans || ans=""
 	case "$ans" in y | Y | s | S | yes | si) ;; *)
-		say "cancelled"
+		qs_say "cancelled"
 		exit 1
 		;;
 	esac
@@ -134,7 +134,7 @@ qs_lock
 qs_clean_old_images --all
 # 3. the new base, from scratch
 if [ "$LAZY" != 1 ]; then
-	say "building $QS_BASE_IMAGE..."
+	qs_say "building $QS_BASE_IMAGE..."
 	QS_REBUILD=1 qs_ensure_image
 	if [ -n "$LANGS" ]; then
 		# shellcheck disable=SC2086
@@ -158,13 +158,13 @@ while IFS= read -r r; do
 		fi
 	else echo "[update] WARN: could not re-point $r (run: bash \"$QUALITY_SUITE_DIR/install.sh\" \"$r\")" >&2; fi
 done < <(qs_repos)
-say "re-pointed $n repositor$([ "$n" = 1 ] && echo y || echo ies)"
+qs_say "re-pointed $n repositor$([ "$n" = 1 ] && echo y || echo ies)"
 if git config --global --get alias.clonar >/dev/null 2>&1; then
 	tpl="${CQS_TEMPLATE_DIR:-$HOME/.config/git/cqs-template}"
 	on=()
 	[ -f "$tpl/hooks/post-checkout" ] && on=(--on-clone)
 	bash "$QUALITY_SUITE_DIR/git-integration/setup-global.sh" ${on[@]+"${on[@]}"} "$QUALITY_SUITE_DIR" >/dev/null
-	say "global git setup (git clonar, git actualizar-suite, clone template) now uses this folder"
+	qs_say "global git setup (git clonar, git actualizar-suite, clone template) now uses this folder"
 fi
-say "done. The first commit in each repository reinstalls the tools of its languages (one time)."
-say "A repository that is not in the list (git actualizar-suite --status): bash \"$QUALITY_SUITE_DIR/install.sh\" <repo>"
+qs_say "done. The first commit in each repository reinstalls the tools of its languages (one time)."
+qs_say "A repository that is not in the list (git actualizar-suite --status): bash \"$QUALITY_SUITE_DIR/install.sh\" <repo>"

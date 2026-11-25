@@ -10,6 +10,7 @@ checks that the pinned release assets still download (HTTP 200).
 
 Maintenance tool for the suite maintainer: it needs network; the hooks never run it.
 """
+
 import argparse
 import concurrent.futures as cf
 import json
@@ -27,34 +28,99 @@ GH_URL = re.compile(r"https://github\.com/([^/]+/[^/]+)/releases/download/([^/]+
 
 
 def http_json(url):
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "qs-check-versions"})
+    """Fetch a URL and parse its body as JSON.
+
+    Args:
+        url: absolute HTTP(S) URL to request.
+    Returns:
+        The decoded JSON value.
+    Raises:
+        urllib.error.URLError: when the request fails or times out.
+        ValueError: when the body is not valid JSON.
+    """
+    req = urllib.request.Request(
+        url, headers={"Accept": "application/json", "User-Agent": "qs-check-versions"}
+    )
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.load(r)
 
 
 def vkey(v):
+    """Sort key that orders version strings by their numeric and alphabetic parts.
+
+    Args:
+        v: version string such as "1.10.2".
+    Returns:
+        A list of ints and strings, comparable with other keys.
+    """
     return [int(x) if x.isdigit() else x for x in re.findall(r"\d+|[A-Za-z]+", v)]
 
 
 def latest_npm(name):
-    return http_json("https://registry.npmjs.org/" + urllib.parse.quote(name, safe="@") + "/latest")["version"]
+    """Return the latest npm dist-tag version of a package.
+
+    Args:
+        name: npm package name, scoped names allowed.
+    Returns:
+        The version string of the "latest" dist-tag.
+    Raises:
+        urllib.error.URLError: when the registry is unreachable.
+        KeyError: when the registry answer has no "version" field.
+    """
+    return http_json(
+        "https://registry.npmjs.org/" + urllib.parse.quote(name, safe="@") + "/latest"
+    )["version"]
 
 
 def latest_pypi(name):
+    """Return the highest stable PyPI release of a package.
+
+    Args:
+        name: PyPI project name.
+    Returns:
+        The newest release that is not a pre-release and not yanked, or the
+        current info version when no such release exists.
+    Raises:
+        urllib.error.URLError: when PyPI is unreachable.
+        KeyError: when the answer has no "info" or "version" field.
+    """
     data = http_json(f"https://pypi.org/pypi/{name}/json")
-    vers = [v for v, files in data.get("releases", {}).items() if files and not PRE.search(v) and not PEP440_PRE.search(v)
-            and not any(f.get("yanked") for f in files)]
+    vers = [
+        v
+        for v, files in data.get("releases", {}).items()
+        if files
+        and not PRE.search(v)
+        and not PEP440_PRE.search(v)
+        and not any(f.get("yanked") for f in files)
+    ]
     return max(vers, key=vkey) if vers else data["info"]["version"]
 
 
-_TAGS = {}
+_TAGS: dict[str, list[str]] = {}
 
 
 def gh_tags(repo):
+    """Return the tag names of a GitHub repository, cached per repository.
+
+    Args:
+        repo: "owner/name" of the GitHub repository.
+    Returns:
+        The tag names (without the refs/tags/ prefix); empty when git lists none.
+    Raises:
+        subprocess.TimeoutExpired: when git ls-remote takes more than 60 seconds.
+        OSError: when git cannot be started.
+    """
     if repo not in _TAGS:
-        out = subprocess.run(["git", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}"],
-                             capture_output=True, text=True, timeout=60).stdout
-        _TAGS[repo] = [l.split("refs/tags/", 1)[1] for l in out.splitlines() if "refs/tags/" in l]
+        out = subprocess.run(
+            ["git", "ls-remote", "--tags", "--refs", f"https://github.com/{repo}"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        ).stdout
+        _TAGS[repo] = [
+            line.split("refs/tags/", 1)[1] for line in out.splitlines() if "refs/tags/" in line
+        ]
     return _TAGS[repo]
 
 
@@ -70,8 +136,13 @@ def latest_tag(repo, current):
     for t in gh_tags(repo):
         mm = rx.match(t)
         if mm and mm.group(1).count(".") != num.count("."):
-            continue  # why: same shape only (plantuml's old 'v8059' tags are not newer than v1.2026.8)
-        if mm and not PRE.search(t.replace(prefix, "", 1)) and (best is None or vkey(mm.group(1)) > vkey(best[1])):
+            # why: same shape only (plantuml's old 'v8059' tags are not newer than v1.2026.8)
+            continue
+        if (
+            mm
+            and not PRE.search(t.replace(prefix, "", 1))
+            and (best is None or vkey(mm.group(1)) > vkey(best[1]))
+        ):
             best = (t, mm.group(1))
     return best[0] if best else None
 
@@ -84,6 +155,13 @@ def _same_major(repo, cur):
 
 
 def head_ok(url):
+    """Check that an asset URL answers HTTP 200 to a HEAD request.
+
+    Args:
+        url: absolute URL of the asset.
+    Returns:
+        True for HTTP 200, False for any other status or error.
+    """
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "qs-check-versions"})
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -92,7 +170,8 @@ def head_ok(url):
         return False
 
 
-def items(reg):
+# why: one branch per install channel; splitting them would only move the branches around
+def items(reg):  # noqa: C901, PLR0912
     """(tool, channel, name, current, asset_urls) for every pinned install."""
     out = []
     for tid, t in sorted(reg["tools"].items()):
@@ -108,8 +187,11 @@ def items(reg):
                 g = ins["github"]
                 ver = g["tag"][1:] if g["tag"].startswith("v") else g["tag"]
                 arch = g.get("arch") or {"amd64": "x86_64"}
-                assets = [f"https://github.com/{g['repo']}/releases/download/{g['tag']}/"
-                          + g["asset"].format(tag=g["tag"], ver=ver, arch=a) for a in arch.values()]
+                assets = [
+                    f"https://github.com/{g['repo']}/releases/download/{g['tag']}/"
+                    + g["asset"].format(tag=g["tag"], ver=ver, arch=a)
+                    for a in arch.values()
+                ]
                 out.append((tid, "github", g["repo"], g["tag"], assets))
             else:
                 for kind in ("url", "jar", "phar"):
@@ -142,19 +224,36 @@ def items(reg):
 
 
 # runtime id -> (GitHub repo whose tags carry the releases, tag format of the pinned version)
-RUNTIME_TAGS = {"node": ("nodejs/node", "v{}"), "go": ("golang/go", "go{}"), "rust": ("rust-lang/rust", "{}"),
-                "dart": ("dart-lang/sdk", "{}"), "julia": ("JuliaLang/julia", "v{}")}
+RUNTIME_TAGS = {
+    "node": ("nodejs/node", "v{}"),
+    "go": ("golang/go", "go{}"),
+    "rust": ("rust-lang/rust", "{}"),
+    "dart": ("dart-lang/sdk", "{}"),
+    "julia": ("JuliaLang/julia", "v{}"),
+}
 
 
 # newer releases deliberately not taken (status "held"); revisit when the reason goes away
 HELD = {
-    ("npm", "typescript"): "typescript-eslint 8.x supports typescript <6.1 (7.x is the native port)",
+    (
+        "npm",
+        "typescript",
+    ): "typescript-eslint 8.x supports typescript <6.1 (7.x is the native port)",
     ("npm", "graphql"): "graphql-schema-linter and @graphql-eslint require graphql ^16",
     ("github", "open-policy-agent/regal"): "the v2.x tags publish no release binaries",
 }
 
 
 def check(item, verify):
+    """Compare one pinned install with its latest stable release.
+
+    Args:
+        item: (tool, channel, name, current, asset_urls) tuple from items().
+        verify: when True, also check that the pinned and newer assets download.
+    Returns:
+        A dict with the keys tool, channel, name, current, latest, status and note.
+    Errors from the source lookups are not raised: they are reported in note.
+    """
     tid, ch, name, cur, assets = item
     latest, note = None, ""
     try:
@@ -171,31 +270,66 @@ def check(item, verify):
     if verify and assets:
         bad = [a for a in assets if not head_ok(a)]
         if bad:
-            note = (note + "; " if note else "") + "asset missing: " + ", ".join(os.path.basename(b) for b in bad)
+            note = (
+                (note + "; " if note else "")
+                + "asset missing: "
+                + ", ".join(os.path.basename(b) for b in bad)
+            )
         if latest and latest not in (cur, urllib.parse.unquote(cur)):
-            # why: a newer tag is useless if it ships no binaries (some projects tag before releasing)
+            # why: a newer tag is useless if it ships no binaries
+            # (some projects tag before releasing)
             enc = urllib.parse.quote(latest, safe="") if "%2F" in cur else latest
             nv, ov = re.sub(r"^\D*", "", latest), re.sub(r"^\D*", "", urllib.parse.unquote(cur))
             cand = [a.replace(cur, enc).replace(ov, nv) for a in assets]
             missing = [c for c in cand if not head_ok(c)]
-            note = (note + "; " if note else "") + ("new assets OK" if not missing else
-                                                    "new assets missing: " + os.path.basename(missing[0]))
+            note = (note + "; " if note else "") + (
+                "new assets OK"
+                if not missing
+                else "new assets missing: " + os.path.basename(missing[0])
+            )
     cur_cmp = urllib.parse.unquote(cur)
-    status = ("floating" if cur == "floating" else "distro" if cur == "ubuntu" else
-              "?" if not latest else "ok" if latest in (cur, cur_cmp) else "update")
+    status = (
+        "floating"
+        if cur == "floating"
+        else "distro"
+        if cur == "ubuntu"
+        else "?"
+        if not latest
+        else "ok"
+        if latest in (cur, cur_cmp)
+        else "update"
+    )
     if status == "update" and (ch, name) in HELD:
         status, note = "held", HELD[(ch, name)]
-    return {"tool": tid, "channel": ch, "name": name, "current": cur_cmp, "latest": latest or "", "status": status,
-            "note": note}
+    return {
+        "tool": tid,
+        "channel": ch,
+        "name": name,
+        "current": cur_cmp,
+        "latest": latest or "",
+        "status": status,
+        "note": note,
+    }
 
 
 def main(argv):
+    """Command line entry point: print the status of every pinned tool.
+
+    Args:
+        argv: command line arguments, without the program name.
+    Returns:
+        0 after printing the table, or the JSON list with --json.
+    Raises:
+        SystemExit: on invalid arguments (argparse).
+        OSError: when registry/registry.json cannot be read.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--verify-assets", action="store_true")
     a = ap.parse_args(argv)
-    reg = json.load(open(os.path.join(ROOT, "registry", "registry.json"), encoding="utf-8"))
+    with open(os.path.join(ROOT, "registry", "registry.json"), encoding="utf-8") as fh:
+        reg = json.load(fh)
     todo = [i for i in items(reg) if not a.only or i[1] in a.only.split(",")]
     seen, uniq = set(), []
     for i in todo:
@@ -210,8 +344,11 @@ def main(argv):
         return 0
     w = max(len(r["tool"]) for r in res)
     for r in sorted(res, key=lambda r: (r["status"] != "update", r["tool"])):
-        print(f"{r['status']:<8} {r['tool']:<{w}} {r['channel']:<6} {r['name']:<40} {r['current']:<22} "
-              f"{r['latest']:<22} {r['note']}")
+        print(
+            f"{r['status']:<8} {r['tool']:<{w}} {r['channel']:<6} {r['name']:<40} "
+            f"{r['current']:<22} "
+            f"{r['latest']:<22} {r['note']}"
+        )
     n = sum(r["status"] == "update" for r in res)
     print(f"\n{len(res)} pinned items, {n} with a newer stable release")
     return 0

@@ -76,6 +76,16 @@ DEFAULT_EXCLUDES = [
 
 
 def checkstyle_defaults(text):
+    """Read the default rules of a Checkstyle base configuration.
+
+    Args:
+        text: Checkstyle XML document, DOCTYPE allowed.
+    Returns:
+        dict: module name -> its properties dict, or True when it has none.
+        Modules listed more than once are left out.
+    Raises:
+        xml.etree.ElementTree.ParseError: when the XML is malformed.
+    """
     root = ET.fromstring(re.sub(r"<!DOCTYPE[^>]*>", "", text))
     out, seen = {}, {}
     for m in root.iter("module"):
@@ -91,6 +101,15 @@ def checkstyle_defaults(text):
 
 
 def pmd_defaults(text):
+    """Read the default rules of a PMD ruleset.
+
+    Args:
+        text: PMD ruleset XML document.
+    Returns:
+        dict: rule ref -> True, and "ref/exclude" -> False for each excluded rule.
+    Raises:
+        xml.etree.ElementTree.ParseError: when the XML is malformed.
+    """
     ns = "{http://pmd.sourceforge.net/ruleset/2.0.0}"
     root = ET.fromstring(text)
     out = {}
@@ -103,6 +122,17 @@ def pmd_defaults(text):
 
 
 def base_defaults(tool):
+    """Load the default settings of a tool from its base config file.
+
+    Args:
+        tool: tool entry from the catalog.
+    Returns:
+        dict with the defaults, or None when the tool has no base file or
+        the format is not mergeable.
+    Raises:
+        SystemExit: when the configured base file does not exist.
+        KeyError: when the config has a base file but no format.
+    """
     cfg = tool.get("config") or {}
     rel = cfg.get("base")
     if not rel or rel.startswith("{"):
@@ -294,7 +324,7 @@ def policy_schema():
             "encoding (or converted) blocks the commit",
             "additionalProperties": False,
             "properties": {
-                "enabled": {"type": "boolean", "default": True},
+                "enabled": {"type": "boolean", "default": d["encoding"]["enabled"]},
                 "charset": dict(cs, default=d["encoding"]["charset"]),
                 "bom": dict(bom, default=d["encoding"]["bom"]),
                 "by_language": {
@@ -309,7 +339,7 @@ def policy_schema():
                     "description": "path glob -> charset or {charset, bom}; first match wins",
                 },
                 "mojibake": {
-                    "enum": ["block", "warn", "off"],
+                    "enum": list(policy.MODES),
                     "default": d["encoding"]["mojibake"],
                     "description": "text damaged by a save in the wrong encoding "
                     "(double-encoded accents, "
@@ -318,7 +348,7 @@ def policy_schema():
                 "mojibake_ignore": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "default": [],
+                    "default": d["encoding"]["mojibake_ignore"],
                     "description": "path globs never checked for mojibake (encoding test fixtures)",
                 },
             },
@@ -342,9 +372,9 @@ def policy_schema():
                     "minimum": 10,
                     "default": d["commit"]["subject_max"],
                 },
-                "conventional": {"type": "boolean", "default": True},
+                "conventional": {"type": "boolean", "default": d["commit"]["conventional"]},
                 "files": {
-                    "enum": ["block", "warn", "off"],
+                    "enum": list(policy.MODES),
                     "default": d["commit"]["files"],
                     "description": "the 'Files:' block in every commit message",
                 },
@@ -354,13 +384,13 @@ def policy_schema():
             "type": "object",
             "additionalProperties": False,
             "properties": {
-                "enforce": {"enum": ["block", "warn", "off"], "default": "block"},
+                "enforce": {"enum": list(policy.MODES), "default": d["branches"]["enforce"]},
                 "parent_leaf": {
                     "type": "string",
                     "default": d["branches"]["parent_leaf"],
                     "description": "last segment of a branch that has children",
                 },
-                "mainline": {"type": "string", "default": "develop"},
+                "mainline": {"type": "string", "default": d["branches"]["mainline"]},
                 "protected": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -389,7 +419,7 @@ def policy_schema():
                     "description": "marker of the one-time migration to the 5.x branch model",
                 },
                 "flow": {
-                    "enum": ["squash", "merge"],
+                    "enum": list(policy.FLOWS),
                     "default": d["branches"]["flow"],
                     "description": "squash (5.x) or merge (4.x behaviour, deprecated)",
                 },
@@ -406,11 +436,14 @@ def policy_schema():
                     "description": "reserved leaf of the TESTING sandbox '<level>/<testing_leaf>'",
                 },
                 "leaf_merge": {
-                    "enum": ["merge", "squash"],
-                    "default": "merge",
+                    "enum": list(policy.LEAF_MERGES),
+                    "default": d["branches"]["leaf_merge"],
                     "description": "applies to flow = merge only",
                 },
-                "require_children_merged": {"type": "boolean", "default": True},
+                "require_children_merged": {
+                    "type": "boolean",
+                    "default": d["branches"]["require_children_merged"],
+                },
                 "publish_on_create": {
                     "type": "boolean",
                     "default": d["branches"]["publish_on_create"],
@@ -419,13 +452,13 @@ def policy_schema():
                 },
                 "tag": {
                     "type": "string",
-                    "default": "{version}",
+                    "default": d["branches"]["tag"],
                     "description": "{version} {ot} {date}",
                 },
                 "tag_level": {
                     "type": "integer",
                     "minimum": 0,
-                    "default": 1,
+                    "default": d["branches"]["tag_level"],
                     "description": "applies to flow = merge only",
                 },
                 "release_leaf": {
@@ -469,21 +502,21 @@ def policy_schema():
                 },
                 "tag_url": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["tag_url"],
                     "description": "changelog link of a release: '' = derived from origin, '-' "
                     "= none, "
                     "or a URL with {tag}",
                 },
                 "commit_url": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["commit_url"],
                     "description": "changelog reference of a commit: '' = derived from origin, "
                     "'-' = none, "
                     "or a URL with {commit}",
                 },
                 "build_cmd": {
                     "type": "string",
-                    "default": "",
+                    "default": d["branches"]["build_cmd"],
                     "description": "command of the full build and tests that a push_checks: full "
                     "special type (MIGRATION) runs on push ('' = QUALITY_HEAVY_CMD)",
                 },
@@ -494,6 +527,14 @@ def policy_schema():
 
 
 def block_schema(tool, defaults):
+    """JSON Schema of the configuration block of one tool.
+
+    Args:
+        tool: tool entry from the catalog.
+        defaults: default rules object, or a falsy value for none.
+    Returns:
+        dict: the object schema with enabled, level, args, autofix and rules.
+    """
     rules = {"type": "object", "description": tool.get("notes", tool["name"])}
     if defaults:
         rules["default"] = defaults
@@ -522,6 +563,16 @@ def block_schema(tool, defaults):
 
 
 def make_schema(tools, langs):
+    """Build the JSON Schema of quality-rules.json for every language.
+
+    Args:
+        tools: tool id -> tool entry.
+        langs: list of language entries.
+    Returns:
+        dict: the complete JSON Schema document.
+    Raises:
+        KeyError: when a language names a tool id that is not in tools.
+    """
     lang_props = {}
     for lang in langs:
         cats = {"syntax": {}, "formatting": {}, "analysis": {}}
@@ -628,10 +679,23 @@ def make_schema(tools, langs):
 
 
 def make_matrix(tools, langs):
+    """Build the language table and the candidate list of docs/LANGUAGES.md.
+
+    Args:
+        tools: tool id -> tool entry.
+        langs: list of language entries.
+    Returns:
+        A pair (rows, cands): markdown table lines and bullet lines.
+    Raises:
+        KeyError: when a language names a tool id that is not in tools.
+    """
+
     def label(t):
+        """Display name of a tool, marked "(opt-in)" when it is not enabled by default."""
         return tools[t]["name"] + ("" if tools[t].get("default_enabled", True) else " (opt-in)")
 
     def names(lang, role):
+        """Comma-separated display names of a language tools with one role, or an empty string."""
         ids = [t for t in lang["tools"] if tools[t]["role"] == role]
         return ", ".join(label(t) for t in ids) or ""
 
@@ -684,6 +748,15 @@ def make_matrix(tools, langs):
 
 
 def main(argv):
+    """Generate the registry, the schema and the language docs, or check them with --check.
+
+    Args:
+        argv: command line arguments, without the program name; "--check" only compares.
+    Returns:
+        0 on success, 1 when validation fails or --check finds stale files.
+    Raises:
+        SystemExit: when a configured base file is missing.
+    """
     tools, langs, runtimes = core.TOOLS, core.LANGS, core.RUNTIMES
     errs, warns = validate(tools, langs, runtimes)
     for w in warns:

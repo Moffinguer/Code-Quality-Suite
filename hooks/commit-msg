@@ -7,17 +7,10 @@
 # why ASCII: messages travel through Windows consoles, Azure DevOps, mail and old tools with
 # other codepages; a non-ASCII character turns into mojibake for someone downstream.
 set -euo pipefail
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
 # shellcheck disable=SC1091
-[ -f "${HOOK_DIR}/quality-suite.env" ] && . "${HOOK_DIR}/quality-suite.env"
-LIB="${QUALITY_SUITE_DIR:-}/scripts/git-flow-lib.sh"
-# shellcheck disable=SC1090
-if [ -f "$LIB" ]; then
-	. "$LIB"
-	qs_suite_stamp_check
-	qs_policy_load
-else
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env
+if ! qs_hook_flow_lib; then
 	QS_COMMIT_CHARSET=ascii QS_COMMIT_TYPES='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
 	QS_COMMIT_SUBJECT_MAX=50 QS_COMMIT_CONVENTIONAL=1
 fi

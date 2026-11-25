@@ -16,7 +16,25 @@
 # shellcheck source=scripts/special-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/special-lib.sh"
 
-mainline_prod() { git show-ref --verify -q refs/heads/main && echo main || echo master; }
+# mainline_prod: print the production branch name. Returns: 0; prints main when it exists, else master.
+mainline_prod() { qs_ref_exists refs/heads/main && echo main || echo master; }
+# release_owned_file PATH [--content]: whether PATH is a file the release commits write.
+# Without --content: only pure bookkeeping files (version file, changelog, CITATION.cff), whose
+# every change is ignorable. With --content: also the files that carry release lines among other
+# content (README, pom.xml, package.json). Arguments: $1 path from the top of the work tree.
+# Returns: 0 when owned, 1 otherwise (also for an empty path).
+release_owned_file() {
+	[ -n "$1" ] || return 1
+	case "$1" in
+	"${QS_BR_VERSION_FILE:-VERSION}" | "${QS_BR_CHANGELOG:-CHANGELOG.md}" | CITATION.cff) return 0 ;;
+	esac
+	[ "${2:-}" = --content ] || return 1
+	case "$1" in
+	"${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json) return 0 ;;
+	esac
+	return 1
+}
+# current_branch: print the short name of the current branch. Returns: 0, or 1 on a detached HEAD (prints nothing).
 current_branch() { git symbolic-ref --quiet --short HEAD 2>/dev/null; }
 
 # Set the built-in commit/branch policy defaults (overridden by .quality-rules.json).
@@ -49,7 +67,7 @@ qs_special_defaults() {
 	QS_SP_NAMES='MIGRATION DOCS REFACTOR FORMAT TESTS SPIKE ATTEMPT REVIEW QUARANTINE CHECKPOINT'
 	QS_SP_MIGRATION_AT=version QS_SP_MIGRATION_CHILDREN=1 QS_SP_MIGRATION_SUFFIX=none QS_SP_MIGRATION_INTEGRATES=squash QS_SP_MIGRATION_ORDER=first QS_SP_MIGRATION_REBASE=1 QS_SP_MIGRATION_TYPES='build|fix|refactor|perf|test|docs|chore|ci|style' QS_SP_MIGRATION_PATHS='' QS_SP_MIGRATION_GLOBS=''
 	QS_SP_MIGRATION_LEVEL='' QS_SP_MIGRATION_PUSH=normal QS_SP_MIGRATION_PUSH_CHECKS=full QS_SP_MIGRATION_TRAILERS='' QS_SP_MIGRATION_LOCKS=1 QS_SP_MIGRATION_ON_RELEASE=required QS_SP_MIGRATION_CHANGELOG=changed
-	QS_SP_DOCS_AT=version QS_SP_DOCS_CHILDREN=0 QS_SP_DOCS_SUFFIX=none QS_SP_DOCS_INTEGRATES=squash QS_SP_DOCS_ORDER=last QS_SP_DOCS_REBASE=1 QS_SP_DOCS_TYPES='docs|chore' QS_SP_DOCS_PATHS='@docs' QS_SP_DOCS_GLOBS='*.md|**/*.md|docs/**|README.md|CHANGELOG.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|SUPPORT.md|CONTRIBUTORS.md|MAINTAINERS.md|ROADMAP.md|FAQ.md|INSTALL.md|ARCHITECTURE.md|API.md|DEVELOPMENT.md|AUTHORS|LICENSE|CODEOWNERS|CITATION.cff'
+	QS_SP_DOCS_AT=version QS_SP_DOCS_CHILDREN=0 QS_SP_DOCS_SUFFIX=none QS_SP_DOCS_INTEGRATES=squash QS_SP_DOCS_ORDER=last QS_SP_DOCS_REBASE=1 QS_SP_DOCS_TYPES='docs|chore' QS_SP_DOCS_PATHS='@docs' QS_SP_DOCS_GLOBS='*.md|**/*.md|docs/**|README.md|CHANGELOG.md|CONTRIBUTING.md|CODE_OF_CONDUCT.md|SECURITY.md|SUPPORT.md|CONTRIBUTORS.md|MAINTAINERS.md|ROADMAP.md|FAQ.md|KNOWN_BUGS.md|INSTALL.md|ARCHITECTURE.md|API.md|DEVELOPMENT.md|AUTHORS|LICENSE|CODEOWNERS|CITATION.cff'
 	QS_SP_DOCS_LEVEL='' QS_SP_DOCS_PUSH=normal QS_SP_DOCS_PUSH_CHECKS=default QS_SP_DOCS_TRAILERS='' QS_SP_DOCS_LOCKS=0 QS_SP_DOCS_ON_RELEASE=required QS_SP_DOCS_CHANGELOG=none
 	QS_SP_REFACTOR_AT=node QS_SP_REFACTOR_CHILDREN=1 QS_SP_REFACTOR_SUFFIX=none QS_SP_REFACTOR_INTEGRATES=squash QS_SP_REFACTOR_ORDER=last QS_SP_REFACTOR_REBASE=1 QS_SP_REFACTOR_TYPES='refactor|style|perf|test|docs|chore' QS_SP_REFACTOR_PATHS='' QS_SP_REFACTOR_GLOBS=''
 	QS_SP_REFACTOR_LEVEL=strict QS_SP_REFACTOR_PUSH=normal QS_SP_REFACTOR_PUSH_CHECKS=default QS_SP_REFACTOR_TRAILERS='' QS_SP_REFACTOR_LOCKS=0 QS_SP_REFACTOR_ON_RELEASE=set_aside QS_SP_REFACTOR_CHANGELOG=none
@@ -172,20 +190,6 @@ qs_native_path() {
 	if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
-# Print the path of a working python (python3 or python); the Windows Store python3 stub exists
-# on Git Bash but fails, so each candidate is tried.
-# Arguments: none. Returns: 0 and the command name, or 1 when none works.
-qs_python() {
-	local py
-	for py in python3 python; do
-		if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1; then
-			printf '%s' "$py"
-			return 0
-		fi
-	done
-	return 1
-}
-
 # Lazy rules upgrade: when the stamp `<git common dir>/quality-suite/suite-version` differs from
 # the VERSION of the suite (a suite update happened), run `engine/policy.py rules-upgrade` once
 # under the suite lock, print one summary line on stderr, and let the hook go on. The stamp is
@@ -262,14 +266,17 @@ qs_policy_load() {
 	QS_POLICY_LOADED=1
 }
 
+# _br_level_re LEVEL: print the regex of a branch level (QS_BR_LEVEL_<n>, else QS_BR_SEGMENT). Returns: 0.
 _br_level_re() {
 	local v="QS_BR_LEVEL_$1"
 	printf '%s' "${!v:-$QS_BR_SEGMENT}"
 }
+# is_mainline BRANCH: whether BRANCH is protected or the mainline. Returns: 0 yes, 1 no.
 is_mainline() {
 	case " $QS_BR_PROTECTED $QS_BR_MAINLINE " in *" $1 "*) return 0 ;; esac
 	return 1
 }
+# is_parent_branch BRANCH: whether BRANCH is a folder ORIGINAL (not the bare leaf). Returns: 0 yes, 1 no.
 is_parent_branch() { [ "${1##*/}" = "$QS_BR_LEAF" ] && [ "$1" != "$QS_BR_LEAF" ]; }
 # '<version>/RELEASE': the version ORIGINAL during 'git release' (tagged, merged into develop, deleted)
 is_release_branch() {
@@ -332,12 +339,15 @@ is_archived_branch() {
 }
 # node path: '<F>' for '<F>/ORIGINAL', the branch itself for a final branch
 branch_node() { if is_parent_branch "$1"; then printf '%s' "${1%/*}"; else printf '%s' "$1"; fi; }
+# branch_depth BRANCH: print the number of path segments of the node of BRANCH. Returns: 0.
 branch_depth() {
 	local n
 	n="$(branch_node "$1")"
 	awk -F/ '{print NF}' <<<"$n"
 }
+# branch_version BRANCH: print the first segment (the version). Returns: 0.
 branch_version() { printf '%s' "${1%%/*}"; }
+# branch_ot BRANCH: print the second segment (the OT), empty when absent. Returns: 0.
 branch_ot() {
 	local r="${1#*/}"
 	r="${r%%/*}"
@@ -457,14 +467,14 @@ branch_children() {
 # branch ref to use as a base: origin/<b> when it exists and is ahead of (or equal to) the local one
 best_ref() {
 	local b="$1"
-	if git rev-parse -q --verify "refs/remotes/origin/$b" >/dev/null 2>&1; then
-		if ! git rev-parse -q --verify "refs/heads/$b" >/dev/null 2>&1 ||
+	if qs_ref_exists "refs/remotes/origin/$b"; then
+		if ! qs_ref_exists "refs/heads/$b" ||
 			git merge-base --is-ancestor "refs/heads/$b" "refs/remotes/origin/$b"; then
 			echo "origin/$b"
 			return 0
 		fi
 	fi
-	git rev-parse -q --verify "refs/heads/$b" >/dev/null 2>&1 && echo "$b"
+	qs_ref_exists "refs/heads/$b" && echo "$b"
 }
 
 # Render the release tag of a branch from the tag template (QS_BR_TAG).
@@ -561,17 +571,49 @@ configure_repo() {
 # why: a squash commit has one parent, so ancestry no longer proves a child is in; git integra
 # records 'Refs: <child> -> <ORIGINAL>' and 'Squashed: <child> <full sha>' in the squash commit.
 
-# branch_integrated <child> <original>: succeed when <child> is in <original>: its tip is an
-# ancestor of <original>, or a commit of <original> has the line 'Refs: <child> -> <original>'
-# and (when that commit also has 'Squashed: <child> <sha>') the child tip is contained in <sha>,
-# i.e. the child did not move after its squash. A child that does not exist counts as in.
-# Arguments: $1 child branch, $2 ORIGINAL branch name. Returns: 0 in, 1 pending.
+# copy_in <ref> <child> <original> <pref>: THE rule "this copy of a child is in <pref>" (a copy of
+# its ORIGINAL: local or origin/...). It is in when its tip is an ancestor of <pref> (equal tip
+# included), or a commit of <pref> records it ('Refs:'/'Squashed:', see squash_in), or it was
+# squashed inside another branch that went into <pref> (squashed_in_chain).
+# Arguments: $1 ref of the child copy, $2 child, $3 ORIGINAL name, $4 ref of the ORIGINAL copy.
+# Returns: 0 in; 1 not in, or <pref> does not exist.
+copy_in() {
+	qs_ref_exists "$4" || return 1
+	git merge-base --is-ancestor "$1" "$4" 2>/dev/null && return 0
+	squash_in "$1" "$2" "$3" "$4" || squashed_in_chain "$1" "$4"
+}
+
+# copy_integrated <ref> <branch> <original> <pref>: print how the copy <ref> of a branch is in
+# <pref> (a copy of its ORIGINAL): "integrated as <sha>" (squash trailer), "an ancestor of
+# <original>" or "in a branch squashed into <original>". A copy whose tip is the tip of <pref> is
+# not integrated (an empty new branch). The same rule as copy_in, for git arbol --limpiar.
+# Arguments: $1 branch copy ref, $2 branch, $3 ORIGINAL name, $4 ORIGINAL copy ref. Returns: 0 in
+# (prints the text), 1 not in or <pref> missing.
+copy_integrated() {
+	local sha
+	copy_in "$1" "$2" "$3" "$4" || return 1
+	[ "$(git rev-parse "$1^{commit}")" != "$(git rev-parse "$4^{commit}")" ] || return 1
+	if git merge-base --is-ancestor "$1" "$4" 2>/dev/null; then
+		echo "an ancestor of $3"
+	elif squash_in "$1" "$2" "$3" "$4" && sha="$(squash_commit "$2" "$3" "$4")"; then
+		echo "integrated as $sha"
+	else
+		echo "in a branch squashed into $3"
+	fi
+}
+
+# branch_integrated <child> <original>: succeed when <child> is in <original>: EVERY existing copy
+# of the child (local, origin) is in a copy of the ORIGINAL (copy_in): the copy on its own side
+# first, then the other one (the local ORIGINAL may be ahead of origin, or behind it). A child
+# with no copy counts as in. Arguments: $1 child branch, $2 ORIGINAL branch name.
+# Returns: 0 in, 1 pending.
 branch_integrated() {
-	local c="$1" p="$2" cref
-	cref="$(best_ref "$c" || true)"
-	[ -n "$cref" ] || return 0
-	git merge-base --is-ancestor "$cref" "$p" 2>/dev/null && return 0
-	squash_in "$cref" "$c" "$p" "$p"
+	local c="$1" p="$2" ref
+	for ref in "refs/heads/$c" "refs/remotes/origin/$c"; do
+		qs_ref_exists "$ref" || continue
+		copy_in "$ref" "$c" "$p" "refs/heads/$p" || copy_in "$ref" "$c" "$p" "refs/remotes/origin/$p" || return 1
+	done
+	return 0
 }
 
 # squash_in <tipref> <child> <original> <pref>: succeed when a commit of <pref> (a copy of the
@@ -624,14 +666,19 @@ squash_commit() {
 	return 1
 }
 
-# children_pending <original>: print, space separated, the direct children of <original> that
-# are not integrated into it (branch_integrated). Arguments: $1 the '<F>/ORIGINAL' branch.
-# Returns: 0; prints nothing when every child is in.
+# children_pending <original> [<deleted>...]: print, space separated, the direct children of
+# <original> that are not integrated into it (branch_integrated) and are not in the list of
+# branches that the caller deletes in this very run (git arbol --limpiar).
+# Arguments: $1 the '<F>/ORIGINAL' branch, then the branches being deleted. Returns: 0; prints
+# nothing when every child is in.
 children_pending() {
-	local p="$1" c out=""
+	local p="$1" c out="" d skip
+	shift
 	while IFS= read -r c; do
 		[ -n "$c" ] || continue
-		branch_integrated "$c" "$p" || out="$out $c"
+		skip=0
+		for d in "$@"; do [ "$d" != "$c" ] || skip=1; done
+		[ "$skip" = 1 ] || branch_integrated "$c" "$p" || out="$out $c"
 	done < <(branch_children "$p")
 	printf '%s' "${out# }"
 }
@@ -991,6 +1038,8 @@ testing_squash_hit() {
 # why: awk variables such as $0 must reach awk unexpanded
 # shellcheck disable=SC2016
 POM_AWK='
+# top(): awk helper. Returns the names st[1] to st[n] joined with slashes, without a leading slash.
+# Arguments: none (reads the global stack st and its depth n). Errors: none.
 function top(   i, p) { p = ""; for (i = 1; i <= n; i++) p = p "/" st[i]; return substr(p, 2) }
 {
 	line = $0; rest = line; full = 0
@@ -1059,4 +1108,114 @@ pom_artifacts() {
 		out+="$(git show "$1:$f" 2>/dev/null | awk -v mode=art "$POM_AWK" | head -1)|"
 	done < <(git ls-tree -r --name-only "$1" 2>/dev/null | grep -E '(^|/)pom\.xml$' || true)
 	printf '%s' "$out"
+}
+
+# --- commit-flow guards (7.1.1 flow_guard, FG1-FG5) ---------------------------------------------
+
+# flow_history ORIGINAL: print the flow (squash or merge) that the history of ORIGINAL shows. The
+# most recent integration on its first-parent line (a commit with a 'Refs: <x> -> ORIGINAL' line)
+# is squash with one parent and merge with two. With no integration yet the flow of its own parent
+# ORIGINAL is used; with none, nothing is printed (no evidence). Single-parent commits without
+# 'Refs:' (manual or known-bug commits) are not evidence.
+# Arguments: $1 branch name. Returns: 0; prints squash, merge or nothing.
+flow_history() {
+	local b="$1" ref h parents p
+	ref="$(best_ref "$b" || true)"
+	[ -n "$ref" ] || return 0
+	while read -r h parents; do
+		[ -n "$h" ] || continue
+		git log -n1 --format=%B "$h" | grep -qE -- "^Refs: .* -> $b\$" || continue
+		# shellcheck disable=SC2086 # why: parents is a list of object ids
+		set -- $parents
+		if [ "$#" -ge 2 ]; then echo merge; else echo squash; fi
+		return 0
+	done < <(git log --first-parent --format='%H %P' --grep="^Refs: .* -> $b\$" "$ref" 2>/dev/null || true)
+	p="$(parent_branch "$b")"
+	{ [ -n "$p" ] && ! is_mainline "$p"; } || return 0
+	flow_history "$p"
+}
+
+# rules_file_generated: succeed when the rules file of this work tree is missing or still has the
+# sha256 the engine recorded when it generated it (<git-dir>/quality-suite/rules.generated).
+# Arguments: none. Returns: 0 generated or missing, 1 it is a real file.
+rules_file_generated() {
+	local rf marker sha
+	rf="$(git rev-parse --show-toplevel)/.quality-rules.json"
+	[ -f "$rf" ] || return 0
+	marker="$(git rev-parse --absolute-git-dir)/quality-suite/rules.generated"
+	[ -f "$marker" ] || return 1
+	sha="$({ sha256sum "$rf" 2>/dev/null || shasum -a 256 "$rf"; } | awk '{print $1}')"
+	[ -n "$sha" ] && [ "$sha" = "$(tr -d '[:space:]' <"$marker")" ]
+}
+
+# in_linked_worktree: succeed when the current directory is in a linked worktree (its git dir is
+# not the common git dir). Arguments: none. Returns: 0 linked, 1 main checkout.
+in_linked_worktree() {
+	local a c
+	a="$(cd "$(git rev-parse --absolute-git-dir)" && pwd -P)"
+	c="$(cd "$(git rev-parse --git-common-dir)" && pwd -P)"
+	[ "$a" != "$c" ]
+}
+
+# flow_recovery BRANCH: print the safe recovery after a flow guard refusal (never a force-push).
+# Arguments: $1 the ORIGINAL that was or would be wrong. Returns: 0; the text goes to stderr.
+flow_recovery() {
+	{
+		echo "  Safe recovery (never force-push an ORIGINAL):"
+		echo "    1. git fetch origin"
+		echo "    2. if the local '$1' has a wrong commit that is not on origin, reset it to origin"
+		echo "       from another branch: git branch -f '$1' 'origin/$1'"
+		echo "    3. integrate again from the main checkout, whose .quality-rules.json is the project's."
+	} >&2
+}
+
+# flow_guard_integra BRANCH TARGET: refuse (return 1, message on stderr) an integration into
+# TARGET when this checkout is a linked worktree whose rules file is missing or generated (FG3), or
+# when the effective branches.flow differs from the flow the history of TARGET shows (FG2).
+# Arguments: $1 branch to integrate, $2 target ORIGINAL. Returns: 0 allowed, 1 refused.
+flow_guard_integra() {
+	local target="$2" hist have="${QS_BR_FLOW:-merge}"
+	if in_linked_worktree && rules_file_generated; then
+		echo "[quality-suite] integra refused: this worktree has no real .quality-rules.json (missing, or the" >&2
+		echo "  default the engine generated, which means flow: merge). Integrating here would make merge commits." >&2
+		echo "  Run git integra from the main checkout, or copy its .quality-rules.json into this worktree." >&2
+		flow_recovery "$target"
+		return 1
+	fi
+	hist="$(flow_history "$target")"
+	if [ -n "$hist" ] && [ "$hist" != "$have" ]; then
+		echo "[quality-suite] integra refused: branches.flow is '$have' here but the history of '$target' shows '$hist'." >&2
+		echo "  Run git integra from the main checkout, or copy its .quality-rules.json here." >&2
+		flow_recovery "$target"
+		return 1
+	fi
+	return 0
+}
+
+# flow_merge_into_original BRANCH NEW OLD: print the first merge commit (first-parent line of the
+# range OLD..NEW) that integrates a child into ORIGINAL BRANCH: its second parent is in neither
+# the parent branch nor the mainline (a 'git subir' sync of the parent is allowed). OLD empty or
+# all zeros means a new ref: the range is the commits not on any remote.
+# Arguments: $1 ORIGINAL branch name, $2 new tip, $3 old tip. Returns: 0 and prints the sha when
+# there is one; 1 when clean.
+flow_merge_into_original() {
+	local b="$1" new="$2" old="${3:-}" p pref mref m s range=()
+	if [ -n "$old" ] && ! [[ $old =~ ^0+$ ]] && git cat-file -e "${old}^{commit}" 2>/dev/null; then
+		range=("$old..$new")
+	else
+		range=("$new" --not --remotes)
+	fi
+	p="$(parent_branch "$b")"
+	pref=""
+	[ -z "$p" ] || pref="$(best_ref "$p" || true)"
+	mref="$(best_ref "$QS_BR_MAINLINE" || true)"
+	while read -r m; do
+		[ -n "$m" ] || continue
+		s="$(git rev-parse "$m^2")"
+		{ [ -n "$pref" ] && git merge-base --is-ancestor "$s" "$pref"; } && continue
+		{ [ -n "$mref" ] && git merge-base --is-ancestor "$s" "$mref"; } && continue
+		echo "$m"
+		return 0
+	done < <(git rev-list --first-parent --merges "${range[@]}" 2>/dev/null || true)
+	return 1
 }

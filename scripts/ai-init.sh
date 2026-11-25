@@ -10,6 +10,8 @@
 # knowledge/ or dev_documents/, which are yours (the dev_documents/ templates are added only when missing).
 set -euo pipefail
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/qs-common.sh
+. "$SUITE/scripts/qs-common.sh"
 update=0 target=""
 for a in "$@"; do
 	case "$a" in
@@ -39,11 +41,15 @@ yours() {
 # the common git dir, so every worktree of the repository shares it. A settings file that cannot
 # be read only skips this step (settings-merge.py warns and exits 0).
 merge_settings() {
-	local tmp common
+	local tmp common py
 	common="$(cd "$repo" && cd "$(git rev-parse --git-common-dir)" && pwd)"
 	tmp="$(mktemp)"
 	sed "s|<SUITE>|${SUITE//|/\\|}|g" "$1" >"$tmp"
-	python3 "$SUITE/scripts/settings-merge.py" "$tmp" "$2" "$common/qs-settings-owned.json" || true
+	if py="$(qs_python)"; then
+		"$py" "$SUITE/scripts/settings-merge.py" "$tmp" "$2" "$common/qs-settings-owned.json" || true
+	else
+		echo "[ia] WARN: no Python 3 found (python3, python, py); $2 could not be merged" >&2
+	fi
 	rm -f "$tmp"
 }
 while IFS= read -r -d '' f; do

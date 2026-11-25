@@ -30,6 +30,16 @@ ROLE_ORDER = {"syntax": 0, "marker": 1, "format": 2, "lint": 3, "deep": 4}
 class Ctx:
     # why: shared engine call contract; a parameter object would change every caller
     def __init__(self, root, mode, tmp, cfg_paths, exec_files, ambiguous=None):  # noqa: PLR0913, PLR0917
+        """Hold the state of one run.
+
+        Args:
+            root: the repository root.
+            mode: fix or check.
+            tmp: the temporary folder.
+            cfg_paths: (lang_id, tool_id) -> generated config path.
+            exec_files: repo-relative executable paths.
+            ambiguous: files whose extension was ambiguous.
+        """
         self.root, self.mode, self.tmp = root, mode, tmp
         self.cfg_paths = cfg_paths  # (lang_id, tool_id) -> generated config path
         self.exec_files = exec_files  # set of repo-relative executable paths
@@ -44,6 +54,12 @@ class Ctx:
 
 class StepResult:
     def __init__(self, tool_id, role):
+        """Start an empty result.
+
+        Args:
+            tool_id: the tool id.
+            role: the tool role.
+        """
         self.tool_id, self.role = tool_id, role
         self.status = {}  # file -> SUCCESS|ERROR|SKIP
         self.output = []
@@ -51,17 +67,43 @@ class StepResult:
 
 
 def _bins(tool):
+    """Executables a tool needs.
+
+    Args:
+        tool: the registry tool.
+
+    Returns:
+        list: binary names.
+    """
     bins = tool.get("bin") or []
     return [bins] if isinstance(bins, str) else bins
 
 
 def available(tool):
+    """Whether a tool can run here.
+
+    Args:
+        tool: the registry tool.
+
+    Returns:
+        bool: True for built-ins or when every binary is on PATH.
+    """
     if "builtin" in tool.get("cmd", {}):
         return True
     return all(shutil.which(b) for b in _bins(tool))
 
 
 def _vars(tool, version, extra):
+    """Version-derived variables of a tool.
+
+    Args:
+        tool: the registry tool.
+        version: the language version.
+        extra: more variables to add.
+
+    Returns:
+        dict: variable name -> text.
+    """
     v = {"version": str(version or "")}
     for name, spec in (tool.get("version_vars") or {}).items():
         val = spec.get("default", "")
@@ -80,6 +122,18 @@ _RULE_RE = re.compile(r"\{rule:([A-Za-z0-9_.-]+)\}")
 
 
 def _subst(t, ctx, tool, version, vv):
+    """Replace the {placeholders} of a command token.
+
+    Args:
+        t: the token.
+        ctx: the run context.
+        tool: the registry tool.
+        version: the language version.
+        vv: the variables from _vars.
+
+    Returns:
+        str: the expanded token.
+    """
     cfg = ctx.cfg_paths.get((tool.get("_lang"), tool["id"]), "")
     s = t.replace("{root}", ctx.root).replace("{tmp}", ctx.tmp).replace("{suite}", SUITE)
     s = s.replace("{repo}", getattr(ctx, "repo", ctx.root))
@@ -135,6 +189,13 @@ def expand(tokens, ctx, tool, files, args, version, extra=None):  # noqa: PLR091
 
 
 def set_path(data, dotted, value):
+    """Set a dotted key when it is not already set.
+
+    Args:
+        data: the dict (edited in place).
+        dotted: the key path, e.g. a.b.c.
+        value: the value to set.
+    """
     cur = data
     keys = dotted.split(".")
     for k in keys[:-1]:
@@ -197,6 +258,18 @@ def rule_args(tool, rules):
 
 
 def _run(cmd, cwd, env, timeout, stdin=None):
+    """Run a command with a timeout; stdin is empty unless given.
+
+    Args:
+        cmd: the argument list.
+        cwd: the working folder.
+        env: the environment.
+        timeout: seconds.
+        stdin: text to feed, or None for none.
+
+    Returns:
+        tuple: (return code, stdout, stderr); 127 when the program is missing, 124 on timeout.
+    """
     try:
         # why: a tool that falls back to reading stdin must see EOF, never hang the commit
         p = subprocess.run(
@@ -218,6 +291,15 @@ def _run(cmd, cwd, env, timeout, stdin=None):
 
 
 def _env(tool, ctx):
+    """Environment of a tool run.
+
+    Args:
+        tool: the registry tool.
+        ctx: the run context.
+
+    Returns:
+        dict: the process environment with the tool's variables expanded.
+    """
     env = dict(os.environ)
     for k, v in (tool.get("env") or {}).items():
         env[k] = (
@@ -235,6 +317,15 @@ def _env(tool, ctx):
 
 
 def _has_marker(d, marker):
+    """Whether a folder holds a marker file.
+
+    Args:
+        d: the folder.
+        marker: a file name or glob.
+
+    Returns:
+        bool: True when found.
+    """
     if any(c in marker for c in "*?["):
         try:
             return any(fnmatch.fnmatch(n, marker) for n in os.listdir(d))
@@ -244,6 +335,16 @@ def _has_marker(d, marker):
 
 
 def _group(files, root, markers):
+    """Group files by the nearest folder holding a marker.
+
+    Args:
+        files: repo-relative files.
+        root: the repository root.
+        markers: a marker or a list of them.
+
+    Returns:
+        dict: folder (None when no marker is found) -> files.
+    """
     markers = [markers] if isinstance(markers, str) else markers
     groups = {}
     for f in files:
@@ -261,6 +362,16 @@ def _group(files, root, markers):
 
 
 def _requires(tool, ctx):
+    """Check the `requires` condition of a tool.
+
+    Args:
+        tool: the registry tool.
+        ctx: the run context.
+
+    Returns:
+        dict: found and found_dir variables, {} when nothing is required, None
+        when no required file exists.
+    """
     req = tool.get("requires") or {}
     for cand in req.get("any_file", []):
         hits = (
@@ -280,6 +391,14 @@ def _requires(tool, ctx):
 
 
 def _attribute(res, files, rc_ok, out):
+    """Set each file's status from a tool outcome.
+
+    Args:
+        res: the StepResult.
+        files: the files checked.
+        rc_ok: True when the tool succeeded.
+        out: the tool output (files named in it get the error).
+    """
     if rc_ok:
         for f in files:
             res.status[f] = "SUCCESS"
@@ -294,6 +413,19 @@ def _attribute(res, files, rc_ok, out):
 
 # why: one dispatch branch per builtin check; a registry of handlers is a separate refactor
 def run_builtin(tool, settings, lang, ctx, files, version):  # noqa: C901, PLR0912, PLR0913, PLR0917
+    """Run a built-in check over the files.
+
+    Args:
+        tool: the registry tool.
+        settings: the tool settings from the rules.
+        lang: the registry language.
+        ctx: the run context.
+        files: repo-relative files.
+        version: the language version.
+
+    Returns:
+        StepResult: statuses and findings.
+    """
     res = StepResult(tool["id"], tool["role"])
     name = tool["cmd"]["builtin"]
     spec = dict((lang or {}).get("basic", {}))
@@ -353,6 +485,18 @@ def run_builtin(tool, settings, lang, ctx, files, version):  # noqa: C901, PLR09
 
 
 def _marker(lang, settings, ctx, rel, path):
+    """Findings of the marker (shebang, header) check of a file.
+
+    Args:
+        lang: the registry language.
+        settings: the tool settings.
+        ctx: the run context.
+        rel: the repo-relative path.
+        path: the absolute path.
+
+    Returns:
+        list: findings; empty when ok or unreadable.
+    """
     spec = dict((lang or {}).get("marker") or {})
     spec.update(settings.get("rules") or {})
     text, err = builtin.read_text(path)
@@ -395,6 +539,18 @@ def _marker(lang, settings, ctx, rel, path):
 
 
 def _cwd(tool, ctx, gdir, unit, work=None):
+    """Working folder of a tool run.
+
+    Args:
+        tool: the registry tool.
+        ctx: the run context.
+        gdir: the group folder.
+        unit: the files of the run.
+        work: a temporary root replacing the repository root.
+
+    Returns:
+        str: the folder.
+    """
     root = work or ctx.root
     where = tool.get("cwd", "root")
     if where == "group":
@@ -413,6 +569,17 @@ def _cwd(tool, ctx, gdir, unit, work=None):
 
 
 def _paths(tool, ctx, unit, work=None):
+    """File arguments of a tool run.
+
+    Args:
+        tool: the registry tool.
+        ctx: the run context.
+        unit: the files of the run.
+        work: a temporary root replacing the repository root.
+
+    Returns:
+        list: relative paths when the tool runs at the root, else absolute ones.
+    """
     root = work or ctx.root
     return unit if tool.get("cwd", "root") == "root" else [os.path.join(root, f) for f in unit]
 
@@ -450,6 +617,20 @@ def _stdout_format(tool, settings, ctx, files, version, res, env, timeout, args,
 
 # why: central step runner; splitting it is a separate refactor
 def run_tool(tool, settings, lang, ctx, files, version, lid=None):  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915, PLR0917
+    """Run one registry tool over the files.
+
+    Args:
+        tool: the registry tool.
+        settings: the tool settings from the rules.
+        lang: the registry language.
+        ctx: the run context.
+        files: repo-relative files.
+        version: the language version.
+        lid: the language id.
+
+    Returns:
+        StepResult: statuses and findings.
+    """
     tool = dict(tool, _lang=lid)
     if tool["role"] in GENERATED_SKIP_ROLES and tool["id"] not in SECRET_SCANNERS:
         files = [f for f in files if not generated.is_generated(ctx.root, f)]
@@ -721,6 +902,18 @@ def plan(reg, data, lang_id, lang_files, subtypes_by_file, env_level, rules_mod,
 
 
 def run_language(reg, lang_id, steps, ctx, version):
+    """Run the planned steps of one language.
+
+    Args:
+        reg: the Registry.
+        lang_id: the language id.
+        steps: (tool, settings, files) triples in order.
+        ctx: the run context.
+        version: the language version.
+
+    Returns:
+        list: the StepResults.
+    """
     lang = reg.languages[lang_id]
     alive = None
     results = []

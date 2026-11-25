@@ -10,18 +10,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT [BODY]: write TEXT into FILE, stage it and commit with SUBJECT
-# (and BODY as a second paragraph). Exits through fail when the commit is refused.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	if [ -n "${4:-}" ]; then
-		git commit -q -m "$3" -m "$4" || fail "commit $3"
-	else
-		git commit -q -m "$3" || fail "commit $3"
-	fi
-}
-
 # parents_of REV: print the number of parents of REV.
 parents_of() { git rev-list --parents -n1 "$1" | awk '{ print NF - 1 }'; }
 
@@ -40,16 +28,7 @@ gone() {
 # pending ORIGINAL: print the children of ORIGINAL that the library counts as not integrated
 # (run on its own: git integra would integrate the ORIGINAL right away when none is pending).
 pending() {
-	# shellcheck source=scripts/git-flow-lib.sh
-	(. "$SUITE/scripts/git-flow-lib.sh" && qs_policy_load && children_pending "$1")
-}
-
-# state: print the tips of every local branch, the current branch and the work tree status
-# (to prove that a refused command changed nothing).
-state() {
-	git for-each-ref --format='%(refname) %(objectname)' refs/heads
-	git branch --show-current
-	git status --porcelain
+	case_flow_eval children_pending "$1"
 }
 
 V=9.0.0 OT="$V/500"
@@ -62,22 +41,22 @@ git np "$V" >/dev/null && git np 500 >/dev/null && git np RF1 >/dev/null || fail
 
 # --- two siblings under RF1 --------------------------------------------------------------------
 git nr a >/dev/null || fail "nr a"
-add_commit a.py 'A = 1' "feat: add a" "Norms: NORM-1"
-add_commit a2.py 'A2 = 1' "feat: add a2" "Norms: none"
+case_commit a.py 'A = 1' "feat: add a" "Norms: NORM-1"
+case_commit a2.py 'A2 = 1' "feat: add a2" "Norms: none"
 git push -q origin "$RF/a" 2>/dev/null || fail "push a"
 git checkout -q "$RF/ORIGINAL" && git nr b >/dev/null || fail "nr b"
-add_commit b.py 'B = 1' "feat: add b"
+case_commit b.py 'B = 1' "feat: add b"
 
 # I2 / I6: the ORIGINAL waits for its children, and pre-rebase refuses to move it meanwhile
 git checkout -q "$RF/ORIGINAL"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(RF1): requirement" 2>&1)" && fail "squash: integrated with pending children"
-grep -q "$RF/a" <<<"$out" && grep -q "$RF/b" <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q "$RF/a" <<<"$out" && grep -q "$RF/b" <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: ORIGINAL with pending children refused, names them" || fail "squash: pending children: $out"
 # why: the hook is called directly; 'git rebase' onto an unchanged parent stops before it runs
 out="$(.git/hooks/pre-rebase "$OT/ORIGINAL" "$RF/ORIGINAL" 2>&1)" &&
 	fail "squash: pre-rebase let an ORIGINAL with pending children move"
-grep -q 'not integrated' <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q 'not integrated' <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: pre-rebase refuses an ORIGINAL with pending children" || fail "squash: pre-rebase: $out"
 
 # I1 / I3 / I5: a final lands as one single-parent commit with the full message, then goes away
@@ -111,18 +90,18 @@ git integra --yes -m "feat(b): module b" >/dev/null 2>&1 || fail "squash: integr
 	ok "squash: a sibling based on an older ORIGINAL is rebased; only its files" || fail "squash: sibling b"
 
 # a sibling that moved after its squash: the recorded Squashed: sha no longer covers it
-git nr c >/dev/null && add_commit c.py 'C = 1' "feat: add c" || fail "squash: c"
+git nr c >/dev/null && case_commit c.py 'C = 1' "feat: add c" || fail "squash: c"
 ctip="$(git rev-parse HEAD)"
 git integra --yes -m "feat(c): module c" >/dev/null 2>&1 || fail "squash: integra c"
 git branch -q "$RF/c" "$ctip" # why: as if the deletion had been declined
 [ -z "$(pending "$RF/ORIGINAL")" ] && ! git merge-base --is-ancestor "$ctip" "$RF/ORIGINAL" &&
 	ok "squash: a squashed child still present counts as integrated (Refs:/Squashed:)" ||
 	fail "squash: squashed child pending: $(pending "$RF/ORIGINAL")"
-git checkout -q "$RF/c" && add_commit c2.py 'C2 = 1' "feat: add c2"
+git checkout -q "$RF/c" && case_commit c2.py 'C2 = 1' "feat: add c2"
 git checkout -q "$RF/ORIGINAL"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(RF1): requirement" 2>&1)" && fail "squash: a child that moved counted as integrated"
-grep -q "$RF/c" <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q "$RF/c" <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: a child with commits after its squash is pending again (Refs:/Squashed:)" ||
 	fail "squash: moved child: $out"
 git checkout -q "$RF/c"
@@ -130,11 +109,11 @@ git integra --yes -m "feat(c): module c2" >/dev/null 2>&1 && [ "$(files_of HEAD)
 	ok "squash: the moved child goes up again with only its new commit" || fail "squash: c again"
 
 # multi-level: the parent moves (sibling d) and RF1 synced with a merge; RF1 goes up by rebase
-git checkout -q "$OT/ORIGINAL" && git nr d >/dev/null && add_commit d.py 'D = 1' "feat: add d" || fail "squash: d"
+git checkout -q "$OT/ORIGINAL" && git nr d >/dev/null && case_commit d.py 'D = 1' "feat: add d" || fail "squash: d"
 git integra --yes -m "feat(d): module d" >/dev/null 2>&1 || fail "squash: integra d"
 git checkout -q "$RF/ORIGINAL" && git subir >/dev/null 2>&1 || fail "squash: subir RF1 (sync merge)"
 [ "$(parents_of HEAD)" = 2 ] || fail "squash: subir on an ORIGINAL should sync with a merge"
-git checkout -q "$OT/ORIGINAL" && git nr e >/dev/null && add_commit e.py 'E = 1' "feat: add e" || fail "squash: e"
+git checkout -q "$OT/ORIGINAL" && git nr e >/dev/null && case_commit e.py 'E = 1' "feat: add e" || fail "squash: e"
 git integra --yes -m "feat(e): module e" >/dev/null 2>&1 || fail "squash: integra e"
 se="$(git rev-parse HEAD)"
 git checkout -q "$RF/ORIGINAL"
@@ -154,9 +133,9 @@ grep -qx "Refs: $RF/ORIGINAL -> $OT/ORIGINAL" <<<"$msg" && grep -q "^Squashed: $
 	ok "squash: Refs:, Squashed: (rebased tip), Norms: union; the ORIGINAL is deleted" || fail "squash: RF1 trailers: $msg"
 
 # I4: the OT and version ORIGINALs go up through git release
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(500): OT" 2>&1)" && fail "squash: OT ORIGINAL integrated"
-grep -q 'git release' <<<"$out" && [ "$(state)" = "$before" ] || fail "squash: OT refusal: $out"
+grep -q 'git release' <<<"$out" && [ "$(case_state)" = "$before" ] || fail "squash: OT refusal: $out"
 git checkout -q "$V/ORIGINAL"
 out="$(git integra --yes -m "feat: version" 2>&1)" && fail "squash: version ORIGINAL integrated"
 grep -q 'git release' <<<"$out" && ok "squash: OT and version ORIGINALs refused, pointing to git release (I4)" ||
@@ -166,22 +145,22 @@ grep -q 'never rebase' <<<"$out" && ok "squash: pre-rebase still refuses to reba
 	fail "squash: OT pre-rebase: $out"
 
 # a conflict on rebase leaves everything as it was
-git checkout -q "$OT/ORIGINAL" && git nr x >/dev/null && add_commit shared.txt 'from x' "feat: x shared" || fail "squash: x"
-git checkout -q "$OT/ORIGINAL" && git nr y >/dev/null && add_commit shared.txt 'from y' "feat: y shared" || fail "squash: y"
+git checkout -q "$OT/ORIGINAL" && git nr x >/dev/null && case_commit shared.txt 'from x' "feat: x shared" || fail "squash: x"
+git checkout -q "$OT/ORIGINAL" && git nr y >/dev/null && case_commit shared.txt 'from y' "feat: y shared" || fail "squash: y"
 git integra --yes -m "feat(y): module y" >/dev/null 2>&1 || fail "squash: integra y"
 git checkout -q "$OT/x"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(x): module x" 2>&1)" && fail "squash: conflicting x integrated"
 gd="$(git rev-parse --absolute-git-dir)"
-grep -q 'nothing was changed' <<<"$out" && [ "$(state)" = "$before" ] && [ ! -d "$gd/rebase-merge" ] && [ ! -d "$gd/rebase-apply" ] &&
+grep -q 'nothing was changed' <<<"$out" && [ "$(case_state)" = "$before" ] && [ ! -d "$gd/rebase-merge" ] && [ ! -d "$gd/rebase-apply" ] &&
 	ok "squash: a rebase conflict aborts; branches and work tree unchanged" || fail "squash: conflict: $out"
 
 # the parent checked out in another worktree: refused before anything moves
-git nr z --from "$OT/ORIGINAL" >/dev/null && add_commit z.py 'Z = 1' "feat: add z" || fail "squash: z"
+git nr z --from "$OT/ORIGINAL" >/dev/null && case_commit z.py 'Z = 1' "feat: add z" || fail "squash: z"
 git worktree add -q "$CASE_REPO-wt" "$OT/ORIGINAL" >/dev/null 2>&1 || fail "worktree add"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(z): module z" 2>&1)" && fail "squash: integrated into a parent checked out elsewhere"
-grep -q 'another worktree' <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q 'another worktree' <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: parent checked out in another worktree: refused, nothing changed" || fail "squash: worktree: $out"
 git worktree remove --force "$CASE_REPO-wt"
 
@@ -196,7 +175,7 @@ out="$(git merge --no-ff -m "merge version" "$V/ORIGINAL" 2>&1)" && fail "squash
 git merge --abort >/dev/null 2>&1 || true
 grep -q 'git publicar' <<<"$out" && [ "$(git log -1 --format=%s)" = "chore: initial" ] &&
 	ok "squash: pre-merge-commit refuses <v>/ORIGINAL -> develop (I6)" || fail "squash: merge into develop: $out"
-git checkout -q "$V/ORIGINAL" && add_commit v.txt 'v' "chore: version note" &&
+git checkout -q "$V/ORIGINAL" && case_commit v.txt 'v' "chore: version note" &&
 	git checkout -q "$OT/ORIGINAL" && git merge -q --no-ff -m "chore: sync" "$V/ORIGINAL" >/dev/null 2>&1 &&
 	ok "squash: parent -> ORIGINAL sync merges still allowed" || fail "squash: sync merge refused"
 
@@ -205,9 +184,9 @@ git checkout -q "$V/ORIGINAL" && add_commit v.txt 'v' "chore: version note" &&
 case_sandbox squash
 git np 9.2.0 >/dev/null && git np 700 >/dev/null || fail "squash2: tree"
 OT2=9.2.0/700
-git nr p >/dev/null && add_commit p.py 'P = 1' "feat: add p" || fail "squash2: p"
+git nr p >/dev/null && case_commit p.py 'P = 1' "feat: add p" || fail "squash2: p"
 git push -q origin "$OT2/p" 2>/dev/null || fail "squash2: push p"
-git checkout -q "$OT2/ORIGINAL" && git nr q >/dev/null && add_commit q.py 'Q = 1' "feat: add q" || fail "squash2: q"
+git checkout -q "$OT2/ORIGINAL" && git nr q >/dev/null && case_commit q.py 'Q = 1' "feat: add q" || fail "squash2: q"
 git integra --yes -m "feat(q): module q" >/dev/null 2>&1 || fail "squash2: integra q"
 [ "$(git log -1 --format='%(trailers:key=Norms,valueonly)' | sed '/^$/d')" = "none" ] &&
 	ok "squash: no Norms: in the commits gives 'Norms: none'" || fail "squash2: Norms none: $(body_of HEAD)"
@@ -225,14 +204,14 @@ QUALITY_SKIP_PARENT_CHECK=1 git push -q --force-with-lease origin "$OT2/p" >/dev
 	ok "squash: the printed force-with-lease command updates origin" || fail "squash2: force-with-lease"
 
 # --force over pending children that a rebase would orphan: listed and confirmed
-git checkout -q "$OT2/ORIGINAL" && git np RF4 >/dev/null && add_commit r.py 'R = 1' "feat: r on RF4" || fail "squash2: RF4"
-git nr k >/dev/null && add_commit k.py 'K = 1' "feat: add k" || fail "squash2: k"
-git checkout -q "$OT2/ORIGINAL" && git nr m >/dev/null && add_commit m.py 'M = 1' "feat: add m" || fail "squash2: m"
+git checkout -q "$OT2/ORIGINAL" && git np RF4 >/dev/null && case_commit r.py 'R = 1' "feat: r on RF4" || fail "squash2: RF4"
+git nr k >/dev/null && case_commit k.py 'K = 1' "feat: add k" || fail "squash2: k"
+git checkout -q "$OT2/ORIGINAL" && git nr m >/dev/null && case_commit m.py 'M = 1' "feat: add m" || fail "squash2: m"
 git integra --yes -m "feat(m): module m" >/dev/null 2>&1 || fail "squash2: integra m"
 git checkout -q "$OT2/RF4/ORIGINAL"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --force -m "feat(RF4): requirement" 2>&1)" && fail "squash2: --force without confirmation went through"
-grep -q "$OT2/RF4/k" <<<"$out" && grep -q 'git subir' <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q "$OT2/RF4/k" <<<"$out" && grep -q 'git subir' <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: --force lists the orphaned children and stops without confirmation" || fail "squash2: force decline: $out"
 out="$(git integra --force --yes -m "feat(RF4): requirement" 2>&1)" || fail "squash2: --force --yes: $out"
 grep -q "WARNING.*$OT2/RF4/k" <<<"$out" && [ "$(git branch --show-current)" = "$OT2/ORIGINAL" ] &&
@@ -250,15 +229,15 @@ git checkout -q "$OT2/s2" && git integra --yes -m "feat(s2): second" >/dev/null 
 [ "$(sed -n '1p;8p' same.txt | tr '\n' ' ')" = "s1 s2 " ] && gone "$OT2/s2" &&
 	ok "squash: siblings editing different lines of one file integrate cleanly" || fail "squash2: same file clean"
 git checkout -q "$OT2/s3"
-before="$(state)"
+before="$(case_state)"
 out="$(git integra --yes -m "feat(s3): third" 2>&1)" && fail "squash2: overlapping edit integrated"
-grep -q 'nothing was changed' <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q 'nothing was changed' <<<"$out" && [ "$(case_state)" = "$before" ] &&
 	ok "squash: siblings editing the same line of one file conflict; nothing changed" || fail "squash2: same file conflict: $out"
 
 # --- I7: flow = merge keeps the 4.x behaviour ---------------------------------------------------
 case_sandbox merge
 git np 9.1.0 >/dev/null && git np 600 >/dev/null && git np RF2 >/dev/null && git nr f >/dev/null || fail "merge: tree"
-add_commit f.py 'F = 1' "feat: add f"
+case_commit f.py 'F = 1' "feat: add f"
 ftip="$(git rev-parse HEAD)"
 git integra -m "feat(f): module f" >/dev/null 2>&1 || fail "merge: integra f"
 msg="$(body_of HEAD)"
@@ -271,26 +250,32 @@ git integra -m "feat(RF2): requirement" >/dev/null 2>&1 && [ "$(parents_of HEAD)
 	[ "$(git branch --show-current)" = 9.1.0/600/ORIGINAL ] &&
 	git integra -m "feat(600): OT" >/dev/null 2>&1 && [ "$(git branch --show-current)" = 9.1.0/ORIGINAL ] &&
 	ok "merge: ORIGINALs merged up to the version, OT not refused (I7)" || fail "merge: ORIGINALs"
-git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && add_commit g.py 'G = 1' "feat: add g" &&
+git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && case_commit g.py 'G = 1' "feat: add g" &&
 	git checkout -q 9.1.0/600/ORIGINAL && git merge -q --no-ff -m "chore: merge g" 9.1.0/600/g >/dev/null 2>&1 &&
 	ok "merge: git merge <child> into its ORIGINAL still allowed (I7)" || fail "merge: manual merge refused"
 
-# --- the Files: fallback of git-rama.sh (no commit-files-lib.sh) quotes spaced paths -----------
-# why: the function is taken from the script itself, and commit-files-lib.sh is not sourced, so
-# the fallback is the code that runs
+# --- squash_files_block (rama/integra.sh) is a wrapper of qs_files_block: same Files: output ----
+# why: the function is taken from the script itself; commit-files-lib.sh is sourced as git-rama.sh
+# does, so the wrapper calls the real qs_files_block
 case_sandbox
-declare -F qs_files_block >/dev/null && fail "fallback: qs_files_block is loaded; the fallback is not forced"
-fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/git-rama.sh")"
-[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/git-rama.sh"
-eval "$fallback_fn"
-printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "fallback: commit a b"
+wrap_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/rama/integra.sh")"
+[ -n "$wrap_fn" ] || fail "wrapper: squash_files_block not found in scripts/rama/integra.sh"
+# shellcheck disable=SC2016 # why: the patterns are literal shell text, not expansions
+grep -qF 'qs_files_block "$1" "$2"' <<<"$wrap_fn" || fail "wrapper: squash_files_block does not call qs_files_block: $wrap_fn"
+grep -q 'git -c core.quotePath' <<<"$wrap_fn" && fail "wrapper: squash_files_block still renders its own diff"
+# shellcheck disable=SC2016 # why: the pattern is literal shell text, not an expansion
+grep -qF '. "$DIR/commit-files-lib.sh"' "$SUITE/scripts/git-rama.sh" || fail "wrapper: git-rama.sh does not always source commit-files-lib.sh"
+. "$SUITE/scripts/commit-files-lib.sh"
+eval "$wrap_fn"
+printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "wrapper: commit a b"
 base="$(git rev-parse HEAD)"
 printf 'x\n' >"sp ace.txt" && printf 'y\n' >plain.txt && git add "sp ace.txt" plain.txt &&
-	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "fallback: commit spaced paths"
+	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "wrapper: commit spaced paths"
 want='Files:
 R "a b" -> "c d"
 A plain.txt
 A "sp ace.txt"'
 got="$(squash_files_block "$base" HEAD)"
-[ "$got" = "$want" ] && ok "fallback: spaced paths and renames are quoted like qs_files_block" ||
-	fail "fallback: quoting: $got"
+[ "$got" = "$want" ] && [ "$got" = "$(qs_files_block "$base" HEAD)" ] &&
+	ok "wrapper: squash_files_block gives the qs_files_block Files: block (quoted spaces, renames)" ||
+	fail "wrapper: quoting: $got"

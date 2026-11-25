@@ -6,28 +6,23 @@
 # git feeds lines on stdin: <local_ref> <local_sha> <remote_ref> <remote_sha>
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
-if [ -f "${HOOK_DIR}/quality-suite.env" ]; then
-	set -a
-	# shellcheck disable=SC1091
-	. "${HOOK_DIR}/quality-suite.env"
-	set +a
-fi
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+qs_hook_env --export
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
+	# qs_log <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_log() { :; }
+	# qs_result <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_result() { :; }
 fi
 : "${QUALITY_LOG_FILE:=$(git rev-parse --absolute-git-dir)/quality-suite/quality-suite.log}"
 export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
 
-[ -n "${QUALITY_SUITE_DIR:-}" ] || {
-	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
-	exit 1
-}
-. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+qs_hook_docker_lib
 REPO_ROOT="$(qs_repo_root)"
 STATE="$(qs_state_dir)"
 mkdir -p "$STATE"
@@ -92,11 +87,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do REFS+=("$local_ref $
 # Branch model (git-flow-lib.sh, policy: .quality-rules.json -> branches). Names follow
 # <version>/<ot>/.../ORIGINAL; a final branch must contain its ORIGINAL (rebased: git subir);
 # shared branches (ORIGINAL, develop, main) are never rewritten (no force-push).
-if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
-	# shellcheck disable=SC1091
-	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
-	qs_suite_stamp_check
-	qs_policy_load
+if qs_hook_flow_lib; then
 	# --- TESTING sandbox guard (pushed only to its own name) ---
 	for ref in ${REFS[@]+"${REFS[@]}"}; do
 		read -r local_ref local_sha remote_ref remote_sha <<<"$ref"
@@ -170,6 +161,9 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 	done
 	# --- end special branch guard ---
 	br_fail=0
+	# br_err <message...>: report a branch-rule violation on stderr; fail the push only in block mode.
+	# Arguments: the message words. Sets br_fail=1 when QS_BR_ENFORCE is block. Return value: 0.
+	# Errors: none; the violation is printed, the push is aborted later by the caller.
 	br_err() {
 		echo "[quality-suite] pre-push: $*" >&2
 		[ "$QS_BR_ENFORCE" = block ] && br_fail=1
@@ -188,6 +182,12 @@ if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
 			if [ "$remote_sha" != "$Z40" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null &&
 				! git merge-base --is-ancestor "$remote_sha" "$local_sha"; then
 				br_err "'$b' is shared and the push rewrites its history (force-push). Merge instead: git subir"
+			fi
+			# why: under flow squash only git integra moves an ORIGINAL, with one single-parent commit; a
+			# merge that brings a child in is the defect (FG4). Commits already on origin are not checked.
+			if [ "${QS_BR_FLOW:-merge}" = squash ] && is_parent_branch "$b" && bad="$(flow_merge_into_original "$b" "$local_sha" "$remote_sha")"; then
+				br_err "'$b' gets a merge commit (${bad:0:10}) that integrates a branch: under flow squash it needs one single-parent commit from git integra"
+				flow_recovery "$b"
 			fi
 		elif is_ot_release_branch "$b"; then
 			: # why: an OT RELEASE is frozen at its OT release; the version release rebases it
@@ -212,7 +212,7 @@ for ref in ${REFS[@]+"${REFS[@]}"}; do
 		oldest="$(git rev-list "$local_sha" --not --remotes | tail -n 1)"
 		if [ -n "$oldest" ]; then base="${oldest}^"; else base="$local_sha"; fi
 		# why: a root commit has no parent; diff against the empty tree instead
-		git rev-parse -q --verify "$base^{commit}" >/dev/null 2>&1 || base="$EMPTY_TREE"
+		qs_ref_exists "$base^{commit}" || base="$EMPTY_TREE"
 	else
 		base="$remote_sha"
 	fi

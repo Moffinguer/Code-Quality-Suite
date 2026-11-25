@@ -42,7 +42,9 @@ CHECKPOINT, plus TESTING. The creating aliases push by themselves (`publish_on_c
    task per final branch). **Human checkpoint: approve the spec, then the plan.** Then the tree
    is created (`git es`, or `git np` / `git nr`).
 3. **Developers**, one per final branch, each in its own worktree (`developer`, sonnet; other
-   models only for non-regulated data). Give each the branch, task and absolute paths.
+   models only for non-regulated data). Give each the branch, task and absolute paths. Once the
+   human approves the spec, the lead creates the tree and launches **one developer per final
+   branch**, all branches of the current phase in parallel (see "Parallel development").
 4. **Gate before review.** Each developer runs the gate and lets the hooks pass (`git subir`).
 5. **QA** writes findings to `<req>/bugfix.md` and never edits production code. Bugfix loop,
    run by the lead: `git convertir-padre` (`<final>` -> `<final>/ORIGINAL`), then
@@ -64,3 +66,15 @@ CHECKPOINT, plus TESTING. The creating aliases push by themselves (`publish_on_c
 - Commits: Conventional, ASCII, subject <= 50 characters; never an AI co-author, never
   `--no-verify`. Regulated data only to local models or paid no-training endpoints.
 - Developers never merge into an ORIGINAL; only the lead and the systems-analyst integrate.
+- A bug found in a released version: first `git bug-conocido "<where>" "<symptom>"` (the row in
+  `KNOWN_BUGS.md` reaches every open branch), then the fix commits; the fix updates the row.
+
+## Parallel development
+
+- The lead plans; each agent gets one final branch, never two on one; at most 3-4 agents at once.
+- A phase starts only when the branches it depends on are integrated; never launch a developer
+  on a branch whose dependencies are not integrated.
+- If the agent tools confine an agent to its own worktree, it commits there based on
+  `origin/<final>` and pushes `HEAD:<final>`; it never creates or renames branches.
+- Every branch follows the naming model, even local-only ones; delete helper branches after use.
+- Before a release, audit every branch: integrated -> delete; needed -> integrate or `unmerged/`.

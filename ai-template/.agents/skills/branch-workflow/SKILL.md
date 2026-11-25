@@ -6,7 +6,7 @@ description: Use when creating, syncing, integrating or naming git branches, tag
 # Branch model and workflow
 
 The model and its rules. Syntax and `Who:` of every command: the `git-commands` skill
-(`git ayuda <cmd>`). Who may do what: `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
+(`git ayuda <cmd>`). Who may do what and parallel work (one developer per final branch): `team-flow`. Full workflow: `<SUITE>/docs/GIT-WORKFLOW.md`.
 
 ## Commit and merge flow (mandatory, every project)
 
@@ -27,9 +27,7 @@ develop
    └─ 6.22.6/188858/ORIGINAL            OT 188858
       └─ 6.22.6/188858/RF001/ORIGINAL   requirement RF001
          ├─ 6.22.6/188858/RF001/login   final branch
-         └─ 6.22.6/188858/RF001/bank/ORIGINAL
-            ├─ 6.22.6/188858/RF001/bank/bugfix     siblings
-            └─ 6.22.6/188858/RF001/bank/payments
+         └─ 6.22.6/188858/RF001/bank/ORIGINAL   a final turned parent
 ```
 
 - Names: `<version>/<ot>/<detail>/...`, ASCII segments, never only `<version>`.
@@ -61,8 +59,8 @@ develop
 - OT RELEASE: `git release` inside an OT closes it (hidden ref `refs/ot/...`, subtree deleted).
 - version RELEASE: `git release --version <v>`, then `git publicar` into `develop`.
   `git changelog` previews; `git limpiar-unmerged` cleans the `unmerged/...` leftovers.
-- `git release`, `git publicar`, `git combinar`, `git changelog --escribir`: human only.
-- Never edit `VERSION`, the `<version>` of pom.xml, CHANGELOG.md or the README badge by hand.
+- `git release`, `git publicar`, `git combinar`, `git changelog --escribir`: human only. Never
+  edit `VERSION`, the `<version>` of pom.xml, CHANGELOG.md or the README badge by hand.
 
 ## Hooks
 
@@ -78,3 +76,5 @@ develop
 - Commits: `type(scope): subject`, ASCII, <= 50 characters, body explains why, `Norms: <ids>`;
   never an AI co-author, never `--no-verify`.
 - Never force-push an ORIGINAL, develop or main; never merge into a final branch.
+- A bug found in a released version is documented first: `git bug-conocido "<where>" "<symptom>"`
+  adds its row to `KNOWN_BUGS.md` on every open branch (develop, ORIGINALs, finals); then the fix.

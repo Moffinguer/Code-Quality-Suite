@@ -15,47 +15,13 @@ F=1.0.0/ot1
 ORIG=$F/ORIGINAL
 TST=$F/TESTING
 
-# mk FILE CONTENT SUBJECT: write FILE, commit it on the current branch.
-# Arguments: $1 file, $2 content, $3 commit subject. Returns: 0; exits 1 through fail on error.
-mk() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit '$3' on $(git branch --show-current)"
-}
-
-# refused_push BRANCH WHY: the push must fail and mention TESTING.
-# Arguments: $1 branch, $2 label for the messages. Returns: 0 when refused; fails the case otherwise.
-refused_push() {
-	local out
-	if out="$(git push origin "$1" 2>&1)"; then fail "$2: push of $1 not refused"; fi
-	grep -q "TESTING" <<<"$out" || fail "$2: refused without a TESTING message: $out"
-}
-
 # --- fixture: ORIGINAL already holds source a; TESTING is built on it
-git checkout -q -b "$ORIG" develop
-mk shared.txt base "chore: shared file"
-git checkout -q -b "$F/a" "$ORIG"
-mk a.txt a "feat: a"
-git testing crear "$F/a" >/dev/null || fail "crear failed"
-git checkout -q "$ORIG"
-git merge -q --ff-only "$F/a" || fail "ff of ORIGINAL to a"
-git push -q origin "$ORIG" "$F/a" 2>/dev/null || fail "push of ORIGINAL and a"
-git checkout -q "$TST"
-mk t1.txt t1 "feat: t1"
-
-# squash_msg SUBJECT FILE: write the message git proposes for the pending squash (SQUASH_MSG),
-# under SUBJECT, into FILE. Arguments: $1 subject, $2 file. Returns: 0; fails the case otherwise.
-squash_msg() {
-	{
-		printf '%s\n\n' "$1"
-		cat .git/SQUASH_MSG
-	} >"$2" || fail "cannot write the squash message"
-}
+case_testing_tree push
 
 # --- C1: squash of the TESTING work (one commit: its patch-id is the squash patch-id)
 git checkout -q -b "$F/sq" "$ORIG"
 git -c merge.ff=true merge -q --squash "$TST" || fail "C1: squash failed"
-squash_msg "feat: squashed t1" "$CASE_REPO.msg"
+case_squash_msg "feat: squashed t1" "$CASE_REPO.msg"
 out="$(git commit -q -F "$CASE_REPO.msg" 2>&1)" && fail "C1: squash of TESTING committed"
 grep -q "git testing repartir" <<<"$out" && ok "C1 squash of TESTING refused at commit time" || fail "C1: squash message: $out"
 # a hand-forced squash commit still carries the patch-id of the TESTING commit. why plumbing: the
@@ -65,18 +31,18 @@ sq_head="$(git rev-parse HEAD)"
 sq="$(git commit-tree "$(git write-tree)" -p "$sq_head" -m "feat: squashed t1")" || fail "C1: forced squash commit"
 git update-ref "refs/heads/$F/sq" "$sq" "$sq_head" || fail "C1: forced squash ref"
 rm -f "$(git rev-parse --git-dir)/SQUASH_MSG"
-refused_push "$F/sq" "C1 squash"
+case_refused TESTING git push origin "$F/sq"
 ok "C1 squash merge of TESTING refused at push"
 
 # --- C1: cherry-pick without -x, and with -x (what repartir writes)
 git checkout -q "$TST"
-mk t2.txt t2 "feat: t2"
+case_commit t2.txt t2 "feat: t2"
 t2="$(git rev-parse HEAD)"
-mk t3.txt t3 "feat: t3"
+case_commit t3.txt t3 "feat: t3"
 t3="$(git rev-parse HEAD)"
 git checkout -q -b "$F/cp" "$ORIG"
 git cherry-pick "$t2" >/dev/null || fail "C1: cherry-pick"
-refused_push "$F/cp" "C1 cherry-pick"
+case_refused TESTING git push origin "$F/cp"
 ok "C1 cherry-pick without -x refused at push"
 git reset -q --hard "$ORIG"
 git cherry-pick -x "$t2" >/dev/null || fail "C1: cherry-pick -x"
@@ -87,7 +53,7 @@ ok "C1 cherry-pick -x accepted"
 git checkout -q -b "$F/rb" "$t3"
 git rebase -q --onto "$ORIG" "$t2" >/dev/null 2>&1 || fail "C1: rebase"
 [ "$(git rev-parse HEAD)" != "$t3" ] || fail "C1: rebase did not rewrite"
-refused_push "$F/rb" "C1 rebase"
+case_refused TESTING git push origin "$F/rb"
 ok "C1 rebase of TESTING commits refused at push"
 
 # --- C1: repartir and normal work are not refused
@@ -95,7 +61,7 @@ git checkout -q "$F/a"
 git testing repartir --map "$t3=$F/a" >/dev/null 2>&1 || fail "C1: repartir failed"
 git push -q origin "$F/a" 2>&1 || fail "C1: push after repartir refused"
 git checkout -q -b "$F/plain" "$ORIG"
-mk plain.txt plain "feat: plain"
+case_commit plain.txt plain "feat: plain"
 git push -q origin "$F/plain" 2>&1 || fail "C1: normal work refused"
 ok "C1 repartir cherry-picks and normal work are not refused"
 # the patch-ids are cached once per TESTING tip
@@ -105,7 +71,7 @@ tip="$(git rev-parse "$TST")"
 # --- C3: squash of several TESTING commits is refused at commit time; a normal squash is not
 git checkout -q -b "$F/sq3" "$ORIG"
 git -c merge.ff=true merge -q --squash "$TST" || fail "C3: squash failed"
-squash_msg "feat: squash all" "$CASE_REPO.msg"
+case_squash_msg "feat: squash all" "$CASE_REPO.msg"
 out="$(git commit -q -F "$CASE_REPO.msg" 2>&1)" && fail "C3: squash of several TESTING commits committed"
 grep -q "git testing repartir" <<<"$out" && ok "C3 squash of several TESTING commits refused" || fail "C3: message: $out"
 git reset -q --hard "$ORIG"
@@ -116,7 +82,7 @@ git checkout -q "$F/plain"
 
 # --- C2: a manual merge into TESTING
 git checkout -q -b "$F/x" "$ORIG"
-mk x.txt x "feat: x"
+case_commit x.txt x "feat: x"
 x_sha="$(git rev-parse HEAD)"
 git checkout -q "$TST"
 # why plumbing: the merge commit is built with merge-tree and commit-tree and the branch moved with
@@ -139,7 +105,7 @@ ok "C2 the merged source can still be pushed"
 
 # --- C2: a fast-forward merge into TESTING
 git checkout -q -b "$F/y" "$TST"
-mk y.txt y "feat: y"
+case_commit y.txt y "feat: y"
 git checkout -q "$TST"
 out="$(git merge --ff-only "$F/y" 2>&1)" || fail "C2: ff merge failed: $out"
 grep -q "never merged into" <<<"$out" && ok "C2 a fast-forward merge into TESTING is reported" || fail "C2: ff not reported: $out"

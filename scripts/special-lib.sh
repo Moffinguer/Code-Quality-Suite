@@ -5,6 +5,9 @@
 # with branches.flow = squash: with the 4.x merge flow every function here says "not special".
 # Special segments (DOCS, ATTEMPT-2, REVIEW-a...) do not count for branches.levels, like ORIGINAL.
 
+# shellcheck source=scripts/qs-common.sh
+. "$(dirname "${BASH_SOURCE[0]}")/qs-common.sh"
+
 # Print the value of a QS_SP_<TYPE>_<PROP> variable.
 # Arguments: $1 type (DOCS...), $2 property (AT, CHILDREN, SUFFIX...). Returns: 0; prints it.
 special_prop() {
@@ -221,8 +224,8 @@ special_parent() {
 	[ -n "$(special_kind "$b")" ] || return 0
 	task="${seg#*-}"
 	pre="${node%/*}"
-	if ! git show-ref --verify -q "refs/heads/$pre/$task" && ! git show-ref --verify -q "refs/remotes/origin/$pre/$task" &&
-		{ git show-ref --verify -q "refs/heads/$pre/$task/$QS_BR_LEAF" || git show-ref --verify -q "refs/remotes/origin/$pre/$task/$QS_BR_LEAF"; }; then
+	if ! qs_ref_exists "refs/heads/$pre/$task" && ! qs_ref_exists "refs/remotes/origin/$pre/$task" &&
+		{ qs_ref_exists "refs/heads/$pre/$task/$QS_BR_LEAF" || qs_ref_exists "refs/remotes/origin/$pre/$task/$QS_BR_LEAF"; }; then
 		echo "$pre/$task/$QS_BR_LEAF"
 	else echo "$pre/$task"; fi
 }
@@ -260,7 +263,7 @@ special_migration_open() {
 	local v="$1" r
 	special_enabled MIGRATION || return 1
 	for r in refs/heads refs/remotes/origin; do
-		if git show-ref --verify -q "$r/$v/MIGRATION" ||
+		if qs_ref_exists "$r/$v/MIGRATION" ||
 			[ -n "$(git for-each-ref --count=1 "$r/$v/MIGRATION/")" ]; then
 			printf '%s/MIGRATION' "$v"
 			return 0

@@ -36,6 +36,7 @@ counts as present.
 | `MAINTAINERS.md` | informal; [CHAOSS](https://chaoss.community/) governance as a model | the most active committers of the last year | `qs:fill` markers |
 | `ROADMAP.md` | informal; [GitLab direction](https://about.gitlab.com/direction/) as a model | last release, version under development, version trees in progress, branches set aside (`unmerged/`) | `qs:fill` markers |
 | `FAQ.md` | informal, questions by topic | build, encoding, commit messages, version, branch tree | `qs:fill` markers |
+| `KNOWN_BUGS.md` | informal; table `Date / Where / Symptom / Status` | an empty table with the status legend; rows come from `git bug-conocido` or by hand and are never rewritten | - |
 | `INSTALL.md` | [GNU Coding Standards](https://www.gnu.org/prep/standards/) | requirements (JDK, Maven / wrapper), build and test commands, artifacts per module | `qs:fill` markers |
 | `ARCHITECTURE.md` | [arc42](https://arc42.org/) (shortened), [C4 model](https://c4model.com/) for diagrams | modules (artifact, packaging, description), frameworks seen in `pom.xml` | `qs:fill` markers |
 | `API.md` | [OpenAPI](https://spec.openapis.org/oas/latest.html), [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) | OpenAPI files (`openapi*.yaml/json`, `swagger*`) and endpoints of `@GetMapping`... (Spring) and `@Path` (JAX-RS) | `qs:fill` markers |
@@ -60,6 +61,7 @@ knows where the structure comes from.
 | `ARCHITECTURE.md` | applications with more than one module or external systems | goals, constraints, building blocks, decisions |
 | `API.md` | when other systems call it | where the contract is (OpenAPI), conventions |
 | `AUTHORS`, `CONTRIBUTORS.md`, `MAINTAINERS.md`, `CITATION.cff`, `ROADMAP.md`, `FAQ.md`, `SUPPORT.md` | recommended | as generated |
+| `KNOWN_BUGS.md` | recommended | one row per unresolved bug; a bug found in a released version is added first, on every open branch (`git bug-conocido`) |
 
 ## Versions in these files
 

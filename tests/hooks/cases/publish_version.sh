@@ -12,20 +12,10 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit it with SUBJECT.
-# Exits through fail when the commit is refused.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
-}
-
-# state: print every ref with its object, the current branch and the work tree status (to prove
-# that a refused or preview command changed nothing).
-state() {
-	git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags refs/remotes
-	git branch --show-current
-	git status --porcelain
+# release_state: case_state over branches, tags and remote refs, plus the release settings in
+# the git config (qs.release.*).
+release_state() {
+	case_state refs/heads refs/tags refs/remotes
 	git config --get-regexp '^qs\.release\.' || true
 }
 
@@ -38,7 +28,7 @@ released_ot() {
 	git checkout -q "$V/ORIGINAL" && git np "$o" >/dev/null && git push -q origin "$V/$o/ORIGINAL" 2>/dev/null ||
 		fail "OT $o"
 	git nr work >/dev/null || fail "nr work in $o"
-	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" add_commit "$f" "$text" "feat: work of $o"
+	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" case_commit "$f" "$text" "feat: work of $o"
 	GIT_AUTHOR_DATE="$d" GIT_COMMITTER_DATE="$d" git integra --yes -m "$subject" >/dev/null 2>&1 ||
 		fail "integra in $o"
 	git push -q origin "$V/$o/ORIGINAL" 2>/dev/null || fail "push $o"
@@ -46,29 +36,23 @@ released_ot() {
 	[ "$(git branch --show-current)" = "$V/$o/RELEASE" ] || fail "OT release $o: not on its RELEASE"
 }
 
-# version_sandbox: a fresh squash sandbox with the version tree $V pushed.
-version_sandbox() {
-	case_sandbox squash
-	git np "$V" >/dev/null && git push -q origin "$V/ORIGINAL" 2>/dev/null || fail "tree $V"
-}
-
 V=9.2.0
-version_sandbox
+case_publish_tree "$V"
 
 # --- V1: OT b released, OT a not: refused, names a, nothing changed ----------------------------
 released_ot b b.py 'B = 1' "fix(b): repair module b" "2020-01-01T10:00:00"
 git checkout -q "$V/ORIGINAL" && git np a >/dev/null && git nr work >/dev/null &&
-	GIT_AUTHOR_DATE=2021-01-01T10:00:00 add_commit a.py 'A = 1' "feat: work of a" &&
+	GIT_AUTHOR_DATE=2021-01-01T10:00:00 case_commit a.py 'A = 1' "feat: work of a" &&
 	GIT_AUTHOR_DATE=2021-01-01T10:00:00 git integra --yes -m "feat(a): add module a" >/dev/null 2>&1 &&
 	git push -q origin "$V/a/ORIGINAL" 2>/dev/null || fail "OT a"
 git checkout -q develop
-before="$(state)"
+before="$(release_state)"
 out="$(git release --version "$V" --yes 2>&1)" && fail "V1: released while OT a has no RELEASE"
-grep -q "OT a: no $V/a/RELEASE" <<<"$out" && ! grep -q "OT b" <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q "OT a: no $V/a/RELEASE" <<<"$out" && ! grep -q "OT b" <<<"$out" && [ "$(release_state)" = "$before" ] &&
 	ok "V1: git release --version refuses while OT a lacks its RELEASE, names it, changes nothing" ||
 	fail "V1: $out"
 out="$(git changelog --version "$V" 2>&1)" && fail "V1: preview says releasable"
-grep -q "OT a: no $V/a/RELEASE" <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q "OT a: no $V/a/RELEASE" <<<"$out" && [ "$(release_state)" = "$before" ] &&
 	ok "V1: git changelog --version shows the same refusal, changes nothing" || fail "V1 preview: $out"
 
 # --- OT a released; a manual edit reviewed on its RELEASE --------------------------------------
@@ -80,9 +64,9 @@ sed -i "s/^- Add module a ($ahash; a)$/- Add module a, reviewed by hand ($ahash;
 git add CHANGELOG.md && git commit -q -m "docs(changelog): review a" && git push -q origin "$V/a/RELEASE" 2>/dev/null ||
 	fail "review commit on $V/a/RELEASE"
 git checkout -q develop
-before="$(state)"
+before="$(release_state)"
 out="$(git changelog --version "$V" 2>&1)" || fail "preview of the release: $out"
-grep -q 'reviewed by hand' <<<"$out" && grep -q "($bhash; b)" <<<"$out" && [ "$(state)" = "$before" ] &&
+grep -q 'reviewed by hand' <<<"$out" && grep -q "($bhash; b)" <<<"$out" && [ "$(release_state)" = "$before" ] &&
 	ok "V3: git changelog --version previews the union entry, changes nothing" || fail "preview: $out"
 
 # --- V2: the release; b (older work) before a ------------------------------------------------
@@ -122,7 +106,7 @@ out="$(git release --version "$V" --yes 2>&1)" && grep -q 'already prepared' <<<
 
 # --- V5: a conflict between OTs stops; after git commit it resumes with the next OT --
 V=9.3.0
-version_sandbox
+case_publish_tree "$V"
 released_ot p shared.txt 'from p' "feat(p): shared text p" "2020-01-01T10:00:00"
 released_ot q shared.txt 'from q' "feat(q): shared text q" "2020-02-01T10:00:00"
 released_ot r r.txt 'from r' "feat(r): text r" "2020-03-01T10:00:00"
@@ -162,7 +146,7 @@ subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs
 
 # --- resume after a failed tag creation ---------------------------------------------------------
 V=9.4.0
-version_sandbox
+case_publish_tree "$V"
 released_ot x x.txt 'from x' "feat(x): text x" "2020-01-01T10:00:00"
 git checkout -q develop
 git update-ref "refs/tags/$V/block" HEAD # why: a ref folder where the tag must go
@@ -179,7 +163,7 @@ out="$(git release --version "$V" --yes 2>&1)" || fail "resume after the tag fai
 # --- flow = merge keeps the 4.x git release: no rebase of OTs, no tag at release time -----------
 case_sandbox merge
 V=9.5.0
-git np "$V" >/dev/null && git np 900 >/dev/null && git nr work >/dev/null && add_commit w.py 'W = 1' "feat: work" &&
+git np "$V" >/dev/null && git np 900 >/dev/null && git nr work >/dev/null && case_commit w.py 'W = 1' "feat: work" &&
 	git integra --yes -m "feat(w): add w" >/dev/null 2>&1 || fail "merge tree"
 git checkout -q "$V/900/ORIGINAL" && git integra --yes -m "feat(900): ot 900" >/dev/null 2>&1 || fail "integra OT 900"
 git push -q origin "$V/ORIGINAL" 2>/dev/null || true
@@ -194,7 +178,7 @@ grep -q "$V prepared on $V/RELEASE" <<<"$out" && ! grep -q 'Version release' <<<
 # --- an abandoned release: stopped after the rebases (the tag cannot go), its RELEASE deleted by
 # hand, an OT added; the rerun includes every OT and ignores the stale plan and ots -------------
 V=9.6.0
-version_sandbox
+case_publish_tree "$V"
 released_ot p p.txt 'from p' "feat(p): text p" "2020-01-01T10:00:00"
 released_ot q q.txt 'from q' "feat(q): text q" "2020-02-01T10:00:00"
 released_ot r r.txt 'from r' "feat(r): text r" "2020-03-01T10:00:00"
@@ -207,9 +191,9 @@ grep -q "the tag $V could not be created" <<<"$out" && [ "$(git config --get "qs
 git checkout -q develop && git branch -q -D "$V/RELEASE" || fail "abandon: delete $V/RELEASE"
 released_ot s s.txt 'from s' "feat(s): text s" "2020-04-01T10:00:00"
 git checkout -q develop
-before="$(state)"
+before="$(release_state)"
 out="$(git changelog --version "$V" 2>&1)" || fail "abandon: preview: $out"
-[ "$(grep -c '^- OT ' <<<"$out")" = 4 ] && grep -q "^- OT s: $V/s/RELEASE$" <<<"$out" && [ "$(state)" = "$before" ] &&
+[ "$(grep -c '^- OT ' <<<"$out")" = 4 ] && grep -q "^- OT s: $V/s/RELEASE$" <<<"$out" && [ "$(release_state)" = "$before" ] &&
 	ok "abandon: the preview lists p, q, r and s, ignores the stale plan, changes nothing" || fail "abandon preview: $out"
 out="$(git release --version "$V" --yes 2>&1)" || fail "abandon: rerun failed: $out"
 grep -q "stale release state of $V is cleared" <<<"$out" || fail "abandon: no note: $out"
@@ -226,16 +210,16 @@ subjects="$(git log --reverse --format=%s "develop..$V/RELEASE" | grep -v '^docs
 
 # --- git release --reset --version <v>: refused while <v>/RELEASE exists, then forgets the state -
 V=9.7.0
-version_sandbox
+case_publish_tree "$V"
 released_ot p p.txt 'from p' "feat(p): text p" "2020-01-01T10:00:00"
 released_ot q q.txt 'from q' "feat(q): text q" "2020-02-01T10:00:00"
 git checkout -q develop
 git update-ref "refs/tags/$V/block" HEAD # why: as above, the release stops after the rebases
 git release --version "$V" --yes >/dev/null 2>&1 && fail "reset: the release passed a failed tag"
 git update-ref -d "refs/tags/$V/block"
-before="$(state)"
+before="$(release_state)"
 out="$(git release --reset --version "$V" --yes 2>&1)" && fail "reset: ran while $V/RELEASE exists"
-grep -q "exists: the release is in progress or prepared" <<<"$out" && [ "$(state)" = "$before" ] ||
+grep -q "exists: the release is in progress or prepared" <<<"$out" && [ "$(release_state)" = "$before" ] ||
 	fail "reset refused while $V/RELEASE exists: $out"
 git checkout -q develop && git branch -q -D "$V/RELEASE" || fail "reset: delete $V/RELEASE"
 out="$(git release --reset --version "$V" --yes 2>&1)" || fail "reset: $out"

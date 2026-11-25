@@ -6,32 +6,24 @@
 # are set aside during the run and restored afterwards.
 set -euo pipefail
 
-HOOK_DIR="${QS_HOOK_DIR:-$(cd "$(dirname "$0")" && pwd)}"
-unset QS_HOOK_DIR # set by the repo wrapper; not inherited further
+# shellcheck disable=SC1091
+. "$(dirname "$0")/../scripts/hook-lib.sh"
+# why: --export so child scripts (ensure-langs, run-tests) see the settings
+qs_hook_env --export
 ENV_FILE="${HOOK_DIR}/quality-suite.env"
-# why: set -a exports the settings so child scripts (ensure-langs, run-tests) see them
-if [ -f "$ENV_FILE" ]; then
-	set -a
-	# why: the sourced path is only known at run time
-	# shellcheck disable=SC1090,SC1091
-	. "$ENV_FILE"
-	set +a
-fi
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	# why: the sourced path is only known at run time
 	# shellcheck disable=SC1091
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
+	# qs_log <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_log() { :; }
+	# qs_result <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_result() { :; }
 fi
-[ -n "${QUALITY_SUITE_DIR:-}" ] || {
-	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
-	exit 1
-}
-# why: the sourced path is only known at run time
-# shellcheck disable=SC1091
-. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+qs_hook_docker_lib
 
 REPO_ROOT="$(qs_repo_root)"
 STATE="$(qs_state_dir)"
@@ -57,9 +49,9 @@ grep -qx '/.quality-rules.json' "$EXCL" 2>/dev/null || {
 # Special branch rules (branches.special, 6.0.0): paths of the type, changelog and badge only on
 # DOCS (refused here, before any tool runs), and the gate level of the type (QS_GATE_LEVEL).
 SP_LEVEL=""
-if [ -f "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh" ]; then
-	. "${QUALITY_SUITE_DIR}/scripts/git-flow-lib.sh"
-	qs_policy_load
+# why: qs_policy_load sets QS_BR_ENFORCE in this shell; the earlier subshell only checks the stamp
+# shellcheck disable=SC2031
+if qs_hook_flow_lib; then
 	SP_BRANCH="$(git branch --show-current 2>/dev/null || true)"
 	if [ -n "$SP_BRANCH" ] && [ "${QS_BR_ENFORCE:-block}" != off ]; then
 		SP_LEVEL="$(special_gate_level "$SP_BRANCH")"
@@ -83,7 +75,9 @@ fi
 # Staged files as a NUL-separated list (spaces, accents and long lists are safe).
 LIST="${STATE}/files.lst"
 git diff --cached --name-only -z --diff-filter=ACMR >"$LIST"
+# why: qs_read_list (sets QS_FILES) comes from scripts/qs-docker-lib.sh, loaded by qs_hook_docker_lib
 qs_read_list "$LIST"
+# shellcheck disable=SC2153
 STAGED=(${QS_FILES[@]+"${QS_FILES[@]}"})
 [ "${#STAGED[@]}" -eq 0 ] && exit 0
 
@@ -118,6 +112,11 @@ if [ -s "$PATCH" ]; then
 	cp "$PATCH" "${STATE}/unstaged.backup.patch" # why: a copy survives even a killed hook
 	git diff --name-only -z | xargs -0 git checkout -- 2>/dev/null || true
 fi
+# restore_unstaged: put the set-aside unstaged edits back after the check.
+# Arguments: none (uses PATCH, INDEX_TREE and STATE from the caller). Return value: 0 when
+# restored (or nothing was set aside), 1 when the edits overlap the formatter changes; in that
+# case the whole commit state is rolled back and the message tells the user what to do.
+# Errors: the patch and the formatter overlap prints a message to stderr; no exit is forced.
 restore_unstaged() {
 	[ -s "$PATCH" ] || return 0
 	if git apply --whitespace=nowarn "$PATCH" 2>/dev/null; then

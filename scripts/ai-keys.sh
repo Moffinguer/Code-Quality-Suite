@@ -8,22 +8,39 @@ set -euo pipefail
 SUITE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENVF="$SUITE/ai-stack/.env" WHAT=all
 while [ "$#" -gt 0 ]; do
-  case "$1" in
-    --env) ENVF="${2:?--env needs a file}"; shift ;;
-    --providers) WHAT=providers ;;
-    --roles) WHAT=roles ;;
-    -h|--help) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "[ai-keys] unknown option: $1" >&2; exit 2 ;;
-  esac
-  shift
+	case "$1" in
+	--env)
+		ENVF="${2:?--env needs a file}"
+		shift
+		;;
+	--providers) WHAT=providers ;;
+	--roles) WHAT=roles ;;
+	-h | --help)
+		sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'
+		exit 0
+		;;
+	*)
+		echo "[ai-keys] unknown option: $1" >&2
+		exit 2
+		;;
+	esac
+	shift
 done
-[ -f "$ENVF" ] || { echo "[ai-keys] no $ENVF (cp ai-stack/.env.example ai-stack/.env and fill it)" >&2; exit 1; }
+[ -f "$ENVF" ] || {
+	echo "[ai-keys] no $ENVF (cp ai-stack/.env.example ai-stack/.env and fill it)" >&2
+	exit 1
+}
 # why run it: on Windows "python3" may be the Microsoft Store stub, which exists but does not work
 PY="${PYTHON:-}"
 if [ -z "$PY" ]; then
-  for c in python3 python py; do "$c" -c 'import sys' >/dev/null 2>&1 && { PY="$c"; break; }; done
+	# shellcheck source=scripts/qs-common.sh
+	. "$SUITE/scripts/qs-common.sh"
+	PY="$(qs_python || true)"
 fi
-[ -n "$PY" ] || { echo "[ai-keys] Python 3 not found (install it or set PYTHON=...)" >&2; exit 1; }
+[ -n "$PY" ] || {
+	echo "[ai-keys] Python 3 not found (install it or set PYTHON=...)" >&2
+	exit 1
+}
 QS_GATEWAY_URL="${QS_GATEWAY_URL:-http://localhost:4000}" "$PY" - "$ENVF" "$WHAT" <<'PY'
 import collections, json, os, re, sys, time, urllib.request, urllib.error
 

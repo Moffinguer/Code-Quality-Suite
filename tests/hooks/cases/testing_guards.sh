@@ -16,43 +16,18 @@ ORIG=$F/ORIGINAL
 TST=$F/TESTING
 CACHE=.git/quality-suite
 
-# mk FILE CONTENT SUBJECT: write FILE, commit it on the current branch.
-# Arguments: $1 file, $2 content, $3 commit subject. Returns: 0; exits 1 through fail on error.
-mk() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit '$3' on $(git branch --show-current)"
-}
-
-# lib CMD...: run a command with the suite's git-flow-lib loaded (policy loaded, as the hooks do).
-# Arguments: the command. Returns: its status.
-lib() {
-	(
-		# shellcheck disable=SC1091
-		. "$SUITE/scripts/git-flow-lib.sh"
-		qs_policy_load
-		"$@"
-	)
-}
-
 # --- fixture: an ORIGINAL, a TESTING built on it with one commit of its own
-git checkout -q -b "$ORIG" develop
-mk shared.txt base "chore: shared file"
-git checkout -q -b "$F/a" "$ORIG"
-mk a.txt a "feat: a"
-git testing crear "$F/a" >/dev/null || fail "crear failed"
-git checkout -q "$TST"
-mk t1.txt t1 "feat: t1"
+case_testing_tree
 
 # --- G1: the cache of an old tip is pruned when a new tip is written; a stray file too
-lib testing_patch_ids "$(git rev-parse "$TST")" >/dev/null || fail "G1: patch-ids of the first tip"
+case_flow_eval testing_patch_ids "$(git rev-parse "$TST")" >/dev/null || fail "G1: patch-ids of the first tip"
 tip1="$(git rev-parse "$TST")"
 [ -f "$CACHE/tst-pids-$tip1" ] || fail "G1: no cache for the first tip"
 fake=1111111111111111111111111111111111111111
 : >"$CACHE/tst-pids-$fake"
-mk t2.txt t2 "feat: t2"
+case_commit t2.txt t2 "feat: t2"
 tip2="$(git rev-parse "$TST")"
-lib testing_patch_ids "$tip2" >/dev/null || fail "G1: patch-ids of the second tip"
+case_flow_eval testing_patch_ids "$tip2" >/dev/null || fail "G1: patch-ids of the second tip"
 if [ ! -e "$CACHE/tst-pids-$tip1" ] && [ ! -e "$CACHE/tst-pids-$fake" ] && [ -f "$CACHE/tst-pids-$tip2" ]; then
 	ok "G1 old and unknown cache files pruned, the live tip kept"
 else
@@ -60,7 +35,7 @@ else
 fi
 
 # --- G2: a failed git command is not cached as an empty list, and a later good run is
-mk t3.txt t3 "feat: t3"
+case_commit t3.txt t3 "feat: t3"
 tip3="$(git rev-parse "$TST")"
 for mode in log patch-id; do
 	# why: the wrapper only fails the command named by the mode; everything else is real git
@@ -68,6 +43,9 @@ for mode in log patch-id; do
 		# shellcheck disable=SC1091
 		. "$SUITE/scripts/git-flow-lib.sh"
 		qs_policy_load
+		# git ARGS...: wrapper over git that fails the command named by QS_FAIL (log or patch-id).
+		# Arguments: the git arguments. Return: 1 for the failing command (log with -p, or patch-id
+		# after it reads stdin), otherwise the status of the real git run through command git.
 		git() {
 			case "$1:$QS_FAIL" in
 			patch-id:patch-id)
@@ -86,15 +64,15 @@ for mode in log patch-id; do
 	fi
 	[ -e "$CACHE/tst-pids-$tip3" ] && fail "G2: a failed $mode was cached"
 done
-n="$(lib testing_patch_ids "$tip3" | wc -l | tr -d ' ')"
+n="$(case_flow_eval testing_patch_ids "$tip3" | wc -l | tr -d ' ')"
 [ "$n" -ge 3 ] && [ -s "$CACHE/tst-pids-$tip3" ] && ok "G2 failures not cached, the next good run is" ||
 	fail "G2: good run listed $n patch-ids"
 
 # --- G3: a branch named just TESTING is not a sandbox (the ** glob matches it, the guard must not)
 git branch TESTING "$ORIG" || fail "G3: cannot create a branch named TESTING"
-lib is_testing_branch TESTING && fail "G3: a branch named TESTING is a sandbox"
-lib is_testing_branch "$TST" || fail "G3: the level TESTING is not a sandbox"
-lines="$(lib testing_local_refs)"
+case_flow_eval is_testing_branch TESTING && fail "G3: a branch named TESTING is a sandbox"
+case_flow_eval is_testing_branch "$TST" || fail "G3: the level TESTING is not a sandbox"
+lines="$(case_flow_eval testing_local_refs)"
 grep -qx "refs/heads/TESTING" <<<"$lines" && fail "G3: a bare TESTING listed as a sandbox"
 grep -qx "refs/heads/$TST" <<<"$lines" || fail "G3: the level TESTING not listed: $lines"
 ok "G3 a branch named TESTING is an ordinary branch"

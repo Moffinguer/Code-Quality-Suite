@@ -30,6 +30,9 @@ skills and in `knowledge/`.
    it up (only when all its children are in; never a `<v>/ORIGINAL` or an OT `ORIGINAL`, and
    never a force push by hand). Versions, CHANGELOG.md and the README badge are written by
    `git np` / `git release`, not by hand.
+   **Known bugs.** A bug found in a released version is documented first: `git bug-conocido
+   "<where>" "<symptom>"` adds its row to `KNOWN_BUGS.md` on every open branch (develop,
+   ORIGINALs, finals); only then are the fix commits made, and the fix updates or removes the row.
 6. **Data class.** `regulated` code and data never go to free model tiers or third-party
    endpoints that train on prompts; only to local models or paid no-training endpoints.
 7. **Lessons.** When something surprised you (a failed approach, a hidden rule), record it with
@@ -55,7 +58,7 @@ skills and in `knowledge/`.
 
 | Role | Model | Does | Never |
 | --- | --- | --- | --- |
-| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates, creates and integrates branches, escalates to the human | writes large code itself |
+| main session (project lead, business analyst) | strongest available | reads `dev_documents/`, delegates (one developer per final branch, a phase's branches in parallel, only once their dependencies are integrated), creates and integrates branches, escalates to the human | writes large code itself |
 | systems-analyst | opus | spec, plan, branch tree (`git es`, `git np`, `git nr`), one task per final branch, `git integra` after the human's OK, merge-conflict suggestions | edits source code |
 | developer | sonnet | implements one task on its own final branch; gate and hooks before review | merges into ORIGINAL |
 | reviewer | opus | reviews diffs against norms and quality rules; commits only on REVIEW-<task> | edits code of the reviewed branch |

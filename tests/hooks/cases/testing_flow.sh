@@ -13,17 +13,6 @@ case_sandbox merge
 F=1.0.0/700
 WHY="TESTING needs branches.flow: squash"
 
-# lib CMD...: run a command with the suite's git-flow-lib loaded (policy loaded, as the hooks do).
-# Arguments: the command. Returns: its status.
-lib() {
-	(
-		# shellcheck disable=SC1091
-		. "$SUITE/scripts/git-flow-lib.sh"
-		qs_policy_load
-		"$@"
-	)
-}
-
 # --- flow = merge: every sandbox command is refused with the reason, nothing is created ----------
 for sub in "crear develop --nivel $F" "estado $F" "repartir $F"; do
 	# shellcheck disable=SC2086
@@ -35,15 +24,15 @@ done
 	fail "merge: a TESTING branch was created"
 
 # --- flow = merge: the leaf is an ordinary segment --------------------------------------------
-lib valid_branch_name "$F/TESTING" >/dev/null && lib valid_branch_name "$F/Testing/x" >/dev/null &&
-	! lib is_testing_branch "$F/TESTING" && ! lib testing_reserved_segment Testing &&
+case_flow_eval valid_branch_name "$F/TESTING" >/dev/null && case_flow_eval valid_branch_name "$F/Testing/x" >/dev/null &&
+	! case_flow_eval is_testing_branch "$F/TESTING" && ! case_flow_eval testing_reserved_segment Testing &&
 	ok "merge: TESTING is an ordinary segment (valid names, no sandbox)" || fail "merge: TESTING names"
 
 # --- flow = squash: the same leaf is the sandbox and reserved ----------------------------------
 case_sandbox squash
-lib valid_branch_name "$F/TESTING" >/dev/null && ! lib valid_branch_name "$F/TESTING/x" >/dev/null &&
-	! lib valid_branch_name "$F/Testing/x" >/dev/null && lib is_testing_branch "$F/TESTING" &&
-	lib testing_reserved_segment Testing &&
+case_flow_eval valid_branch_name "$F/TESTING" >/dev/null && ! case_flow_eval valid_branch_name "$F/TESTING/x" >/dev/null &&
+	! case_flow_eval valid_branch_name "$F/Testing/x" >/dev/null && case_flow_eval is_testing_branch "$F/TESTING" &&
+	case_flow_eval testing_reserved_segment Testing &&
 	ok "squash: <level>/TESTING is the sandbox leaf; other TESTING segments refused" || fail "squash: TESTING names"
 out="$(git testing estado "$F" 2>&1 || true)"
 grep -q "$WHY" <<<"$out" && fail "squash: git testing still refused by flow: $out"

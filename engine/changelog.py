@@ -18,8 +18,8 @@ references in parentheses; '**Breaking:**' first; link definitions at the end.
 import datetime
 import html
 import re
-import subprocess
 
+import gitio
 import policy
 import semver
 
@@ -48,26 +48,7 @@ BADGE_RX = re.compile(re.escape(BADGE_START) + r"(.*?)" + re.escape(BADGE_END), 
 # ---------------------------------------------------------------- entries from git
 
 
-def _git(gitcmd, *args):
-    """Run git and return its standard output.
-
-    Args:
-        gitcmd: the git command line prefix (list of str).
-        *args: git arguments.
-
-    Returns:
-        str: stdout decoded as UTF-8 (undecodable bytes replaced).
-
-    Raises:
-        RuntimeError: git exited with a non-zero status.
-        subprocess.TimeoutExpired: git took longer than 120 seconds.
-    """
-    p = subprocess.run(gitcmd + list(args), capture_output=True, timeout=120, check=False)
-    if p.returncode:
-        raise RuntimeError(
-            f"git {' '.join(args[:2])}: {p.stderr.decode('utf-8', 'replace').strip()}"
-        )
-    return p.stdout.decode("utf-8", "replace")
+_git = gitio.git_strict
 
 
 def _log(gitcmd, tip, excludes, first_parent=True, merges=None):

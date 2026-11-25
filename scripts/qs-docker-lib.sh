@@ -26,9 +26,17 @@ QS_HOME="${QS_HOME:-${HOME:-/tmp}/.config/code-quality-suite}"
 
 case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) export MSYS_NO_PATHCONV=1 ;; esac
 
+# qs_hostpath PATH: print PATH in the form docker.exe accepts (C:/... through cygpath -m).
+# Arguments: $1 path. Returns: 0. Errors: none; without cygpath the path is printed unchanged.
 qs_hostpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
+# qs_repo_root: print the top folder of the current git repository.
+# Arguments: none. Returns: the status of git rev-parse. Errors: git's message on stderr outside a repository.
 qs_repo_root() { git rev-parse --show-toplevel; }
+# qs_state_dir: print the quality-suite state folder inside the git directory of this repository.
+# Arguments: none. Returns: 0. Errors: git's message on stderr outside a repository; the path is then wrong.
 qs_state_dir() { echo "$(git rev-parse --absolute-git-dir)/quality-suite"; }
+# qs_label IMAGE LABEL: print the value of one Docker label of a local image.
+# Arguments: $1 image; $2 label key. Returns: 0. Errors: none; an unknown image or label prints nothing.
 qs_label() { docker image inspect -f "{{ index .Config.Labels \"$2\" }}" "$1" 2>/dev/null || true; }
 
 # Read a NUL-separated list file into the QS_FILES array (names with spaces/accents are safe).
@@ -43,6 +51,8 @@ qs_read_list() {
 # everywhere (Git Bash included). Re-entrant; a lock whose process is gone, or older than
 # QS_LOCK_STALE seconds (default 3600), is taken over. Scripts call qs_lock_release on EXIT.
 QS_LOCK_DEPTH=0
+# qs_lock: take the machine-wide image lock, waiting while another repository holds it.
+# Arguments: none. Returns: 0 once the lock is held. Errors: none; a stale lock is taken over.
 qs_lock() {
 	local d="$QS_HOME/image.lock" pid since waited=0
 	QS_LOCK_DEPTH=$((QS_LOCK_DEPTH + 1))
@@ -62,11 +72,15 @@ qs_lock() {
 	echo "$$" >"$d/pid"
 	date +%s >"$d/since"
 }
+# qs_unlock: leave one level of the image lock; the lock folder is removed at the outermost level.
+# Arguments: none. Returns: 0. Errors: none; does nothing when the lock is not held.
 qs_unlock() {
 	[ "$QS_LOCK_DEPTH" -gt 0 ] || return 0
 	QS_LOCK_DEPTH=$((QS_LOCK_DEPTH - 1))
 	[ "$QS_LOCK_DEPTH" -gt 0 ] || rm -rf "$QS_HOME/image.lock"
 }
+# qs_lock_release: drop the image lock whatever its depth (scripts call it on EXIT).
+# Arguments: none. Returns: 0. Errors: none.
 qs_lock_release() {
 	[ "$QS_LOCK_DEPTH" -gt 0 ] && rm -rf "$QS_HOME/image.lock"
 	QS_LOCK_DEPTH=0

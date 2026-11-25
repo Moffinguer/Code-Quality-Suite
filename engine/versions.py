@@ -3,16 +3,17 @@
 Precedence: rules file `languages.<lang>.version` (unless "auto")
             > legacy env var (e.g. PMD_JAVA_VERSION) > manifest detection > registry default.
 """
+
+import fnmatch
 import os
 import re
 
+import textio
+
 
 def _read(path, limit=262144):
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read(limit)
-    except OSError:
-        return ""
+    """Read at most `limit` characters; undecodable bytes are replaced, errors give ''."""
+    return textio.read_text(path, limit=limit, errors="replace", default="")
 
 
 def detect(spec, root):
@@ -32,7 +33,15 @@ def detect(spec, root):
 
 
 def _glob_root(root, pattern):
-    import fnmatch
+    """Match file names of a folder against a pattern.
+
+    Args:
+        root: the folder.
+        pattern: an fnmatch pattern.
+
+    Returns:
+        list: up to 5 sorted names; empty when unreadable.
+    """
     try:
         return sorted(f for f in os.listdir(root) if fnmatch.fnmatch(f, pattern))[:5]
     except OSError:
@@ -60,7 +69,9 @@ def fmt(template, version):
     """Expand {v}, {v_nodot}, {v_major}, {v_minor} in a template string."""
     v = str(version or "")
     parts = re.findall(r"\d+", v)
-    return (template.replace("{v_nodot}", "".join(parts[:2]))
-            .replace("{v_major}", parts[0] if parts else "")
-            .replace("{v_minor}", parts[1] if len(parts) > 1 else "0")
-            .replace("{v}", v))
+    return (
+        template.replace("{v_nodot}", "".join(parts[:2]))
+        .replace("{v_major}", parts[0] if parts else "")
+        .replace("{v_minor}", parts[1] if len(parts) > 1 else "0")
+        .replace("{v}", v)
+    )

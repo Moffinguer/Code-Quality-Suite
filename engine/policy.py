@@ -68,6 +68,7 @@ REPO_FILES_GLOBS = (
     "MAINTAINERS.md",
     "ROADMAP.md",
     "FAQ.md",
+    "KNOWN_BUGS.md",
     "INSTALL.md",
     "ARCHITECTURE.md",
     "API.md",
@@ -174,6 +175,9 @@ SPECIAL_DEFAULTS = {
     ),
 }
 
+MODES = ("block", "warn", "off")  # enforcement of encoding.mojibake, commit.files, branches.enforce
+FLOWS = ("squash", "merge")  # values of branches.flow
+LEAF_MERGES = ("merge", "squash")  # values of branches.leaf_merge
 DATA_CLASSES = ("public", "internal", "regulated")  # values of the top-level data_class key
 # why: typed Any, the entries are sections (dict) and one top-level scalar (data_class)
 DEFAULTS: dict[str, Any] = {
@@ -675,7 +679,7 @@ def _validate_encoding(enc):
                 errors.append(f"encoding.{key}.{k}: must be a charset name or {{charset, bom}}")
             elif cs and not _charset_ok(cs):
                 errors.append(f"encoding.{key}.{k}: unknown charset '{cs}'")
-    if enc.get("mojibake") not in ("block", "warn", "off"):
+    if enc.get("mojibake") not in MODES:
         errors.append("encoding.mojibake: must be block, warn or off")
     if not (
         isinstance(enc.get("mojibake_ignore"), list)
@@ -697,7 +701,7 @@ def _validate_commit(com):
     errors = []
     if com.get("charset") not in ("ascii", "utf-8", "any"):
         errors.append("commit.charset: must be ascii, utf-8 or any")
-    if com.get("files") not in ("block", "warn", "off"):
+    if com.get("files") not in MODES:
         errors.append("commit.files: must be block, warn or off")
     if not (
         isinstance(com.get("types"), list)
@@ -719,11 +723,11 @@ def _validate_branches(br):
         list[str]: one message per problem.
     """
     errors = []
-    if br.get("enforce") not in ("block", "warn", "off"):
+    if br.get("enforce") not in MODES:
         errors.append("branches.enforce: must be block, warn or off")
-    if br.get("leaf_merge") not in ("merge", "squash"):
+    if br.get("leaf_merge") not in LEAF_MERGES:
         errors.append("branches.leaf_merge: must be merge or squash")
-    if br.get("flow") not in ("squash", "merge"):
+    if br.get("flow") not in FLOWS:
         errors.append("branches.flow: must be squash or merge")
     ot_ref = br.get("ot_ref")
     bad = ot_ref != "" and ("{ot}" not in ot_ref or not ot_ref.startswith("refs/ot/"))

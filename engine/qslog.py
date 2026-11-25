@@ -3,6 +3,7 @@
 Text:  <ts> <LEVEL> comp=<c> [file=..] [action=..] [status=..] msg="..."
 JSON:  one object per line (QUALITY_LOG_FORMAT=json).
 """
+
 import json
 import os
 import sys
@@ -14,10 +15,15 @@ _lock = threading.Lock()
 
 
 def _now():
+    """UTC timestamp for a log line.
+
+    Returns:
+        str: the time as YYYY-MM-DDTHH:MM:SSZ.
+    """
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
-def log(level, comp, msg="", file="", action="", status="", console=True):
+def log(level, comp, msg="", file="", action="", status="", console=True):  # noqa: PLR0913, PLR0917 - legacy code, kept as is in the 7.1.1 cleanup
     """console=False: log file only (the caller already printed a friendlier line)."""
     threshold = _LEVELS.get(os.environ.get("QUALITY_LOG_LEVEL", "INFO"), 20)
     if _LEVELS.get(level, 20) < threshold:
@@ -54,4 +60,13 @@ def log(level, comp, msg="", file="", action="", status="", console=True):
 
 
 def result(comp, file, action, ok, msg=""):
+    """Log the outcome of an action.
+
+    Args:
+        comp: the component name.
+        file: the file concerned.
+        action: the action name.
+        ok: true for success.
+        msg: an optional message.
+    """
     log("INFO" if ok else "ERROR", comp, msg, file, action, "SUCCESS" if ok else "ERROR")

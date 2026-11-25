@@ -341,7 +341,7 @@ git release --version 7.1.0 --yes >rel.out 2>&1 || {
 	cat rel.out
 	fail "release resume"
 }
-subjects="$(git log --format=%s develop..7.1.0/RELEASE | head -n2 | tr '\n' '|')"
+subjects="$(git log -n2 --format=%s develop..7.1.0/RELEASE | tr '\n' '|')"
 [ "$subjects" = "docs(readme): version 7.1.0|docs(changelog): 7.1.0|" ] &&
 	[ "$(git branch --show-current)" = 7.1.0/RELEASE ] && [ "$(git show 7.1.0/RELEASE:VERSION)" = 7.1.0 ] &&
 	git show 7.1.0/RELEASE:pom.xml | grep -q '<version>7.1.0</version>' &&
@@ -464,7 +464,7 @@ cl="$(git show 8.1.0/RELEASE:CHANGELOG.md)"
 	{
 		cat rel.out
 		echo "$cl"
-		git log --oneline --graph develop..8.1.0/RELEASE | head -40
+		git log -n40 --oneline --graph develop..8.1.0/RELEASE
 		fail "combinar result"
 	}
 git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 8.1.0" ] &&
@@ -473,6 +473,13 @@ git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s 
 	fail "publicar 8.1.0"
 }
 rm -f rel.out
+
+# refs_snapshot: every local ref with its object, then the refs of origin, to compare before and
+# after a command that must change nothing. Output: lines.
+refs_snapshot() {
+	git for-each-ref --format='%(refname) %(objectname)'
+	git ls-remote origin
+}
 
 # git combinar when develop moved after the trees were prepared: one squash per version on develop
 # combine_tree <version> <ot> <source|-> <file> <subject> [<file> <subject>]...: a version tree
@@ -613,16 +620,10 @@ combine_tree 11.0.1 700002 - z11.py "feat(z11): add z11" || fail "tree 11.0.1"
 combine_tree 11.0.2 700003 - z11.py "feat(z11): other z11" || fail "tree 11.0.2"
 git checkout -q develop && printf 'C = 2\n' >c11.py && git commit -q -am "fix(c11): c11 on develop" &&
 	git push -q origin develop 2>/dev/null || fail "c11 moves"
-refs="$(
-	git for-each-ref --format='%(refname) %(objectname)'
-	git ls-remote origin
-)"
+refs="$(refs_snapshot)"
 if git combinar --incluir 11.0.0,11.0.1 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict with develop"; fi
 grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep -q 'git checkout 11.0.0/RELEASE && git merge develop' rel.out &&
-	[ "$(
-		git for-each-ref --format='%(refname) %(objectname)'
-		git ls-remote origin
-	)" = "$refs" ] &&
+	[ "$(refs_snapshot)" = "$refs" ] &&
 	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
 	ok "git combinar: a conflict with develop changes nothing and prints the steps" || {
 	cat rel.out
@@ -630,10 +631,7 @@ grep -q 'nothing was changed' rel.out && grep -q '^    c11.py$' rel.out && grep 
 }
 if git combinar --incluir 11.0.1,11.0.2 --version 11.1.0 --yes >rel.out 2>&1; then fail "combinar passed a conflict between trees"; fi
 grep -q 'nothing was changed' rel.out && grep -q '^    z11.py$' rel.out &&
-	[ "$(
-		git for-each-ref --format='%(refname) %(objectname)'
-		git ls-remote origin
-	)" = "$refs" ] &&
+	[ "$(refs_snapshot)" = "$refs" ] &&
 	[ "$(git worktree list | wc -l)" = 1 ] && [ ! -e .git/quality-suite/combine-wt ] &&
 	ok "git combinar: a conflict between RELEASE branches changes nothing" || {
 	cat rel.out
@@ -773,12 +771,12 @@ QS_REPO_FILES=1 "$SUITE/install.sh" "$T/repo-files" >inst.out 2>&1 || {
 }
 missing=""
 for f in README.md CHANGELOG.md VERSION CONTRIBUTING.md CODE_OF_CONDUCT.md LICENSE AUTHORS CONTRIBUTORS.md \
-	CITATION.cff SECURITY.md SUPPORT.md CODEOWNERS MAINTAINERS.md ROADMAP.md FAQ.md INSTALL.md ARCHITECTURE.md API.md DEVELOPMENT.md; do
+	CITATION.cff SECURITY.md SUPPORT.md CODEOWNERS MAINTAINERS.md ROADMAP.md FAQ.md KNOWN_BUGS.md INSTALL.md ARCHITECTURE.md API.md DEVELOPMENT.md; do
 	[ -f "$f" ] || missing="$missing $f"
 done
 [ -z "$missing" ] && [ "$(cat VERSION)" = 1.1.0 ] && grep -q '^## \[\{0,1\}1.0.0\]\{0,1\} - ' CHANGELOG.md &&
 	grep -q '^# Demo App' README.md && grep -q 'version 1.0.0' README.md && grep -q 'Ana Example <ana@example.org>' AUTHORS &&
-	ok "install creates the 19 standard files from git history and pom.xml" || {
+	ok "install creates the 20 standard files from git history and pom.xml" || {
 	cat inst.out
 	echo "missing:$missing"
 	fail "repository files"
@@ -1083,6 +1081,9 @@ cmp_check() {
 	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_semver_cmp "$@"' _ "$1" "$2")" || rc=$?
 	[ "$out" = "$3" ] && [ "$rc" = "${4:-0}" ]
 }
+# tag_check TAG WANT RC: check the output and exit status of qs_tag_version for one tag.
+# Arguments: $1 the tag, $2 the expected output, $3 the expected exit status. Return: 0 when both
+# match, 1 otherwise.
 tag_check() {
 	local out rc=0
 	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_tag_version "$1"' _ "$1")" || rc=$?

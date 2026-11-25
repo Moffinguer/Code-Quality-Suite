@@ -7,6 +7,8 @@ set -euo pipefail
 . "$SUITE/tests/hooks/case-lib.sh"
 case_sandbox squash
 
+# qs ARGS...: run the engine qs.py with the given subcommand and options.
+# Arguments: the subcommand and its options, passed as they are. Return: the exit status of qs.py.
 qs() { python3 "$SUITE/engine/qs.py" "$@"; }
 
 base="$(git rev-parse HEAD)"

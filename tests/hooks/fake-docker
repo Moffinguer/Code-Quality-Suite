@@ -16,10 +16,26 @@ os.makedirs(D, exist_ok=True)
 
 
 def img_path(tag):
+    """Return the JSON file that stores an image.
+
+    Args:
+        tag: image tag, such as "name:version".
+
+    Returns:
+        Path of the file inside FAKE_DOCKER_DIR.
+    """
     return os.path.join(D, tag.replace("/", "_").replace(":", "@") + ".json")
 
 
 def load(tag):
+    """Read the stored data of an image.
+
+    Args:
+        tag: image tag to read.
+
+    Returns:
+        The decoded JSON data, or None when the image file cannot be read.
+    """
     try:
         with open(img_path(tag)) as fh:
             return json.load(fh)
@@ -28,11 +44,28 @@ def load(tag):
 
 
 def save(tag, data):
+    """Write the data of an image to its JSON file.
+
+    Args:
+        tag: image tag to write.
+        data: JSON-serializable value to store.
+
+    Returns:
+        None.
+    """
     with open(img_path(tag), "w") as fh:
         json.dump(data, fh)
 
 
 def log(*a):
+    """Append one line with the arguments of a docker call to calls.log.
+
+    Args:
+        *a: the words of the docker command line, joined with spaces.
+
+    Returns:
+        None.
+    """
     with open(os.path.join(D, "calls.log"), "a") as fh:
         fh.write(" ".join(a) + "\n")
 
@@ -52,6 +85,11 @@ TITLE = "org.opencontainers.image.title=code-quality-suite"
 
 
 def load_containers():
+    """Read the fake container list written by the tests.
+
+    Returns:
+        The list from containers.json, or an empty list when the file is missing or invalid.
+    """
     try:
         with open(os.path.join(D, "containers.json")) as fh:
             return json.load(fh)
@@ -60,11 +98,24 @@ def load_containers():
 
 
 def save_containers(items):
+    """Write the fake container list to containers.json.
+
+    Args:
+        items: list of container records, as the tests define them.
+
+    Returns:
+        None.
+    """
     with open(os.path.join(D, "containers.json"), "w") as fh:
         json.dump(items, fh)
 
 
 def all_tags():
+    """List the tags of every stored image.
+
+    Returns:
+        Sorted list of image tags, rebuilt from the JSON file names in FAKE_DOCKER_DIR.
+    """
     return sorted(
         f[:-5].replace("@", ":").replace("_", "/")
         for f in os.listdir(D)
@@ -287,6 +338,14 @@ if cmd == "run":
         sys.exit(0)  # e.g. listing installer failures: none in the fake image
 
     def host(p):
+        """Map a container path to the bind-mounted host path.
+
+        Args:
+            p: absolute path seen inside the container.
+
+        Returns:
+            The host path for the longest matching mount, or p itself when no mount matches.
+        """
         for c, h in sorted(mounts.items(), key=lambda kv: -len(kv[0])):
             if p == c or p.startswith(c + "/"):
                 return h + p[len(c) :]

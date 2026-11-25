@@ -2,19 +2,31 @@
 
 Versions are written without a 'v' prefix (the tag may have one: v1.2.3).
 """
+
 import re
 
 # the regular expression published by semver.org (numbered groups)
 SEMVER = re.compile(
     r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
     r"(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?"
-    r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$")
+    r"(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$"
+)
 # the same without build metadata, for branch names (POSIX ERE: the shell scripts use it too)
-BRANCH_RX = (r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
-             r"(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$")
+BRANCH_RX = (
+    r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+    r"(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$"
+)
 
 
 def valid(v):
+    """Whether a text is a Semantic Version.
+
+    Args:
+        v: the text.
+
+    Returns:
+        bool: True when it matches.
+    """
     return bool(SEMVER.match(v or ""))
 
 
@@ -31,7 +43,7 @@ def key(v):
     core = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
     pre = m.group(4)
     if pre is None:
-        return core + ((1,),)                      # a release outranks its prereleases
+        return core + ((1,),)  # a release outranks its prereleases
     ids = []
     for p in pre.split("."):
         # numeric identifiers rank below alphanumeric ones and compare as numbers
@@ -40,11 +52,28 @@ def key(v):
 
 
 def compare(a, b):
+    """Compare two versions by Semantic Versioning precedence.
+
+    Args:
+        a: the first version.
+        b: the second version.
+
+    Returns:
+        int: -1, 0 or 1.
+    """
     ka, kb = key(a), key(b)
     return (ka > kb) - (ka < kb)
 
 
 def is_release(v):
+    """Whether a version is a final release (no pre-release part).
+
+    Args:
+        v: the version text.
+
+    Returns:
+        bool: True for a valid version without pre-release.
+    """
     m = SEMVER.match(v or "")
     return bool(m) and m.group(4) is None
 
@@ -75,9 +104,11 @@ def needed_bump(previous, current, breaking, features):
         return f"{current} is not newer than the previous release {previous}"
     pm, cm = kp[:3], kc[:3]
     if breaking and cm[0] == pm[0] and pm[0] > 0:
-        return (f"breaking changes since {previous} need a MAJOR version ({bump(previous, 'major')}), "
-                f"not {current}")
+        return (
+            f"breaking changes since {previous} need a MAJOR version ({bump(previous, 'major')}), "
+            f"not {current}"
+        )
     if (features or (breaking and pm[0] == 0)) and cm[:2] == pm[:2]:
         what = "new features" if features else "breaking changes"
-        return f"{what} since {previous} need at least a MINOR version ({bump(previous, 'minor')}), not {current}"
+        return f"{what} since {previous} need at least a MINOR version ({bump(previous, 'minor')}), not {current}"  # noqa: E501 - legacy code, kept as is in the 7.1.1 cleanup
     return None

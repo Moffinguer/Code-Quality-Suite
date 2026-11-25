@@ -8,30 +8,19 @@ set -euo pipefail
 . "$SUITE/tests/hooks/case-lib.sh"
 case_sandbox squash
 
-# lib CODE: run CODE in a subshell that has the flow library loaded with the repo policy.
-# Arguments: $1 shell code. Returns: the status of CODE; its output is printed.
-lib() {
-	(
-		# shellcheck source=/dev/null
-		. "$SUITE/scripts/git-flow-lib.sh"
-		qs_policy_load
-		eval "$1"
-	)
-}
-
 # kind BRANCH EXPECTED: special_kind must print EXPECTED (empty for an ordinary branch).
 # Arguments: $1 branch, $2 expected type. Returns: 0; fails the case otherwise.
 kind() {
 	local got
-	got="$(lib "special_kind '$1'")"
+	got="$(case_flow_eval "special_kind '$1'")"
 	[ "$got" = "$2" ] || fail "special_kind $1: '$got' (expected '$2')"
 }
 
 # valid BRANCH: valid_branch_name must accept it. Arguments: $1 branch. Returns: 0 or fails.
-valid() { lib "valid_branch_name '$1'" >/dev/null 2>&1 || fail "refused but valid: $1"; }
+valid() { case_flow_eval "valid_branch_name '$1'" >/dev/null 2>&1 || fail "refused but valid: $1"; }
 
 # invalid BRANCH: valid_branch_name must refuse it. Arguments: $1 branch. Returns: 0 or fails.
-invalid() { ! lib "valid_branch_name '$1'" >/dev/null 2>&1 || fail "accepted but invalid: $1"; }
+invalid() { ! case_flow_eval "valid_branch_name '$1'" >/dev/null 2>&1 || fail "accepted but invalid: $1"; }
 
 # --- N1 special_kind
 kind 6.0.0/DOCS DOCS
@@ -45,8 +34,8 @@ kind 6.0.0/ot1/CHECKPOINT-a CHECKPOINT
 kind 6.0.0/ot1/a ''
 kind 6.0.0/ot1/ORIGINAL ''
 ok "special_kind names the type of each placement"
-[ -z "$(lib "QS_SP_NAMES='MIGRATION REFACTOR'; special_kind 6.0.0/DOCS")" ] && ok "special_kind: a disabled type is nothing" || fail "disabled type"
-[ -z "$(lib "QS_BR_FLOW=merge; special_kind 6.0.0/DOCS")" ] && ok "special_kind: nothing under flow merge" || fail "merge flow"
+[ -z "$(case_flow_eval "QS_SP_NAMES='MIGRATION REFACTOR'; special_kind 6.0.0/DOCS")" ] && ok "special_kind: a disabled type is nothing" || fail "disabled type"
+[ -z "$(case_flow_eval "QS_BR_FLOW=merge; special_kind 6.0.0/DOCS")" ] && ok "special_kind: nothing under flow merge" || fail "merge flow"
 
 # --- N3 placement
 for b in 6.0.0/DOCS 6.0.0/MIGRATION/ORIGINAL 6.0.0/MIGRATION/java17 6.0.0/ot1/REFACTOR 6.0.0/ot1/REFACTOR/ORIGINAL \
@@ -60,9 +49,9 @@ for b in 6.0.0/ot1/DOCS 6.0.0/ot1/MIGRATION 6.0.0/FORMAT/ORIGINAL 6.0.0/ot1/CHEC
 	invalid "$b"
 done
 ok "valid_branch_name: exact names in their place, refused elsewhere and in other case"
-lib "QS_SP_NAMES='MIGRATION'; valid_branch_name 6.0.0/ot1/docs" >/dev/null && ok "a type disabled frees its name" || fail "disabled type name"
-lib "QS_BR_FLOW=merge; valid_branch_name 6.0.0/ot1/DOCS" >/dev/null && ok "flow merge keeps 4.x names" || fail "merge flow name"
-lib "QS_SP_NAMES='DOCS'; valid_branch_name 6.0.0/ot1/Docs" >/dev/null 2>&1 && fail "Docs accepted" || ok "ordinary segment in another case of an enabled name refused"
+case_flow_eval "QS_SP_NAMES='MIGRATION'; valid_branch_name 6.0.0/ot1/docs" >/dev/null && ok "a type disabled frees its name" || fail "disabled type name"
+case_flow_eval "QS_BR_FLOW=merge; valid_branch_name 6.0.0/ot1/DOCS" >/dev/null && ok "flow merge keeps 4.x names" || fail "merge flow name"
+case_flow_eval "QS_SP_NAMES='DOCS'; valid_branch_name 6.0.0/ot1/Docs" >/dev/null 2>&1 && fail "Docs accepted" || ok "ordinary segment in another case of an enabled name refused"
 
 # --- N2 creation commands
 git np 6.0.0 >/dev/null
@@ -80,10 +69,10 @@ out="$(printf '6.0.0/ot1\n   tests\n      a\n' | git es 2>&1)" && fail "git es w
 grep -q "reserved for TESTS" <<<"$out" && grep -q "git tests" <<<"$out" || fail "git es: $out"
 [ "$before" = "$(git for-each-ref --format='%(refname)' refs/heads | sort)" ] && ok "git es refuses a tests node and creates nothing" || fail "git es created branches"
 # a disabled type frees its name for git nr
-lib "QS_SP_NAMES='MIGRATION REFACTOR'; ! special_refusal docs >/dev/null && special_refusal refactor >/dev/null" && ok "disabled DOCS frees 'docs'; REFACTOR still reserved" || fail "disabled type refusal"
+case_flow_eval "QS_SP_NAMES='MIGRATION REFACTOR'; ! special_refusal docs >/dev/null && special_refusal refactor >/dev/null" && ok "disabled DOCS frees 'docs'; REFACTOR still reserved" || fail "disabled type refusal"
 
 # --- parent_branch
-par() { lib "parent_branch '$1'"; }
+par() { case_flow_eval "parent_branch '$1'"; }
 [ "$(par 6.0.0/DOCS)" = 6.0.0/ORIGINAL ] && [ "$(par 6.0.0/MIGRATION/ORIGINAL)" = 6.0.0/ORIGINAL ] &&
 	[ "$(par 6.0.0/MIGRATION/java17)" = 6.0.0/MIGRATION/ORIGINAL ] && [ "$(par 6.0.0/ot1/REFACTOR)" = 6.0.0/ot1/ORIGINAL ] &&
 	[ "$(par 6.0.0/ot1/REFACTOR/x)" = 6.0.0/ot1/REFACTOR/ORIGINAL ] && [ "$(par 6.0.0/ot1/a/ATTEMPT-2)" = 6.0.0/ot1/a/ORIGINAL ] &&
@@ -126,7 +115,7 @@ locked git nv 6.0.0
 out="$(printf '6.0.0/ot9/a\n' | git es 2>&1)" && fail "git es in a locked version"
 grep -q "MIGRATION" <<<"$out" || fail "git es lock message: $out"
 locked git testing crear 6.0.0/ot1/DOCS --nivel 6.0.0/ot1
-lib "special_migration_lock 6.0.0 6.0.0/DOCS" >/dev/null || fail "git docs lock helper"
+case_flow_eval "special_migration_lock 6.0.0 6.0.0/DOCS" >/dev/null || fail "git docs lock helper"
 ok "MIGRATION lock: np, nr, es, nv, testing crear and docs refused"
 git checkout -q 6.0.0/MIGRATION/ORIGINAL
 git nr java17 >/dev/null && [ "$(git branch --show-current)" = 6.0.0/MIGRATION/java17 ] && ok "git nr java17 works inside MIGRATION" || fail "nr inside MIGRATION"
@@ -150,23 +139,23 @@ ok "post-checkout prints one [special] line on special branches only"
 # --- N7 qs-alias header
 mkdir -p "$T/suite-n7/scripts"
 printf '#!/usr/bin/env bash\n# qs-alias: zeta zeta-largo\n' >"$T/suite-n7/scripts/git-zeta.sh"
-lib "configure_repo '$T/suite-n7'"
+case_flow_eval "configure_repo '$T/suite-n7'"
 [ "$(git config alias.zeta)" = "!QS_ALIAS=zeta bash '$T/suite-n7/scripts/git-zeta.sh'" ] && [ -n "$(git config alias.zeta-largo)" ] &&
 	ok "configure_repo registers scripts with a qs-alias header" || fail "qs-alias"
-lib "configure_repo '$SUITE'"
+case_flow_eval "configure_repo '$SUITE'"
 # a header may not shadow a git command, a suite alias or another script's alias
 mkdir -p "$T/suite-n7b/scripts"
 printf '#!/usr/bin/env bash\n# qs-alias: commit nr dup mine\n' >"$T/suite-n7b/scripts/git-a.sh"
 printf '#!/usr/bin/env bash\n# qs-alias: dup mine2\n' >"$T/suite-n7b/scripts/git-b.sh"
 git config alias.nr "!bash '$SUITE/scripts/git-rama.sh' nueva-final"
-out="$(lib "configure_repo '$T/suite-n7b'" 2>&1)"
+out="$(case_flow_eval "configure_repo '$T/suite-n7b'" 2>&1)"
 [ -z "$(git config alias.commit)" ] && [ "$(git config alias.nr)" = "!bash '$T/suite-n7b/scripts/git-rama.sh' nueva-final" ] &&
 	grep -q "'commit' is a git command" <<<"$out" && grep -q "'nr' is already defined" <<<"$out" ||
 	fail "qs-alias shadowing: $out"
 [ -z "$(git config alias.dup)" ] && grep -q "'dup' claimed by both .*git-a.sh and .*git-b.sh" <<<"$out" &&
 	[ "$(git config alias.mine)" = "!QS_ALIAS=mine bash '$T/suite-n7b/scripts/git-a.sh'" ] && [ "$(git config alias.mine2)" = "!QS_ALIAS=mine2 bash '$T/suite-n7b/scripts/git-b.sh'" ] &&
 	ok "qs-alias skips git commands, suite aliases and duplicate claims with a warning" || fail "qs-alias duplicates: $out"
-lib "configure_repo '$SUITE'"
+case_flow_eval "configure_repo '$SUITE'"
 git config --unset alias.mine
 git config --unset alias.mine2
 

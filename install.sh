@@ -146,12 +146,24 @@ _up_out="$(mktemp)"
 _native() { if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi; }
 if [ "${QS_SKIP_RULES_UPGRADE:-0}" != 1 ]; then
 	_migrated=0
-	for _py in python3 python; do
-		if command -v "$_py" >/dev/null 2>&1 && "$_py" "$(_native "$SCRIPT_DIR/engine/policy.py")" rules-upgrade "$(_native "$REPO_TOP")" >"$_up_out"; then
-			_migrated=1
-			break
-		fi
-	done
+	# why: qs_python (scripts/qs-common.sh) picks the python; without the suite files the same
+	# search (python3, python, py; Python 3 only) runs locally
+	if [ -f "$SCRIPT_DIR/scripts/qs-common.sh" ]; then
+		# shellcheck disable=SC1091
+		. "$SCRIPT_DIR/scripts/qs-common.sh"
+		_py="$(qs_python || true)"
+	else
+		_py=""
+		for _c in python3 python py; do
+			if command -v "$_c" >/dev/null 2>&1 && "$_c" -c 'import sys; sys.exit(sys.version_info[0] != 3)' >/dev/null 2>&1; then
+				_py="$_c"
+				break
+			fi
+		done
+	fi
+	if [ -n "$_py" ] && "$_py" "$(_native "$SCRIPT_DIR/engine/policy.py")" rules-upgrade "$(_native "$REPO_TOP")" >"$_up_out"; then
+		_migrated=1
+	fi
 	[ "$_migrated" = 1 ] || echo "[install] WARN: no working python3/python: rules file not upgraded (the engine does it on the next commit)" >&2
 	# the change lines (added ... / migrated ...), as migrate printed them
 	grep -E '^(added|migrated) ' "$_up_out" | sed 's/^/[quality-suite] .quality-rules.json: /' || true

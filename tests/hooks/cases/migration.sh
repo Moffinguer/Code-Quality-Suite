@@ -10,14 +10,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit it with SUBJECT.
-# Exits through fail when the commit is refused.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
-}
-
 # remote_has REF: succeed when origin has the branch REF. Arguments: $1 branch.
 remote_has() { git ls-remote --exit-code --heads origin "refs/heads/$1" >/dev/null 2>&1; }
 
@@ -71,7 +63,7 @@ git push -q origin "$MO" 2>/dev/null || fail "push $MO"
 for c in java17 spring-boot-3; do
 	git checkout -q "$MO"
 	out="$(git nr "$c" 2>&1)" || fail "MG2: git nr $c under $MO: $out"
-	add_commit "$c.txt" "$c" "build: $c"
+	case_commit "$c.txt" "$c" "build: $c"
 	git push -q origin "$M/$c" 2>/dev/null || fail "push $c"
 done
 git checkout -q "$M/java17"
@@ -85,7 +77,7 @@ git integra --yes -m "build: move to boot 3" >/dev/null 2>&1 || fail "MG2: integ
 # --- MG3: the MIGRATION squash --------------------------------------------------------------------
 git checkout -q "$MO"
 git nr late >/dev/null 2>&1 || fail "nr late"
-add_commit late.txt late "build: late step"
+case_commit late.txt late "build: late step"
 git checkout -q "$MO"
 before="$(git rev-parse "$V/ORIGINAL")"
 out="$(git integra --yes -m "Migrate to Java 17" 2>&1)" && fail "MG3: integrated with a pending child"

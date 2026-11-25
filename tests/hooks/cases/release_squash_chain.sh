@@ -11,13 +11,6 @@ set -euo pipefail
 # shellcheck source=tests/hooks/case-lib.sh
 . "$SUITE/tests/hooks/case-lib.sh"
 
-# add_commit FILE TEXT SUBJECT: write TEXT into FILE, stage it and commit it with SUBJECT.
-add_commit() {
-	printf '%s\n' "$2" >"$1"
-	git add "$1"
-	git commit -q -m "$3" || fail "commit $3"
-}
-
 # tree_with REV FILE TEXT: print the id of the tree of REV plus FILE holding TEXT (plumbing, no hooks).
 tree_with() {
 	local idx blob
@@ -37,14 +30,14 @@ ot_with_merge() {
 	git checkout -q "$V/ORIGINAL" && git np "$o" >/dev/null && git push -q origin "$V/$o/ORIGINAL" 2>/dev/null || fail "OT $o"
 	base="$(git rev-parse HEAD)"
 	git nr work >/dev/null || fail "nr work in $o"
-	add_commit "$f" "$text" "feat: work of $o"
+	case_commit "$f" "$text" "feat: work of $o"
 	git integra --yes -m "feat($o): add $f" >/dev/null 2>&1 || fail "integra in $o"
 	tip="$(git rev-parse "$V/$o/ORIGINAL")"
 	sc="$(git commit-tree "$(tree_with "$base" "$side" "side of $o")" -p "$base" -m "feat: side of $o")"
 	mc="$(git commit-tree "$(tree_with "$tip" "$side" "side of $o")" -p "$tip" -p "$sc" -m "merge side of $o")"
 	git update-ref "refs/heads/$V/$o/ORIGINAL" "$mc" "$tip"
 	git checkout -q "$V/$o/ORIGINAL" && git reset -q --hard HEAD
-	QUALITY_SKIP_PARENT_CHECK=1 git push -q origin "$V/$o/ORIGINAL" 2>/dev/null || fail "push $o"
+	QUALITY_SKIP_PARENT_CHECK=1 case_push_merge_flow origin "$V/$o/ORIGINAL" || fail "push $o"
 	out="$(git release --yes 2>&1)" || fail "OT release $o: $out"
 }
 
@@ -78,7 +71,7 @@ case_sandbox squash
 git np "$V" >/dev/null && git np 700 >/dev/null || fail "tree $V/700"
 OT="$V/700"
 git np pub >/dev/null && git np sub >/dev/null && git nr w >/dev/null || fail "tree pub/sub"
-add_commit s.py 'S = 1' "feat: work in sub"
+case_commit s.py 'S = 1' "feat: work in sub"
 git integra --yes -m "feat(sub): add s" >/dev/null 2>&1 || fail "integra w into sub"
 subtip="$(git rev-parse "$OT/pub/sub/ORIGINAL")"
 pubtip="$(git rev-parse "$OT/pub/ORIGINAL")"
