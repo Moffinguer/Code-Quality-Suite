@@ -1,5 +1,5 @@
 {
-  "mode": "report",
+  "mode": "enforce",
   "window": 6,
   "areas": {
     "scripts": ["scripts"],
@@ -11,17 +11,17 @@
   },
   "thresholds": {
     "dup_share_max": {
-      "scripts": 1.75,
-      "hooks": 7.96,
-      "engine": 0.71,
+      "scripts": 0.54,
+      "hooks": 0.0,
+      "engine": 0.49,
       "registry/src": 2.18,
       "tools": 0.0,
-      "tests/hooks": 1.75
+      "tests/hooks": 0.67
     },
     "missing_docs_max": {
-      "scripts": 49,
+      "scripts": 34,
       "hooks": 6,
-      "engine": 125,
+      "engine": 0,
       "registry/src": 15,
       "tools": 17,
       "tests/hooks": 16

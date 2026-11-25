@@ -156,6 +156,17 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(len(cm.breaches("dup", report, {"dup_share_max": {"a": 1.0}})), 1)
         self.assertEqual(len(cm.breaches("doc", report, {"missing_docs_max": {"a": 1}})), 1)
 
+    def test_repo_within_thresholds(self):
+        """RT1: duplication (D1, D2) and missing doc comments (D3) do not grow past the config."""
+        self.addCleanup(setattr, cm, "ROOT", cm.ROOT)
+        cm.ROOT = ROOT
+        config = cm.load_config(os.path.join(ROOT, ".codemetrics.json"))
+        self.assertEqual(config.get("mode"), "enforce")
+        areas = config["areas"]
+        found = cm.breaches("dup", cm.run_dup(areas, config["window"]), config["thresholds"])
+        found += cm.breaches("doc", cm.run_doc(areas), config["thresholds"])
+        self.assertEqual(found, [])
+
 
 if __name__ == "__main__":
     unittest.main()
