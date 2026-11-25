@@ -28,6 +28,9 @@ cp -R "$SUITE/ai-template/.claude/agents" "$R/.claude/agents"
 echo '{}' >"$R/opencode.json"
 bash "$SUITE/scripts/ai-sync.sh" "$R" >/dev/null
 oc="$R/.opencode/agents"
+# has ROLE PATTERN VALUE: check that the OpenCode copy of an agent has the permission row.
+# Arguments: $1 agent name (file under $oc without .md), $2 command pattern of the row, $3 allow or
+# deny. Return: 0 when the exact row "    \"PATTERN\": VALUE" is in the file, 1 otherwise.
 has() { grep -qxF -- "    \"$2\": $3" "$oc/$1.md"; }
 has systems-analyst "git aceptar*" allow && has systems-analyst "git intentos*" allow &&
 	ok "PM2 lead allows aceptar and intentos" || fail "PM2 lead rows"

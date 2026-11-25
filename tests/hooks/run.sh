@@ -1081,6 +1081,9 @@ cmp_check() {
 	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_semver_cmp "$@"' _ "$1" "$2")" || rc=$?
 	[ "$out" = "$3" ] && [ "$rc" = "${4:-0}" ]
 }
+# tag_check TAG WANT RC: check the output and exit status of qs_tag_version for one tag.
+# Arguments: $1 the tag, $2 the expected output, $3 the expected exit status. Return: 0 when both
+# match, 1 otherwise.
 tag_check() {
 	local out rc=0
 	out="$(QUALITY_SUITE_DIR="$SUITE" bash -c '. "$QUALITY_SUITE_DIR/scripts/qs-docker-lib.sh"; qs_tag_version "$1"' _ "$1")" || rc=$?

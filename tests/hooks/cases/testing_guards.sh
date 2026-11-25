@@ -43,6 +43,9 @@ for mode in log patch-id; do
 		# shellcheck disable=SC1091
 		. "$SUITE/scripts/git-flow-lib.sh"
 		qs_policy_load
+		# git ARGS...: wrapper over git that fails the command named by QS_FAIL (log or patch-id).
+		# Arguments: the git arguments. Return: 1 for the failing command (log with -p, or patch-id
+		# after it reads stdin), otherwise the status of the real git run through command git.
 		git() {
 			case "$1:$QS_FAIL" in
 			patch-id:patch-id)

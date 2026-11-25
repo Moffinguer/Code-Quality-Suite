@@ -16,6 +16,8 @@ ORIG=$TASK/ORIGINAL
 
 # the aliases: each call names the alias it stands for, as configure_repo does through QS_ALIAS
 intentos() { QS_ALIAS=intentos git intentos "$@"; }
+# elegir ARGS...: run git elegir with the alias name set to elegir (QS_ALIAS).
+# Arguments: the arguments of git elegir, passed as they are. Return: the exit status of git elegir.
 elegir() { QS_ALIAS=elegir git elegir "$@"; }
 
 # fixture: version and OT parents, and a task with one commit (made with plumbing, no hooks)

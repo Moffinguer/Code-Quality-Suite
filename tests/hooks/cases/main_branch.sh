@@ -22,10 +22,14 @@ ln -s "$SUITE/tests/hooks/fake-docker" "$T/bin/docker"
 export PATH="$T/bin:$PATH"
 # the empty tree of a SHA-1 repository
 EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+# fail MESSAGE...: print "FAIL: <message>" to stderr and end the case with status 1.
+# Arguments: the words of the message. Errors: always exits the case with status 1.
 fail() {
 	echo "FAIL: $*" >&2
 	exit 1
 }
+# ok MESSAGE...: print "ok   <message>" to stdout for a check that passed.
+# Arguments: the words of the message. Return: 0 (the status of echo).
 ok() { echo "ok   $*"; }
 
 # MB1: a new project from an empty folder
