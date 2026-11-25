@@ -128,9 +128,9 @@ push_deletions() {
 	git push -q "${args[@]}"
 }
 
-# classify NAME...: set STATE/REASON of each archived branch (integrated, "superseded by <ref>" or
+# classify_unmerged NAME...: set STATE/REASON of each archived branch (integrated, "superseded by <ref>" or
 # pending). A branch whose local and origin tips differ is judged on both and is pending if either is.
-classify() {
+classify_unmerged() {
 	local n a out why
 	for n in "$@"; do
 		STATE[$n]=integrated
@@ -217,7 +217,7 @@ main() {
 		REMOTE_TIP[$n]="$r"
 		TIPS[$n]="$(printf '%s\n' "$l" "$r" | grep . | sort -u | tr '\n' ' ')"
 	done
-	classify "${names[@]}"
+	classify_unmerged "${names[@]}"
 	for n in "${names[@]}"; do
 		echo "${STATE[$n]}: $n"
 		if [ "${STATE[$n]}" = pending ]; then
