@@ -30,7 +30,7 @@ release_owned_file() {
 	esac
 	[ "${2:-}" = --content ] || return 1
 	case "$1" in
-	"${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json | */package.json) return 0 ;;
+	"${QS_BR_README:-README.md}" | pom.xml | */pom.xml | package.json) return 0 ;;
 	esac
 	return 1
 }

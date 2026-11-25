@@ -67,7 +67,7 @@ published 6.0.0/ot1/TESTING && ok "PB1 git testing crear" || fail "PB1 TESTING n
 git checkout -q 6.0.0/ot1/ORIGINAL
 git nr pb5 >/dev/null 2>&1
 grep -q '^PUSH prompt=0$' "$SPY" && grep -q 'refs/heads/6.0.0/ot1/pb5 ' "$SPY" && ok "PB5 pre-push saw the ref, GIT_TERMINAL_PROMPT=0" || fail "PB5 spy: $(cat "$SPY")"
-! grep -rn -e '--no-verify' "$SUITE/scripts/git-rama.sh" "$SUITE/scripts/git-testing.sh" "$SUITE/scripts/git-flow-lib.sh" |
+! grep -rn -e '--no-verify' "$SUITE/scripts/git-rama.sh" "$SUITE"/scripts/rama/*.sh "$SUITE/scripts/git-testing.sh" "$SUITE/scripts/git-flow-lib.sh" |
 	grep -v '^[^:]*:[0-9]*:[[:space:]]*#' | grep -q 'git .*push' && ok "PB5 the scripts never push with --no-verify" || fail "PB5 --no-verify in a script"
 
 # --- PB2 off by environment and by policy

@@ -259,8 +259,8 @@ git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && case_commit g.py 'G
 # the fallback is the code that runs
 case_sandbox
 declare -F qs_files_block >/dev/null && fail "fallback: qs_files_block is loaded; the fallback is not forced"
-fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/git-rama.sh")"
-[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/git-rama.sh"
+fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/rama/integra.sh")"
+[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/rama/integra.sh"
 eval "$fallback_fn"
 printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "fallback: commit a b"
 base="$(git rev-parse HEAD)"
