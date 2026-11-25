@@ -59,10 +59,7 @@ indent() {
 # Exit status: always 0.
 rules_upgrade() {
 	local out py
-	for py in python3 python; do
-		command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1 && break
-		py=""
-	done
+	py="$(qs_python || true)"
 	[ -n "$py" ] || {
 		echo "[update] WARN: no working python3/python: rules file of $1 not upgraded (the next hook does it)" >&2
 		return 0
