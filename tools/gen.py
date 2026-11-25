@@ -76,6 +76,16 @@ DEFAULT_EXCLUDES = [
 
 
 def checkstyle_defaults(text):
+    """Read the default rules of a Checkstyle base configuration.
+
+    Args:
+        text: Checkstyle XML document, DOCTYPE allowed.
+    Returns:
+        dict: module name -> its properties dict, or True when it has none.
+        Modules listed more than once are left out.
+    Raises:
+        xml.etree.ElementTree.ParseError: when the XML is malformed.
+    """
     root = ET.fromstring(re.sub(r"<!DOCTYPE[^>]*>", "", text))
     out, seen = {}, {}
     for m in root.iter("module"):
@@ -91,6 +101,15 @@ def checkstyle_defaults(text):
 
 
 def pmd_defaults(text):
+    """Read the default rules of a PMD ruleset.
+
+    Args:
+        text: PMD ruleset XML document.
+    Returns:
+        dict: rule ref -> True, and "ref/exclude" -> False for each excluded rule.
+    Raises:
+        xml.etree.ElementTree.ParseError: when the XML is malformed.
+    """
     ns = "{http://pmd.sourceforge.net/ruleset/2.0.0}"
     root = ET.fromstring(text)
     out = {}
@@ -103,6 +122,17 @@ def pmd_defaults(text):
 
 
 def base_defaults(tool):
+    """Load the default settings of a tool from its base config file.
+
+    Args:
+        tool: tool entry from the catalog.
+    Returns:
+        dict with the defaults, or None when the tool has no base file or
+        the format is not mergeable.
+    Raises:
+        SystemExit: when the configured base file does not exist.
+        KeyError: when the config has a base file but no format.
+    """
     cfg = tool.get("config") or {}
     rel = cfg.get("base")
     if not rel or rel.startswith("{"):
@@ -497,6 +527,14 @@ def policy_schema():
 
 
 def block_schema(tool, defaults):
+    """JSON Schema of the configuration block of one tool.
+
+    Args:
+        tool: tool entry from the catalog.
+        defaults: default rules object, or a falsy value for none.
+    Returns:
+        dict: the object schema with enabled, level, args, autofix and rules.
+    """
     rules = {"type": "object", "description": tool.get("notes", tool["name"])}
     if defaults:
         rules["default"] = defaults
@@ -525,6 +563,16 @@ def block_schema(tool, defaults):
 
 
 def make_schema(tools, langs):
+    """Build the JSON Schema of quality-rules.json for every language.
+
+    Args:
+        tools: tool id -> tool entry.
+        langs: list of language entries.
+    Returns:
+        dict: the complete JSON Schema document.
+    Raises:
+        KeyError: when a language names a tool id that is not in tools.
+    """
     lang_props = {}
     for lang in langs:
         cats = {"syntax": {}, "formatting": {}, "analysis": {}}
@@ -631,10 +679,23 @@ def make_schema(tools, langs):
 
 
 def make_matrix(tools, langs):
+    """Build the language table and the candidate list of docs/LANGUAGES.md.
+
+    Args:
+        tools: tool id -> tool entry.
+        langs: list of language entries.
+    Returns:
+        A pair (rows, cands): markdown table lines and bullet lines.
+    Raises:
+        KeyError: when a language names a tool id that is not in tools.
+    """
+
     def label(t):
+        """Display name of a tool, marked "(opt-in)" when it is not enabled by default."""
         return tools[t]["name"] + ("" if tools[t].get("default_enabled", True) else " (opt-in)")
 
     def names(lang, role):
+        """Comma-separated display names of a language tools with one role, or an empty string."""
         ids = [t for t in lang["tools"] if tools[t]["role"] == role]
         return ", ".join(label(t) for t in ids) or ""
 
@@ -687,6 +748,15 @@ def make_matrix(tools, langs):
 
 
 def main(argv):
+    """Generate the registry, the schema and the language docs, or check them with --check.
+
+    Args:
+        argv: command line arguments, without the program name; "--check" only compares.
+    Returns:
+        0 on success, 1 when validation fails or --check finds stale files.
+    Raises:
+        SystemExit: when a configured base file is missing.
+    """
     tools, langs, runtimes = core.TOOLS, core.LANGS, core.RUNTIMES
     errs, warns = validate(tools, langs, runtimes)
     for w in warns:
