@@ -190,20 +190,6 @@ qs_native_path() {
 	if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
 }
 
-# Print the path of a working python (python3 or python); the Windows Store python3 stub exists
-# on Git Bash but fails, so each candidate is tried.
-# Arguments: none. Returns: 0 and the command name, or 1 when none works.
-qs_python() {
-	local py
-	for py in python3 python; do
-		if command -v "$py" >/dev/null 2>&1 && "$py" -c 'import sys' >/dev/null 2>&1; then
-			printf '%s' "$py"
-			return 0
-		fi
-	done
-	return 1
-}
-
 # Lazy rules upgrade: when the stamp `<git common dir>/quality-suite/suite-version` differs from
 # the VERSION of the suite (a suite update happened), run `engine/policy.py rules-upgrade` once
 # under the suite lock, print one summary line on stderr, and let the hook go on. The stamp is
