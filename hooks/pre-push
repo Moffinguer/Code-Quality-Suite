@@ -18,11 +18,7 @@ fi
 : "${QUALITY_LOG_FILE:=$(git rev-parse --absolute-git-dir)/quality-suite/quality-suite.log}"
 export QUALITY_LOG_FILE QUALITY_LOG_LEVEL QUALITY_LOG_FORMAT
 
-[ -n "${QUALITY_SUITE_DIR:-}" ] || {
-	echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
-	exit 1
-}
-. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+qs_hook_docker_lib
 REPO_ROOT="$(qs_repo_root)"
 STATE="$(qs_state_dir)"
 mkdir -p "$STATE"

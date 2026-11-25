@@ -41,3 +41,18 @@ qs_hook_flow_lib() {
 		qs_policy_load
 	fi
 }
+
+# qs_hook_docker_lib: check that the suite is installed, then load the shared docker helpers.
+# Arguments: none (reads QUALITY_SUITE_DIR, set by quality-suite.env or the hook environment).
+# Sets the helper functions and QS_* variables of scripts/qs-docker-lib.sh.
+# Return value: 0 when loaded. Errors: when QUALITY_SUITE_DIR is empty, prints
+# "QUALITY_SUITE_DIR not set" to stderr and exits the calling hook with status 1.
+qs_hook_docker_lib() {
+	[ -n "${QUALITY_SUITE_DIR:-}" ] || {
+		echo "[quality-suite] QUALITY_SUITE_DIR not set (run install.sh)." >&2
+		exit 1
+	}
+	# why: the sourced path is only known at run time
+	# shellcheck disable=SC1091
+	. "${QUALITY_SUITE_DIR}/scripts/qs-docker-lib.sh"
+}
