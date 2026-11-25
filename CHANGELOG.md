@@ -1,5 +1,36 @@
 # Changelog
 
+## [7.1.1] - 2026-11-25
+
+### Changed
+
+- Share docker lib loader ([365b587](https://github.com/Moffinguer/Code-Quality-Suite/commit/365b587bbd40fddec78b818295611ab151c8e060); cleanup)
+- Classify_unmerged ([0add54b](https://github.com/Moffinguer/Code-Quality-Suite/commit/0add54bcc7b718ec35509872dfce2673a07a660e); cleanup)
+- One qs_python ([7e9a75e](https://github.com/Moffinguer/Code-Quality-Suite/commit/7e9a75ec3207dec318a96bd5d147200961b622ca); cleanup)
+- Installers use qs_python ([0f359d1](https://github.com/Moffinguer/Code-Quality-Suite/commit/0f359d128e47e43bc5564b8f06db4866ecf99fa3); cleanup)
+- Ai-ask and ai-keys use qs_python ([ca5256e](https://github.com/Moffinguer/Code-Quality-Suite/commit/ca5256e8d70e4fe6636b4b668751f6239a60fccd); cleanup)
+- Files block via qs_files_block ([f57e410](https://github.com/Moffinguer/Code-Quality-Suite/commit/f57e41039c745326848f2e953a2bc0f2b9e5c6fa); cleanup)
+- Git-rama.sh split into modules ([53b2540](https://github.com/Moffinguer/Code-Quality-Suite/commit/53b25405dade95bd4b98c0af831f87ab3d0c66ba); cleanup)
+- Gitio and textio modules ([16cea5b](https://github.com/Moffinguer/Code-Quality-Suite/commit/16cea5bc60a89953a224bbb4131e1aca10601e90); cleanup)
+- Hooks and scripts on shared libs ([d5a0489](https://github.com/Moffinguer/Code-Quality-Suite/commit/d5a0489b709dc542f4e247289521f360826c3b5e); cleanup)
+- Shared helpers in flow libs ([0e8f0e5](https://github.com/Moffinguer/Code-Quality-Suite/commit/0e8f0e53d5e59437702b1351eceb4a7e9ec3e771); cleanup)
+- Shared hook case fixtures ([1611932](https://github.com/Moffinguer/Code-Quality-Suite/commit/161193274adbb98e115c02d9e267aa9988cd8be6); cleanup)
+- Shared enums and defaults ([5d7a585](https://github.com/Moffinguer/Code-Quality-Suite/commit/5d7a5855612d1ff3d47bce6ea37ff67eacc1a2a8); cleanup)
+
+### Added
+
+- Doc gaps ratchet to zero ([523bb70](https://github.com/Moffinguer/Code-Quality-Suite/commit/523bb70b6b8a791368f81e8bb8f4ec459e4805c0); cleanup)
+- Enforce code metric thresholds ([89c4e75](https://github.com/Moffinguer/Code-Quality-Suite/commit/89c4e75f0acbc54d75dd122260b6433a8080ddaf); cleanup)
+- KNOWN_BUGS.md and git bug-conocido ([aa4e671](https://github.com/Moffinguer/Code-Quality-Suite/commit/aa4e67162054ae8b2226e7c989b1e4ca61948a49); cleanup)
+- Commit-flow guards ([54f05f0](https://github.com/Moffinguer/Code-Quality-Suite/commit/54f05f01d4a66d4eb7b826856c0d744a7ab7fad4); cleanup)
+- Shared shell and hook libraries ([a0b7ee3](https://github.com/Moffinguer/Code-Quality-Suite/commit/a0b7ee373a030d647768411c23d0e2827ce7cded); cleanup)
+- Code metrics with baseline ([d8f9e57](https://github.com/Moffinguer/Code-Quality-Suite/commit/d8f9e57588be4648b18427615a6e8ff48f7d4a11); cleanup)
+
+### Fixed
+
+- Find python, python3 or py ([8638619](https://github.com/Moffinguer/Code-Quality-Suite/commit/8638619f02740e9d7edb108b2e2992d9c6faa21a); cleanup)
+- One pass for --limpiar ([44dd9e3](https://github.com/Moffinguer/Code-Quality-Suite/commit/44dd9e3316e69e914d367ed0c533e0fe8481d7a1); cleanup)
+
 ## [7.1.0] - 2026-11-22
 
 ### Added
@@ -218,5 +249,6 @@ _First release recorded in this changelog._
 - Add quality levels that never clash: off, syntax, format, standard, strict (docs/QUALITY-RULES.md)
 - Add identifying marks: shebangs for scripts and modelines for ambiguous files (engine/runner.py)
 
+[7.1.1]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/7.1.1
 [7.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/7.1.0
 [6.1.0]: https://github.com/Moffinguer/Code-Quality-Suite/releases/tag/6.1.0
