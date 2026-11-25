@@ -341,7 +341,7 @@ git release --version 7.1.0 --yes >rel.out 2>&1 || {
 	cat rel.out
 	fail "release resume"
 }
-subjects="$(git log --format=%s develop..7.1.0/RELEASE | head -n2 | tr '\n' '|')"
+subjects="$(git log -n2 --format=%s develop..7.1.0/RELEASE | tr '\n' '|')"
 [ "$subjects" = "docs(readme): version 7.1.0|docs(changelog): 7.1.0|" ] &&
 	[ "$(git branch --show-current)" = 7.1.0/RELEASE ] && [ "$(git show 7.1.0/RELEASE:VERSION)" = 7.1.0 ] &&
 	git show 7.1.0/RELEASE:pom.xml | grep -q '<version>7.1.0</version>' &&
@@ -464,7 +464,7 @@ cl="$(git show 8.1.0/RELEASE:CHANGELOG.md)"
 	{
 		cat rel.out
 		echo "$cl"
-		git log --oneline --graph develop..8.1.0/RELEASE | head -40
+		git log -n40 --oneline --graph develop..8.1.0/RELEASE
 		fail "combinar result"
 	}
 git publicar --version 8.1.0 --yes >rel.out 2>&1 && [ "$(git log -1 --format=%s develop)" = "chore(release): 8.1.0" ] &&
