@@ -16,7 +16,11 @@ if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	# shellcheck disable=SC1091
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
+	# qs_log <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_log() { :; }
+	# qs_result <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_result() { :; }
 fi
 qs_hook_docker_lib
@@ -108,6 +112,11 @@ if [ -s "$PATCH" ]; then
 	cp "$PATCH" "${STATE}/unstaged.backup.patch" # why: a copy survives even a killed hook
 	git diff --name-only -z | xargs -0 git checkout -- 2>/dev/null || true
 fi
+# restore_unstaged: put the set-aside unstaged edits back after the check.
+# Arguments: none (uses PATCH, INDEX_TREE and STATE from the caller). Return value: 0 when
+# restored (or nothing was set aside), 1 when the edits overlap the formatter changes; in that
+# case the whole commit state is rolled back and the message tells the user what to do.
+# Errors: the patch and the formatter overlap prints a message to stderr; no exit is forced.
 restore_unstaged() {
 	[ -s "$PATCH" ] || return 0
 	if git apply --whitespace=nowarn "$PATCH" 2>/dev/null; then

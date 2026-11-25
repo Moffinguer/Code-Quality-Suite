@@ -12,7 +12,11 @@ qs_hook_env --export
 if [ -f "${QUALITY_SUITE_DIR:-}/log-lib.sh" ]; then
 	. "${QUALITY_SUITE_DIR}/log-lib.sh"
 else
+	# qs_log <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_log() { :; }
+	# qs_result <message...>: no-op fallback used when log-lib.sh is missing (old suite).
+	# Arguments: any, ignored. Return value: 0. Errors: none.
 	qs_result() { :; }
 fi
 : "${QUALITY_LOG_FILE:=$(git rev-parse --absolute-git-dir)/quality-suite/quality-suite.log}"
@@ -157,6 +161,9 @@ if qs_hook_flow_lib; then
 	done
 	# --- end special branch guard ---
 	br_fail=0
+	# br_err <message...>: report a branch-rule violation on stderr; fail the push only in block mode.
+	# Arguments: the message words. Sets br_fail=1 when QS_BR_ENFORCE is block. Return value: 0.
+	# Errors: none; the violation is printed, the push is aborted later by the caller.
 	br_err() {
 		echo "[quality-suite] pre-push: $*" >&2
 		[ "$QS_BR_ENFORCE" = block ] && br_fail=1
