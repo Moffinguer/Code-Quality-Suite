@@ -65,6 +65,10 @@ name_taken() {
 	case "$REL_PLANNED" in *$'\n'"$n"$'\n'*) return 0 ;; esac
 	return 1
 }
+# archive_name BRANCH: print the name a branch gets when archived: <archive>/BRANCH, with a -2 to -9
+# suffix, or a timestamped archive folder, when those names are taken.
+# Arguments: $1 branch name below the archive folder. Returns: 0 and prints the name; 1 when even
+# the timestamped name is taken. Errors: none.
 archive_name() {
 	local base="$QS_BR_ARCHIVE/$1" n i
 	n="$base"
@@ -240,6 +244,9 @@ release_report() { # <tag>: checks and plan, for the preview and before running
 	echo "$i. git publicar: $REL_RELEASE merged into $QS_BR_MAINLINE (\"$(release_subject "$tag")\"), tag $tag, push, $REL_RELEASE deleted"
 }
 
+# release_subject TAG: print the commit subject of a release merge into the mainline.
+# Arguments: $1 tag. Returns: 0. Errors: none. The subject is the first of chore(release): TAG,
+# chore: release TAG and chore: TAG that fits QS_COMMIT_SUBJECT_MAX (default 50).
 release_subject() {
 	local s="chore(release): $1"
 	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: release $1"

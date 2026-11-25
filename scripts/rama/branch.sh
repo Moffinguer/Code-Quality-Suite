@@ -99,6 +99,8 @@ convert_branch() { # final branch '<F>/<x>' -> '<F>/<x>/ORIGINAL', local and on 
 	fi
 }
 
+# cmd_convertir: turn the current branch into a parent, moving it to '<branch>/<leaf>'.
+# Arguments: none. Returns: 0. Errors: dies on a detached HEAD.
 cmd_convertir() {
 	local cur
 	cur="$(current_branch)" || die "detached HEAD"
@@ -107,6 +109,11 @@ cmd_convertir() {
 	say "'$cur' is now '$cur/$QS_BR_LEAF'. Create children with: git np <name> / git nr <name>"
 }
 
+# cmd_subir: sync the current branch with its parent (git subir). An ORIGINAL merges its parent
+# and is pushed; a final branch is rebased onto its parent and pushed with --force-with-lease; a
+# stopped RELEASE rebase is resumed. Arguments: none. Returns: 0 when done or when there is
+# nothing to sync (CHECKPOINT). Errors: exits 1 on a TESTING branch, a dirty tree or a FORMAT
+# regeneration; dies on a detached HEAD, a missing parent or a conflict (resolve it, then re-run).
 cmd_subir() {
 	local cur parent base head resume=0 rc=0
 	cur="$(current_branch || true)"

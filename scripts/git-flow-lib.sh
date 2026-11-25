@@ -1038,6 +1038,8 @@ testing_squash_hit() {
 # why: awk variables such as $0 must reach awk unexpanded
 # shellcheck disable=SC2016
 POM_AWK='
+# top(): awk helper. Returns the names st[1] to st[n] joined with slashes, without a leading slash.
+# Arguments: none (reads the global stack st and its depth n). Errors: none.
 function top(   i, p) { p = ""; for (i = 1; i <= n; i++) p = p "/" st[i]; return substr(p, 2) }
 {
 	line = $0; rest = line; full = 0

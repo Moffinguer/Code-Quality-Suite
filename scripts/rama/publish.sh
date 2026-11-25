@@ -101,7 +101,11 @@ publish_changelog_merge() {
 			sub(/ .*$/, "", s)
 			return s
 		}
+		# isver(s): awk helper. Returns 1 when s looks like a version (dotted digits, optional -suffix), else 0.
+		# Arguments: s a string. Errors: none.
 		function isver(s) { return s ~ /^[0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$/ }
+		# isnum(s): awk helper. Returns 1 when s is only digits, else 0.
+		# Arguments: s a string. Errors: none.
 		function isnum(s) { return s ~ /^[0-9]+$/ }
 		# cmp: -1, 0 or 1 as semver orders a and b (a pre-release sorts before its release)
 		function cmp(a, b, ca, cb, pa, pb, i, n, na, nb, A, B) {
@@ -123,6 +127,8 @@ publish_changelog_merge() {
 			}
 			return na < nb ? -1 : (na > nb ? 1 : 0)
 		}
+		# emit(i): awk helper. Prints the held section (sec[1] to sec[ns]) and a blank line, then marks it
+		# done so it is printed only once. Arguments: none (i is a local loop variable). Errors: none.
 		function emit(i) {
 			for (i = 1; i <= ns; i++) print sec[i]
 			print ""

@@ -3,6 +3,8 @@
 # section of one command.
 set -euo pipefail
 DOC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/docs/GIT-COMMANDS.md"
+# clean: filter stdin, removing the <!-- ... --> comments of the manual.
+# Arguments: none (reads stdin, writes stdout). Returns: 0. Errors: none.
 clean() { sed -e 's/ *<!--[^>]*-->//g'; }
 [ "$#" -gt 0 ] || {
 	clean <"$DOC"

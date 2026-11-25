@@ -4,8 +4,15 @@
 # why: set -euo pipefail and the variables shared between modules come from git-rama.sh
 # shellcheck disable=SC2034,SC2119,SC2120,SC2164
 
+# has_origin: tell whether the repository has a remote named origin.
+# Arguments: none. Returns: 0 when it has one, 1 otherwise. Errors: none; prints nothing.
 has_origin() { git remote get-url origin >/dev/null 2>&1; }
+# fetch_origin: fetch and prune origin quietly when it exists.
+# Arguments: none. Returns: 0. Errors: none; a failed fetch is ignored.
 fetch_origin() { has_origin && git fetch -q --prune origin 2>/dev/null || true; }
+# confirm QUESTION: ask a yes or no question on the terminal, the default being no.
+# Arguments: $1 the question. Returns: 0 for y, Y, s, S, yes or si, or always when YES=1; 1 otherwise.
+# Errors: none; an unreadable terminal counts as no.
 confirm() {
 	[ "$YES" = 1 ] && return 0
 	local r
@@ -52,6 +59,9 @@ next_version() { # major|minor|patch -> the version after the highest known one
 	major) echo "$((ma + 1)).0.0" ;; minor) echo "$ma.$((mi + 1)).0" ;; patch) echo "$ma.$mi.$((pa + 1))" ;;
 	esac
 }
+# version_subject VERSION: print the commit subject of a version bump.
+# Arguments: $1 version. Returns: 0 and prints 'chore(version): VERSION', or 'chore: VERSION' when
+# that is longer than QS_COMMIT_SUBJECT_MAX (default 50). Errors: none.
 version_subject() {
 	local s="chore(version): $1"
 	[ "${#s}" -le "${QS_COMMIT_SUBJECT_MAX:-50}" ] || s="chore: $1"

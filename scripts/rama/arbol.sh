@@ -263,6 +263,8 @@ cmd_arbol() {
 # allowed and ignored.
 parse_structure() { # stdin -> "P|F<TAB>node" lines, ancestors first, in input order
 	tr -d '\r' | awk -v leaf="$QS_BR_LEAF" -v main="$QS_BR_MAINLINE" '
+    # add(node, par): awk helper. Records the path and its prefixes once, in order, and marks the
+    # ancestors as parents; par marks the node itself. Arguments: node path; par. Errors: none.
     function add(node, par,   n, k, a, p) {
       n = split(node, a, "/"); p = ""
       for (k = 1; k <= n; k++) {
@@ -294,7 +296,11 @@ parse_structure() { # stdin -> "P|F<TAB>node" lines, ancestors first, in input o
     END { for (i = 1; i <= cnt; i++) print (isp[order[i]] ? "P" : "F") "\t" order[i] }'
 }
 
+# exists_branch NAME: tell whether NAME is a local branch or an origin branch.
+# Arguments: $1 branch name. Returns: 0 when it exists, 1 otherwise. Errors: none; prints nothing.
 exists_branch() { exists_ref "refs/heads/$1" || exists_ref "refs/remotes/origin/$1"; }
+# has_branches_under NAME: tell whether a local or origin branch lies under the folder NAME/.
+# Arguments: $1 folder name. Returns: 0 when one exists, 1 otherwise. Errors: none; prints nothing.
 has_branches_under() { [ -n "$(git for-each-ref --count=1 "refs/heads/$1/" "refs/remotes/origin/$1/")" ]; }
 
 behind_note() { # ' (N behind <parent>: git subir)' when the branch lacks commits of its parent
@@ -308,6 +314,12 @@ behind_note() { # ' (N behind <parent>: git subir)' when the branch lacks commit
 	[ "$n" = 0 ] || printf ' (%s behind %s: git subir)' "$n" "$p"
 }
 
+# cmd_estructura [-n|--dry-run] [--push] [--convertir] [FILE|-]...: create the branch tree read
+# from the files or stdin (one branch per line, indented children; parsed by parse_structure).
+# -n only shows the plan, --push pushes the new branches, --convertir turns plain branches into parents.
+# Arguments: the options and the input files ('-' or none for stdin). Returns: 0 when done.
+# Errors: dies on an unknown option, an empty input, a missing file or mainline; every name is
+# validated first, so nothing is created when one is invalid.
 cmd_estructura() {
 	local dry=0 push=0 conv=0 files=() f a plan kind node b p base errs=0 why planned=$'\n' versions=""
 	local topush=() created=() n_new=0 n_ok=0

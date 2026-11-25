@@ -275,6 +275,13 @@ integra_squash() {
 	return 0
 }
 
+# cmd_integra: integrate the current final branch into its parent (git integra). Under squash flow
+# the parent gets one squash commit; under merge flow a merge --no-ff. The commit message is the
+# INTEGRA_MSG template under the git directory.
+# Arguments: none. Returns: 0 when integrated.
+# Errors: dies on a detached HEAD, a mainline, a branch outside the model, a missing parent, a child
+# not integrated yet, a tag clash, an unfilled subject or conflicts; exits 1 when the flow guard or
+# the branch kind (SPIKE, ATTEMPT, REVIEW, QUARANTINE, CHECKPOINT) refuses.
 cmd_integra() {
 	local cur parent base mode tpl tag depth unmerged="" c cref editor subject
 	cur="$(current_branch)" || die "detached HEAD"

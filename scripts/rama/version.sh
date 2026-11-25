@@ -24,6 +24,12 @@ sync_branch() {
 	git update-ref "refs/heads/$b" "$commit" "$bt"
 }
 
+# cmd_nueva_version VERSION [--from BRANCH] [--arbol-completo|--full] [-n|--dry-run]: create the
+# version tree VERSION (or major, minor or patch for the next version) by copying the branches of
+# BRANCH under it, or the whole tree of its version with --full. -n only shows the plan.
+# Arguments: one version and the options above; BRANCH defaults to the current branch. Returns: 0.
+# Errors: dies on a missing or second version, an unknown option, a detached HEAD without --from,
+# a missing source branch, an invalid or taken version, or a special-branch lock.
 cmd_nueva_version() {
 	local v="" src="$FROM" dry=0 full=0 a node srcv b nb rel why left=() made=() n plan p pre seg i
 	for a in "$@"; do
