@@ -254,22 +254,28 @@ git checkout -q 9.1.0/600/ORIGINAL && git nr g >/dev/null && case_commit g.py 'G
 	git checkout -q 9.1.0/600/ORIGINAL && git merge -q --no-ff -m "chore: merge g" 9.1.0/600/g >/dev/null 2>&1 &&
 	ok "merge: git merge <child> into its ORIGINAL still allowed (I7)" || fail "merge: manual merge refused"
 
-# --- the Files: fallback of git-rama.sh (no commit-files-lib.sh) quotes spaced paths -----------
-# why: the function is taken from the script itself, and commit-files-lib.sh is not sourced, so
-# the fallback is the code that runs
+# --- squash_files_block (rama/integra.sh) is a wrapper of qs_files_block: same Files: output ----
+# why: the function is taken from the script itself; commit-files-lib.sh is sourced as git-rama.sh
+# does, so the wrapper calls the real qs_files_block
 case_sandbox
-declare -F qs_files_block >/dev/null && fail "fallback: qs_files_block is loaded; the fallback is not forced"
-fallback_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/rama/integra.sh")"
-[ -n "$fallback_fn" ] || fail "fallback: squash_files_block not found in scripts/rama/integra.sh"
-eval "$fallback_fn"
-printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "fallback: commit a b"
+wrap_fn="$(awk '/^squash_files_block\(\) \{/ { on = 1 } on { print } on && /^}/ { exit }' "$SUITE/scripts/rama/integra.sh")"
+[ -n "$wrap_fn" ] || fail "wrapper: squash_files_block not found in scripts/rama/integra.sh"
+# shellcheck disable=SC2016 # why: the patterns are literal shell text, not expansions
+grep -qF 'qs_files_block "$1" "$2"' <<<"$wrap_fn" || fail "wrapper: squash_files_block does not call qs_files_block: $wrap_fn"
+grep -q 'git -c core.quotePath' <<<"$wrap_fn" && fail "wrapper: squash_files_block still renders its own diff"
+# shellcheck disable=SC2016 # why: the pattern is literal shell text, not an expansion
+grep -qF '. "$DIR/commit-files-lib.sh"' "$SUITE/scripts/git-rama.sh" || fail "wrapper: git-rama.sh does not always source commit-files-lib.sh"
+. "$SUITE/scripts/commit-files-lib.sh"
+eval "$wrap_fn"
+printf 'shared\n' >"a b" && git add "a b" && git commit -q -m "chore: add a b" || fail "wrapper: commit a b"
 base="$(git rev-parse HEAD)"
 printf 'x\n' >"sp ace.txt" && printf 'y\n' >plain.txt && git add "sp ace.txt" plain.txt &&
-	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "fallback: commit spaced paths"
+	git mv "a b" "c d" && git commit -q -m "feat: spaced paths" || fail "wrapper: commit spaced paths"
 want='Files:
 R "a b" -> "c d"
 A plain.txt
 A "sp ace.txt"'
 got="$(squash_files_block "$base" HEAD)"
-[ "$got" = "$want" ] && ok "fallback: spaced paths and renames are quoted like qs_files_block" ||
-	fail "fallback: quoting: $got"
+[ "$got" = "$want" ] && [ "$got" = "$(qs_files_block "$base" HEAD)" ] &&
+	ok "wrapper: squash_files_block gives the qs_files_block Files: block (quoted spaces, renames)" ||
+	fail "wrapper: quoting: $got"

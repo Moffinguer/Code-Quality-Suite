@@ -96,10 +96,9 @@ HOOK_ENV="$(git rev-parse --path-format=absolute --git-path hooks 2>/dev/null)/q
 . "$DIR/git-flow-lib.sh"
 # shellcheck disable=SC1091
 . "$DIR/special-integra.sh" # integration order and refusals of the special branches
-# why: the Files block of the squash commits is rendered by the commit-message library when it
-# is installed (5.0.0-RC1/git/log); squash_files_block falls back to the same format without it
+# why: the Files block of the squash commits is rendered by the commit-message library
 # shellcheck disable=SC1091
-[ -f "$DIR/commit-files-lib.sh" ] && . "$DIR/commit-files-lib.sh"
+. "$DIR/commit-files-lib.sh"
 # why: git np --migracion and the MIGRATION squash of git integra use the creator of git migracion
 # shellcheck disable=SC1091
 . "$DIR/git-migracion.sh"
